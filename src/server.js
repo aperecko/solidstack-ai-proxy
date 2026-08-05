@@ -7,20 +7,36 @@
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
+import https from 'https';
 import { fileURLToPath } from 'url';
-import { sendMessage, sendMessageStream, listModels, getModelQuotas, getSubscriptionTier, isValidModel } from './cloudcode/index.js';
+import { createProxyMiddleware } from 'http-proxy-middleware';
+import { sendMessage, sendMessageStream, listModels, fetchAvailableModels, getModelQuotas, getSubscriptionTier, isValidModel } from './cloudcode/index.js';
+import { buildFallbackMap, buildPresets } from './constants.js';
+import { initFallbackMap, getFallbackChain } from './fallback-config.js';
+import { logRoutingTelemetry } from './cloudcode/routing-logger.js';
 import { mountWebUI } from './webui/index.js';
 import { config } from './config.js';
+import { globalThrottle } from './utils/throttle.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 import { forceRefresh } from './auth/token-extractor.js';
+import { resolveTokenToEmail } from './auth/token-resolver.js';
 import { REQUEST_BODY_LIMIT } from './constants.js';
 import { AccountManager } from './account-manager/index.js';
 import { clearThinkingSignatureCache } from './format/signature-cache.js';
 import { formatDuration } from './utils/helpers.js';
 import { logger } from './utils/logger.js';
 import usageStats from './modules/usage-stats.js';
+import { mountOpenAICompat, mountResponsesCompat } from './openai-compat.js';
+import { createCommanderRouter } from './commander-api.js';
+import {
+    logConversation,
+    initStreamingLog,
+    accumulateStreamEvent,
+    finalizeStreamingLog,
+    createConversationRouter
+} from './conversation-logger.js';
 
 // Parse fallback flag directly from command line args to avoid circular dependency
 const args = process.argv.slice(2);
@@ -37,6 +53,30 @@ for (let i = 0; i < args.length; i++) {
 }
 
 const app = express();
+
+// ─── Pre-create stable Google API proxy middleware instances ──────────────────
+// http-proxy-middleware must be instantiated once at startup, not per-request.
+// We create one proxy for each Google Cloud Code host we intercept.
+const GOOGLE_PROXY_HOSTS = [
+    'cloudcode-pa.googleapis.com',
+    'daily-cloudcode-pa.googleapis.com',
+];
+const googleProxies = {};
+for (const googleHost of GOOGLE_PROXY_HOSTS) {
+    googleProxies[googleHost] = createProxyMiddleware({
+        target: `https://${googleHost}`,
+        changeOrigin: true,
+        secure: true,
+        on: {
+            error: (err, req, res) => {
+                logger.error(`[GUI Interceptor] Proxy error for ${googleHost}: ${err.message}`);
+                if (!res.headersSent) {
+                    res.status(502).json({ error: `Bad Gateway (${googleHost})` });
+                }
+            }
+        }
+    });
+}
 
 // Disable x-powered-by header for security
 app.disable('x-powered-by');
@@ -64,6 +104,11 @@ async function ensureInitialized() {
             isInitialized = true;
             const status = accountManager.getStatus();
             logger.success(`[Server] Account pool initialized: ${status.summary}`);
+
+            // Initialize dynamic model config (non-blocking)
+            initDynamicModelConfig().catch(err => {
+                logger.warn(`[Server] Dynamic model config init failed (non-fatal): ${err.message}`);
+            });
         } catch (error) {
             initError = error;
             initPromise = null; // Allow retry on failure
@@ -75,14 +120,438 @@ async function ensureInitialized() {
     return initPromise;
 }
 
+// ─── Native Antigravity/Gemini GUI Interceptor ──────────────────────────────
+// Mounted BEFORE express.json() so the proxy can stream raw binary/JSON bodies.
+// Uses pre-created stable proxy instances (googleProxies) — NOT per-request creation.
+
+// AI request bodies are buffered so the requested model can be extracted from
+// the JSON body (v1internal:generateContent carries the model in the body) and
+// so exhausted models can be transparently rewritten to a fallback model.
+const MAX_INTERCEPT_BODY_BYTES = 50 * 1024 * 1024; // Match REQUEST_BODY_LIMIT (50mb)
+
+function readRequestBody(req, maxBytes = MAX_INTERCEPT_BODY_BYTES) {
+    return new Promise((resolve, reject) => {
+        const chunks = [];
+        let total = 0;
+        let finished = false;
+        req.on('data', (chunk) => {
+            total += chunk.length;
+            if (total > maxBytes) {
+                finished = true;
+                reject(new Error(`Request body exceeds ${maxBytes} bytes`));
+                req.removeAllListeners('data');
+                req.removeAllListeners('end');
+                return;
+            }
+            chunks.push(chunk);
+        });
+        req.on('end', () => {
+            if (finished) return;
+            resolve(Buffer.concat(chunks));
+        });
+        req.on('error', reject);
+    });
+}
+
+// Manual forward for AI requests whose body we buffered. Uses native https so
+// the global DNS patch (src/index.js) still applies, consistent with httpxy.
+function forwardToGoogle(hostName, req, res, bodyText) {
+    const headers = { ...req.headers };
+    delete headers['transfer-encoding'];
+    delete headers['connection'];
+    headers['content-length'] = Buffer.byteLength(bodyText);
+    headers['host'] = hostName;
+
+    const proxyReq = https.request({
+        hostname: hostName,
+        port: 443,
+        method: req.method,
+        path: req.url || req.originalUrl || '/',
+        headers,
+    }, (proxyRes) => {
+        res.writeHead(proxyRes.statusCode, sanitizeResponseHeaders(proxyRes.headers));
+        proxyRes.pipe(res);
+        proxyRes.on('error', (err) => {
+            logger.error(`[GUI Interceptor] Response stream error from ${hostName}: ${err.message}`);
+            res.destroy();
+        });
+    });
+
+    // Mirror httpxy: tear down the upstream request if the client disconnects.
+    res.on('close', () => {
+        if (!res.writableFinished) proxyReq.destroy();
+    });
+
+    proxyReq.on('error', (err) => {
+        logger.error(`[GUI Interceptor] Forward error to ${hostName}: ${err.message}`);
+        if (!res.headersSent) {
+            res.status(502).json({ error: `Bad Gateway (${hostName})` });
+        } else {
+            res.destroy();
+        }
+    });
+
+    if (bodyText && bodyText.length > 0) {
+        proxyReq.write(bodyText);
+    }
+    proxyReq.end();
+}
+
+// Synthetic healthy response for /v1internal:retrieveUserQuotaSummary. Mirrors the
+// real shape (groups → buckets) with every bucket at full availability and a future
+// reset, so AG's "model usage" panel never shows account-specific exhaustion.
+function handleQuotaSummarySynthesis(req, res) {
+    const now = Date.now();
+    const toIso = (ms) => new Date(ms).toISOString();
+    const resetWeekly = toIso(now + 7 * 24 * 3600 * 1000);
+    const reset5h = toIso(now + 5 * 3600 * 1000);
+    const bucketDesc = 'Managed by the SolidStack proxy: quota is aggregated across all pooled accounts, so usage is not tied to a single account.';
+    const payload = {
+        groups: [
+            {
+                buckets: [
+                    { bucketId: 'gemini-weekly', displayName: 'Weekly Limit', window: 'weekly', resetTime: resetWeekly, description: bucketDesc, remainingFraction: 1.0 },
+                    { bucketId: 'gemini-5h', displayName: 'Five Hour Limit', window: '5h', resetTime: reset5h, description: bucketDesc, remainingFraction: 1.0 },
+                ],
+                displayName: 'Gemini Models',
+                description: 'Models within this group: Gemini Flash, Gemini Pro',
+            },
+            {
+                buckets: [
+                    { bucketId: '3p-weekly', displayName: 'Weekly Limit', window: 'weekly', resetTime: resetWeekly, description: bucketDesc, remainingFraction: 1.0 },
+                    { bucketId: '3p-5h', displayName: 'Five Hour Limit', window: '5h', resetTime: reset5h, description: bucketDesc, remainingFraction: 1.0 },
+                ],
+                displayName: 'Claude and GPT models',
+                description: 'Models within this group: Claude Opus, Claude Sonnet, GPT-OSS',
+            },
+        ],
+        description: 'Within each group, models share a weekly limit and a 5-hour limit. Quota is consumed proportionally to the cost of the tokens. Managed by the SolidStack proxy.',
+    };
+    res.setHeader('Content-Type', 'application/json');
+    return res.status(200).json(payload);
+}
+
+// Hop-by-hop headers must not be forwarded on responses; Node rejects a response
+// carrying both `content-length` and `transfer-encoding` ("Content-Length can't be
+// present with Transfer-Encoding"). The caller sets the final length itself.
+function sanitizeResponseHeaders(headers, outLength) {
+    const out = {};
+    for (const [k, v] of Object.entries(headers || {})) {
+        const lk = k.toLowerCase();
+        if (['transfer-encoding', 'connection', 'keep-alive', 'proxy-connection', 'upgrade', 'trailer', 'te'].includes(lk)) continue;
+        out[k] = v;
+    }
+    if (outLength != null) out['content-length'] = outLength;
+    return out;
+}
+
+// Manual forward for fetchAvailableModels: extract the response, resolve every
+// model's quotaInfo to healthy (remainingFraction = 1.0), and re-send so AG's
+// model availability display is not locked to whichever pooled account served it.
+function forwardAndNeutralizeQuota(hostName, req, res, bodyText) {
+    const headers = { ...req.headers };
+    delete headers['transfer-encoding'];
+    delete headers['connection'];
+    headers['content-length'] = Buffer.byteLength(bodyText);
+    headers['accept-encoding'] = 'identity';
+    headers['host'] = hostName;
+
+    const proxyReq = https.request({
+        hostname: hostName,
+        port: 443,
+        method: req.method,
+        path: req.url || req.originalUrl || '/',
+        headers,
+    }, (proxyRes) => {
+        const chunks = [];
+        proxyRes.on('data', (c) => chunks.push(c));
+        proxyRes.on('error', (err) => {
+            logger.error(`[GUI Interceptor] Response stream error from ${hostName}: ${err.message}`);
+            res.destroy();
+        });
+        proxyRes.on('end', () => {
+            const raw = Buffer.concat(chunks);
+            let out = raw;
+            let neutralized = false;
+            try {
+                const data = JSON.parse(raw.toString('utf8'));
+                if (data && data.models) {
+                    for (const modelData of Object.values(data.models)) {
+                        if (modelData && modelData.quotaInfo && typeof modelData.quotaInfo === 'object') {
+                            modelData.quotaInfo.remainingFraction = 1.0;
+                        }
+                    }
+                    out = Buffer.from(JSON.stringify(data));
+                    neutralized = true;
+                }
+            } catch {
+                // Non-JSON (or already consumed) — forward the raw response unchanged.
+            }
+            const outHeaders = sanitizeResponseHeaders(proxyRes.headers, out.length);
+            if (!res.headersSent) res.writeHead(proxyRes.statusCode, outHeaders);
+            res.end(out);
+            if (neutralized) {
+                logger.info(`[GUI Interceptor] 🧪 fetchAvailableModels quotaInfo neutralized (${proxyRes.statusCode})`);
+            }
+        });
+    });
+
+    res.on('close', () => {
+        if (!res.writableFinished) proxyReq.destroy();
+    });
+
+    proxyReq.on('error', (err) => {
+        logger.error(`[GUI Interceptor] Forward error to ${hostName}: ${err.message}`);
+        if (!res.headersSent) {
+            res.status(502).json({ error: `Bad Gateway (${hostName})` });
+        } else {
+            res.destroy();
+        }
+    });
+
+    if (bodyText && bodyText.length > 0) {
+        proxyReq.write(bodyText);
+    }
+    proxyReq.end();
+}
+
+app.use(async (req, res, next) => {
+    const host = req.headers['host'] || '';
+    // Identify the canonical Google host (strip port if present)
+    const hostName = host.split(':')[0];
+    const proxy = googleProxies[hostName];
+
+    if (!proxy) {
+        return next(); // Not a Google Cloud Code request — pass to normal routes
+    }
+
+    const reqPath = req.originalUrl;
+    const reqPathLower = reqPath.toLowerCase();
+    // Detect AI model queries (prediction / generation)
+    const isAIRequest =
+        reqPathLower.includes('predict') ||
+        reqPathLower.includes('generatecontent') ||
+        (reqPathLower.includes('/models/') && req.method === 'POST');
+
+    // Detect metadata requests that also consume quota on the native account.
+    // These must be routed through the pool to prevent native account depletion.
+    // See: docs/scoring-model.md § "Native Account Protection"
+    const isMetadataRequest = !isAIRequest && (
+        reqPathLower.includes('fetchavailablemodels') ||
+        reqPathLower.includes('loadcodeassist') ||
+        reqPathLower.includes('onboarduser') ||
+        reqPathLower.includes('retrieveuserquotasummary')
+    );
+
+    // Identity-bound endpoints (account sign-in / onboarding / model discovery)
+    // MUST stay authenticated as the account that actually signed into AG. Routing
+    // them through the pool with a swapped token breaks the connect-login flow
+    // (Google would onboard / return data for the wrong account). These keep the
+    // request's original Bearer token; the pool-swap below is skipped for them.
+    const IDENTITY_ENDPOINT_MARKERS = ['onboarduser', 'loadcodeassist', 'fetchavailablemodels'];
+    const isIdentityRequest = IDENTITY_ENDPOINT_MARKERS.some((m) => reqPathLower.includes(m));
+
+    if (isAIRequest || isMetadataRequest) {
+        // Bypass: the quota summary is scoped to whichever account authenticates,
+        // so when routed through the rotating pool it looks "locked" to one account
+        // regardless of the IDE login. Synthesize a neutral (healthy) response so
+        // the usage panel is account-independent and the requirement is bypassed.
+        if (reqPathLower.includes('retrieveuserquotasummary')) {
+            logger.success(`[GUI Interceptor] 🧪 Quota summary synthesized (proxy-managed, account-independent)`);
+            return handleQuotaSummarySynthesis(req, res);
+        }
+        try {
+            await ensureInitialized();
+
+            // 0. Apply micro-delay throttle to pace burst requests
+            await globalThrottle.throttle();
+
+            // Resolve which account AG is ACTUALLY authenticated as from the
+            // live Bearer token (the SQLite auth record can be stale). This
+            // powers the -300 native penalty and keeps routing-mode.json true.
+            let incomingTokenEmail = null;
+            const incomingAuth = req.headers['authorization'] || '';
+            if (incomingAuth.startsWith('Bearer ')) {
+                const incomingToken = incomingAuth.slice(7).trim();
+                if (incomingToken) {
+                    try {
+                        incomingTokenEmail = await resolveTokenToEmail(incomingToken, accountManager);
+                    } catch (e) {
+                        logger.debug(`[GUI Interceptor] Token resolution failed: ${e.message}`);
+                    }
+                }
+            }
+
+            // 1. Extract the requested model. For /v1/models/{model}:generateContent
+            //    URLs it is in the path; for v1internal:generateContent / streamGenerateContent
+            //    it lives in the JSON body — buffer the body so we can do model-aware
+            //    selection and transparent fallback rewriting.
+            const urlModelMatch = reqPath.match(/\/v1\/models\/([^/?:]+)/);
+            const urlModel = urlModelMatch ? urlModelMatch[1] : null;
+            let requestedModel = urlModel;
+            let requestBodyText = null;
+            let requestBodyObj = null;
+
+            // fetchAvailableModels must also be body-buffered so the manual
+            // forward can neutralize its per-model quotaInfo response.
+            const needsBodyBuffer = isAIRequest || reqPathLower.includes('fetchavailablemodels');
+            if (needsBodyBuffer) {
+                try {
+                    const buf = await readRequestBody(req);
+                    if (buf && buf.length > 0) {
+                        requestBodyText = buf.toString('utf8');
+                        try {
+                            requestBodyObj = JSON.parse(requestBodyText);
+                            if (requestBodyObj && typeof requestBodyObj.model === 'string') {
+                                requestedModel = requestBodyObj.model;
+                            }
+                        } catch {
+                            requestBodyObj = null;
+                        }
+                    }
+                } catch (e) {
+                    // The stream was consumed before the size cap — cannot forward it.
+                    logger.warn(`[GUI Interceptor] Body buffering failed (${e.message}) — rejecting oversized request`);
+                    return res.status(413).json({ error: `Request body too large to intercept (${e.message})` });
+                }
+            }
+
+            // 2. Select the healthiest account from the load balancer (model-aware)
+            let { account } = accountManager.selectAccount(requestedModel, {
+                apiProfile: req?.apiProfile,
+                incomingTokenEmail,
+            });
+
+            // 3. Automatic Model Fallback Injection: if the requested model has no
+            //    available pool quota, transparently rewrite to a healthy fallback
+            //    model (Opus → Sonnet → Gemini Pro → Flash). See implementation_plan.md.
+            let fallbackModel = null;
+            if (!account && isAIRequest && requestedModel) {
+                for (const fb of getFallbackChain(requestedModel)) {
+                    const fbResult = accountManager.selectAccount(fb, {
+                        apiProfile: req?.apiProfile,
+                        incomingTokenEmail,
+                    });
+                    if (fbResult.account) {
+                        account = fbResult.account;
+                        fallbackModel = fb;
+                        break;
+                    }
+                }
+            }
+
+            const nativeAccount = incomingTokenEmail || accountManager.getNativeIdeAccount()?.email || null;
+
+            if (!account) {
+                if (isMetadataRequest) {
+                    // Metadata requests can fall back to native token if pool is empty
+                    logRoutingTelemetry('ROUTER_BYPASS', {
+                        requestedModel,
+                        actualModel: requestedModel,
+                        nativeAccount,
+                        selectedAccount: null,
+                        reason: 'No pooled accounts — metadata pass-through with native token',
+                    });
+                    logger.warn(`[GUI Interceptor] No pooled accounts — metadata pass-through: ${req.method} ${reqPath}`);
+                    // fetchAvailableModels body was already buffered — it can no longer
+                    // fall through to httpxy (the stream is consumed). Forward manually
+                    // with the native token, still neutralizing quotaInfo.
+                    if (reqPathLower.includes('fetchavailablemodels') && requestBodyText != null) {
+                        forwardAndNeutralizeQuota(hostName, req, res, requestBodyText);
+                        return;
+                    }
+                } else {
+                    logRoutingTelemetry('ALL_EXHAUSTED', {
+                        requestedModel,
+                        actualModel: requestedModel,
+                        nativeAccount,
+                        selectedAccount: null,
+                        reason: 'No accounts available in pool and no fallback model available',
+                    });
+                    logger.warn(`[GUI Interceptor] No accounts available for AI request to ${reqPath}`);
+                    return res.status(503).json({ error: 'No accounts available in pool' });
+                }
+            } else {
+                // 4. Apply the fallback model rewrite (body model takes precedence)
+                if (fallbackModel) {
+                    if (requestBodyObj && requestBodyObj.model) {
+                        requestBodyObj.model = fallbackModel;
+                        requestBodyText = JSON.stringify(requestBodyObj);
+                    } else if (urlModel && req.url) {
+                        req.url = req.url.replace(urlModel, fallbackModel);
+                    }
+                    logRoutingTelemetry('MODEL_FALLBACK', {
+                        requestedModel,
+                        actualModel: fallbackModel,
+                        nativeAccount,
+                        selectedAccount: account.email,
+                        reason: `Requested model has no available pool quota`,
+                    });
+                }
+
+                // 5. Fetch a fresh OAuth token for that account
+                // 6. Swap the IDE's native token with our pooled account token —
+                //    EXCEPT for identity-bound endpoints, which keep their own
+                //    native Bearer token so the connect-login flow works.
+                if (!isIdentityRequest) {
+                    const token = await accountManager.getTokenForAccount(account);
+                    req.headers['authorization'] = `Bearer ${token}`;
+                }
+
+                const label = isIdentityRequest
+                    ? '🔑 Identity'
+                    : (fallbackModel ? '⚡ Fallback' : (isMetadataRequest ? '📋 Metadata' : '⚡ Balanced'));
+                logger.success(`[GUI Interceptor] ${label} → ${reqPath}${requestedModel ? ` [${requestedModel}]` : ''}${fallbackModel ? ` (→${fallbackModel})` : ''}${isIdentityRequest ? ' (native token)' : ` via ${account.email}`}`);
+
+                // 7. AI bodies were buffered — forward manually (native https, DNS patched)
+                if (isAIRequest && requestBodyText != null) {
+                    forwardToGoogle(hostName, req, res, requestBodyText);
+                    return;
+                }
+
+                // 7b. fetchAvailableModels: route through the pool for the real model
+                // list, but neutralize the per-model quotaInfo so AG's model availability
+                // is not locked to whichever pooled account served the request.
+                if (isMetadataRequest && reqPathLower.includes('fetchavailablemodels') && requestBodyText != null) {
+                    forwardAndNeutralizeQuota(hostName, req, res, requestBodyText);
+                    return;
+                }
+            }
+        } catch (error) {
+            if (isMetadataRequest) {
+                // Metadata failures are non-fatal — fall through with native token
+                logger.warn(`[GUI Interceptor] Metadata pool error (pass-through): ${error.message}`);
+            } else {
+                logger.error(`[GUI Interceptor] Error selecting account: ${error.message}`);
+                return res.status(500).json({ error: error.message });
+            }
+        }
+    } else {
+        // Pure auth / OAuth callbacks / heartbeat — pass through with the original IDE token
+        logger.info(`[GUI Interceptor] 🔑 Auth pass-through: ${req.method} ${reqPath}`);
+    }
+
+    // Forward to Google using the pre-created stable proxy instance
+    proxy(req, res, next);
+});
+// ──────────────────────────────────────────────────────────────────────────────
+
 // Middleware
 app.use(cors());
 app.use(express.json({ limit: REQUEST_BODY_LIMIT }));
+app.use(express.urlencoded({ extended: true, limit: REQUEST_BODY_LIMIT }));
 
 // API Key authentication middleware for /v1/* endpoints
 app.use('/v1', (req, res, next) => {
-    // Skip validation if apiKey is not configured
-    if (!config.apiKey) {
+    // Skip API Key check for Google Cloud Code / Gemini GUI requests
+    const host = req.headers['host'] || '';
+    if (host.includes('cloudcode-pa.googleapis.com') || host.includes('daily-cloudcode-pa.googleapis.com')) {
+        return next();
+    }
+
+    // Skip validation if apiKeys are not configured (and legacy apiKey is not configured)
+    const hasKeysConfigured = (config.apiKeys && Object.keys(config.apiKeys).length > 0) || config.apiKey;
+    if (!hasKeysConfigured) {
         return next();
     }
 
@@ -96,17 +565,43 @@ app.use('/v1', (req, res, next) => {
         providedKey = xApiKey;
     }
 
-    if (!providedKey || providedKey !== config.apiKey) {
-        logger.warn(`[API] Unauthorized request from ${req.ip}, invalid API key`);
-        return res.status(401).json({
-            type: 'error',
-            error: {
-                type: 'authentication_error',
-                message: 'Invalid or missing API key'
-            }
-        });
+    let isValid = false;
+    let apiProfile = null;
+
+    if (providedKey) {
+        if (config.apiKeys && config.apiKeys[providedKey]) {
+            isValid = true;
+            apiProfile = config.apiKeys[providedKey];
+        } else if (config.apiKey && providedKey === config.apiKey) {
+            isValid = true;
+            apiProfile = { tier: 'legacy' }; // Legacy fallback
+        }
+    } else {
+        // Fallback for local IDE requests that don't send an API key
+        isValid = true;
+        apiProfile = { tier: 'gui', fallback: true };
     }
 
+    if (!isValid) {
+        const isLocalhost = req.ip === '127.0.0.1' || req.ip === '::1' || req.ip === '::ffff:127.0.0.1';
+        if (isLocalhost) {
+            // Accept any key from localhost (useful for claude-code CLI sending OAuth tokens)
+            isValid = true;
+            apiProfile = { tier: 'cli', fallback: true };
+        } else {
+            logger.warn(`[API] Unauthorized request from ${req.ip}, invalid API key: ${providedKey.substring(0, 4)}...`);
+            return res.status(401).json({
+                type: 'error',
+                error: {
+                    type: 'authentication_error',
+                    message: 'Invalid or missing API key'
+                }
+            });
+        }
+    }
+
+    // Attach profile to request for load balancer routing
+    req.apiProfile = apiProfile;
     next();
 });
 
@@ -130,8 +625,107 @@ app.use((req, res, next) => {
     next();
 });
 
+// ─── Dynamic Model Config ─────────────────────────────────────────────────────
+// Populated on startup from live API data. Refreshed periodically.
+let dynamicPresets = null;
+let dynamicFallbackMapCache = null;
+
+/**
+ * Initialize dynamic model configuration from live API data.
+ * Called once on startup after account manager is ready.
+ */
+async function initDynamicModelConfig() {
+    try {
+        const { account } = accountManager.selectAccount();
+        if (!account) {
+            logger.warn('[Server] No accounts available for dynamic model config');
+            return;
+        }
+        const token = await accountManager.getTokenForAccount(account);
+        const data = await fetchAvailableModels(token, account.subscription?.projectId);
+        if (data && data.models) {
+            const modelIds = Object.keys(data.models).filter(id => {
+                const fam = id.toLowerCase();
+                return fam.includes('claude') || fam.includes('gemini') || true; // include all
+            });
+            logger.info(`[Server] Discovered ${modelIds.length} models for dynamic config`);
+
+            // Build and cache dynamic fallback map
+            initFallbackMap(modelIds);
+            dynamicFallbackMapCache = buildFallbackMap(modelIds);
+
+            // Build and cache dynamic presets
+            const port = process.env.PORT || 1987;
+            dynamicPresets = buildPresets(modelIds, port);
+            logger.success(`[Server] Dynamic presets generated: ${dynamicPresets.map(p => p.name).join(', ')}`);
+        }
+    } catch (error) {
+        logger.warn(`[Server] Dynamic model config failed: ${error.message}`);
+    }
+}
+
+// Refresh dynamic model config periodically (every 5 minutes)
+setInterval(() => {
+    if (isInitialized) {
+        initDynamicModelConfig().catch(() => {});
+    }
+}, 5 * 60 * 1000);
+
+/**
+ * API: Get dynamically generated presets
+ * Returns auto-generated presets based on live model data
+ */
+app.get('/webui/api/dynamic-presets', async (req, res) => {
+    try {
+        // If we have cached presets, return them immediately
+        if (dynamicPresets) {
+            return res.json({ presets: dynamicPresets, source: 'dynamic', modelCount: Object.keys(dynamicFallbackMapCache || {}).length });
+        }
+
+        // Otherwise try to generate on-demand
+        await ensureInitialized();
+        await initDynamicModelConfig();
+
+        if (dynamicPresets) {
+            return res.json({ presets: dynamicPresets, source: 'dynamic', modelCount: Object.keys(dynamicFallbackMapCache || {}).length });
+        }
+
+        // Fall back to static presets
+        const { DEFAULT_PRESETS } = await import('./constants.js');
+        res.json({ presets: DEFAULT_PRESETS, source: 'fallback', modelCount: 0 });
+    } catch (error) {
+        logger.error('[API] Error generating dynamic presets:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// Mount Commander Dashboard API Router (replaces Python FastAPI backend)
+app.use('/api', createCommanderRouter(accountManager, ensureInitialized));
+
+// Mount Conversation History API (query logged conversations)
+app.use('/api', createConversationRouter());
+
+// Mount iMessage reader API (local iMessage database queries)
+import { createIMessageRouter } from './imessage-reader.js';
+app.use('/api', createIMessageRouter());
+
+// Mount primary account Gemini conversation router
+import { createGeminiConversationRouter } from './gemini-conversations.js';
+app.use('/api/gemini', createGeminiConversationRouter());
+
+// Mount unified search API (across conversations + iMessage)
+import { createSearchRouter } from './api-search.js';
+app.use('/api', createSearchRouter());
+
+
 // Mount WebUI (optional web interface for account management)
 mountWebUI(app, __dirname, accountManager);
+
+// Mount OpenAI-compatible endpoint (replaces standalone ARC Gateway)
+mountOpenAICompat(app, accountManager, ensureInitialized, FALLBACK_ENABLED);
+
+// Mount OpenAI Responses-API bridge (Routes OpenAI Codex CLI through the pool)
+mountResponsesCompat(app, accountManager, ensureInitialized, FALLBACK_ENABLED);
 
 /**
  * Parse error message to extract error type, status code, and user-friendly message
@@ -364,6 +958,37 @@ app.get('/account-limits', async (req, res) => {
                     };
                 }
 
+                if (account.type === 'apikey') {
+                    const mockModels = {};
+                    const modelsList = [
+                        'gemini-2.5-flash',
+                        'gemini-2.5-flash-lite',
+                        'gemini-2.5-flash-thinking',
+                        'gemini-2.5-pro',
+                        'gemini-3.0-flash',
+                        'gemini-3.1-flash-lite',
+                        'gemini-3.1-pro-high'
+                    ];
+                    for (const m of modelsList) {
+                        mockModels[m] = {
+                            remaining: 15,
+                            limit: 15,
+                            remainingFraction: 1.0,
+                            resetTime: Date.now() + 60000,
+                            period: 'minute'
+                        };
+                    }
+                    return {
+                        email: account.email,
+                        status: 'ok',
+                        subscription: {
+                            tier: 'Developer API Key',
+                            projectId: 'virtual-api-key'
+                        },
+                        models: mockModels
+                    };
+                }
+
                 try {
                     const token = await accountManager.getTokenForAccount(account);
 
@@ -568,6 +1193,8 @@ app.get('/account-limits', async (req, res) => {
         const responseData = {
             timestamp: new Date().toLocaleString(),
             totalAccounts: allAccounts.length,
+            routingMode: accountManager.getRoutingMode ? accountManager.getRoutingMode() : 'load_balancer',
+            nativeAccount: accountManager.getNativeIdeAccount ? accountManager.getNativeIdeAccount()?.email : null,
             models: sortedModels,
             modelConfig: config.modelMapping || {},
             globalQuotaThreshold: config.globalQuotaThreshold || 0,
@@ -656,7 +1283,7 @@ app.post('/refresh-token', async (req, res) => {
 app.get('/v1/models', async (req, res) => {
     try {
         await ensureInitialized();
-        const { account } = accountManager.selectAccount();
+        const { account } = accountManager.selectAccount(null, { apiProfile: req?.apiProfile });
         if (!account) {
             return res.status(503).json({
                 type: 'error',
@@ -735,7 +1362,7 @@ app.post('/v1/messages', async (req, res) => {
         const modelId = requestedModel;
 
         // Validate model ID before processing
-        const { account: validationAccount } = accountManager.selectAccount();
+        const { account: validationAccount } = accountManager.selectAccount(modelId, { apiProfile: req?.apiProfile });
         if (validationAccount) {
             const token = await accountManager.getTokenForAccount(validationAccount);
             const projectId = validationAccount.subscription?.projectId || null;
@@ -781,7 +1408,9 @@ app.post('/v1/messages', async (req, res) => {
             thinking,
             top_p,
             top_k,
-            temperature
+            temperature,
+            apiProfile: req?.apiProfile,
+            taskTier: req?.headers?.['x-task-tier']
         };
 
         logger.info(`[API] Request for model: ${request.model}, stream: ${!!stream}`);
@@ -802,6 +1431,8 @@ app.post('/v1/messages', async (req, res) => {
             // Do NOT flush headers immediately. We need to wait for the first chunk
             // to ensure we don't send a 200 OK if the upstream fails immediately (e.g. 429/503).
 
+            const streamConvId = initStreamingLog(req, request.model, '', '');
+
             try {
                 // Initialize the generator
                 const generator = sendMessageStream(request, accountManager, FALLBACK_ENABLED);
@@ -821,19 +1452,23 @@ app.post('/v1/messages', async (req, res) => {
 
                 // If the generator isn't done, send the first chunk
                 if (!firstResult.done) {
+                    accumulateStreamEvent(streamConvId, firstResult.value);
                     res.write(`event: ${firstResult.value.type}\ndata: ${JSON.stringify(firstResult.value)}\n\n`);
                     if (res.flush) res.flush();
                 }
 
                 // Continue with the rest of the stream
                 for await (const event of generator) {
+                    accumulateStreamEvent(streamConvId, event);
                     res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
                     if (res.flush) res.flush();
                 }
                 
                 res.end();
+                finalizeStreamingLog(streamConvId);
 
             } catch (error) {
+                finalizeStreamingLog(streamConvId, error);
                 // If we haven't sent headers yet, we can send a proper error status
                 if (!res.headersSent) {
                     logger.error('[API] Initial stream error:', error);
@@ -863,6 +1498,7 @@ app.post('/v1/messages', async (req, res) => {
         } else {
             // Handle non-streaming response
             const response = await sendMessage(request, accountManager, FALLBACK_ENABLED);
+            logConversation(request, response, '', '', req);
             res.json(response);
         }
 
@@ -911,18 +1547,59 @@ app.post('/v1/messages', async (req, res) => {
  */
 usageStats.setupRoutes(app);
 
-app.use('*', (req, res) => {
-    // Log 404s (use originalUrl since wildcard strips req.path)
-    if (logger.isDebugEnabled) {
-        logger.debug(`[API] 404 Not Found: ${req.method} ${req.originalUrl}`);
-    }
-    res.status(404).json({
-        type: 'error',
-        error: {
-            type: 'not_found_error',
-            message: `Endpoint ${req.method} ${req.originalUrl} not found`
+// ==========================================
+// SolidStack Dashboard Reverse Proxy (Port 5001)
+// ==========================================
+const dashboardProxy = createProxyMiddleware({
+    target: 'http://127.0.0.1:5001',
+    changeOrigin: true,
+    ws: true,
+    pathRewrite: {
+        '^/dashboard': '/'
+    },
+    on: {
+        error: (err, req, res) => {
+            logger.error(`[Dashboard Proxy] Error: ${err.message}`);
+            if (!res.headersSent) {
+                res.status(502).json({ error: 'Dashboard Offline' });
+            }
         }
-    });
+    }
 });
+
+app.use((req, res, next) => {
+    const flaskRoutes = ['/api/stream', '/api/status', '/api/attention', '/api/heartbeats', '/api/nodes', '/api/services', '/api/containers', '/api/integrations', '/api/taxonomy', '/api/workflow', '/api/coordinator', '/api/agents', '/api/locks', '/api/worktrees', '/api/tasks', '/api/task-progress', '/api/handoffs', '/api/openclaw', '/api/blockers', '/api/service-mobility', '/api/ai-accounts', '/api/ai-proxy', '/api/token-usage', '/api/actions', '/api/discovered', '/api/discovered-devices', '/api/skills', '/api/model-logs', '/api/features', '/api/consideration', '/api/aggregator/status', '/api/local-engines', '/api/model-download-status'];
+    
+    if (req.path === '/dashboard' || req.path.startsWith('/dashboard/') || req.path.startsWith('/static/') || req.path.startsWith('/partials/')) {
+        return dashboardProxy(req, res, next);
+    }
+    
+    for (const route of flaskRoutes) {
+        if (req.path === route || req.path.startsWith(route + '/')) {
+            return dashboardProxy(req, res, next);
+        }
+    }
+    
+    next();
+});
+
+app.use('*', createProxyMiddleware({
+    target: 'https://cloudcode-pa.googleapis.com',
+    changeOrigin: true,
+    secure: true,
+    on: {
+        proxyReq: (proxyReq, req, res) => {
+            if (logger.isDebugEnabled) {
+                logger.debug(`[Transparent Passthrough] Forwarding unknown route ${req.method} ${req.originalUrl} directly to Google`);
+            }
+        },
+        error: (err, req, res) => {
+            logger.error(`[Transparent Passthrough] Error forwarding ${req.originalUrl}: ${err.message}`);
+            if (!res.headersSent) {
+                res.status(502).json({ error: 'Bad Gateway via Transparent Proxy' });
+            }
+        }
+    }
+}));
 
 export default app;
