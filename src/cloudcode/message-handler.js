@@ -23,9 +23,12 @@ import { isRateLimitError, isAuthError, isAccountForbiddenError, AccountForbidde
 import { formatDuration, sleep, isNetworkError, throttledFetch } from '../utils/helpers.js';
 import { logger } from '../utils/logger.js';
 import { parseResetTime } from './rate-limit-parser.js';
+import { sendGeminiDirect } from './gemini-direct.js';
+import { isLocalEngineAvailable, sendLocalEngineRequest } from './local-engine-fallback.js';
 import { buildCloudCodeRequest, buildHeaders } from './request-builder.js';
 import { parseThinkingSSEResponse } from './sse-parser.js';
-import { getFallbackModel } from '../fallback-config.js';
+import { getFallbackChain } from '../fallback-config.js';
+import { logRoutingTelemetry } from './routing-logger.js';
 import {
     getRateLimitBackoff,
     clearRateLimitState,
@@ -51,24 +54,73 @@ import {
  * @throws {Error} If max retries exceeded or no accounts available
  */
 export async function sendMessage(anthropicRequest, accountManager, fallbackEnabled = false) {
-    const model = anthropicRequest.model;
-    const isThinking = isThinkingModel(model);
+    let currentModel = anthropicRequest.model;
+    const isThinking = isThinkingModel(currentModel);
 
-    // Retry loop with account failover
-    // Ensure we try at least as many times as there are accounts to cycle through everyone
-    const maxAttempts = Math.max(MAX_RETRIES, accountManager.getAccountCount() + 1);
+    // O10: MoE gating to local engine (only eligible for lightweight tasks)
+    const isLocalEligible = !isThinking && (currentModel.includes('flash-low') || anthropicRequest.taskTier === 'background');
+    if (isLocalEligible && await isLocalEngineAvailable()) {
+        try {
+            logger.info(`[CloudCode] MoE Routing: Gate eligible request for ${currentModel} to local engine.`);
+            return await sendLocalEngineRequest(anthropicRequest, currentModel);
+        } catch (e) {
+            logger.warn(`[CloudCode] Local engine MoE expert failed, falling back to cloud pool: ${e.message}`);
+        }
+    }
 
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    // O2: Pre-resolve fallback cascade inline without recursion
+    function rewriteToFallback(reason) {
+        if (!fallbackEnabled) return false;
+        const chain = getFallbackChain(currentModel);
+        let nativeAccount = null;
+        try { nativeAccount = accountManager.getNativeIdeAccount()?.email || null; } catch {}
+
+        for (const fallbackModel of chain) {
+            if (fallbackModel === currentModel) continue;
+            // O1: Check if fallback model has available accounts
+            const avail = accountManager.getAvailableAccounts(fallbackModel) || [];
+            if (avail.length > 0) {
+                logger.warn(`[CloudCode] Pool exhausted for ${currentModel} (${reason}). Rewriting to ${fallbackModel}`);
+                logRoutingTelemetry('MODEL_FALLBACK', {
+                    requestedModel: anthropicRequest.model,
+                    actualModel: fallbackModel,
+                    nativeAccount,
+                    selectedAccount: null,
+                    reason: `Quota/rate-limit exhausted for ${currentModel} (${reason})`,
+                });
+                currentModel = fallbackModel;
+                // O2 Fix: Shallow copy request to avoid mutating caller's object
+                anthropicRequest = { ...anthropicRequest, model: fallbackModel };
+                return true;
+            }
+        }
+
+        logRoutingTelemetry('ALL_EXHAUSTED', {
+            requestedModel: anthropicRequest.model,
+            actualModel: currentModel,
+            nativeAccount,
+            selectedAccount: null,
+            reason: `Pool exhausted for ${currentModel} (${reason}); no fallback available`,
+        });
+        return false;
+    }
+
+    // O1: Bound retry amplification
+    outerLoop: while (true) {
+        let maxAttempts = 20; // Hard cap
+        const initialAvail = accountManager.getAvailableAccounts(currentModel);
+        maxAttempts = Math.min(20, Math.max(MAX_RETRIES, initialAvail.length));
+
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
         // Clear any expired rate limits before picking
         accountManager.clearExpiredLimits();
 
         // Get available accounts for this model
-        const availableAccounts = accountManager.getAvailableAccounts(model);
+        const availableAccounts = accountManager.getAvailableAccounts(currentModel);
 
         // If no accounts available, check if we should wait or throw error
         if (availableAccounts.length === 0) {
-            // All accounts invalid? Fail immediately — they need user intervention (WebUI FIX button)
-            // Invalid accounts won't self-recover, so waiting would be an infinite loop
+            // All accounts invalid? Fail immediately
             if (accountManager.isAllAccountsInvalid()) {
                 const invalidAccounts = accountManager.getInvalidAccounts();
                 const reasons = [...new Set(invalidAccounts.map(a => a.invalidReason).filter(Boolean))];
@@ -77,23 +129,17 @@ export async function sendMessage(anthropicRequest, accountManager, fallbackEnab
                 );
             }
 
-            if (accountManager.isAllRateLimited(model)) {
-                const minWaitMs = accountManager.getMinWaitTimeMs(model);
+            if (accountManager.isAllRateLimited(currentModel)) {
+                const minWaitMs = accountManager.getMinWaitTimeMs(currentModel);
                 const resetTime = new Date(Date.now() + minWaitMs).toISOString();
 
                 // If wait time is too long (> 2 minutes), try fallback first, then throw error
                 if (minWaitMs > MAX_WAIT_BEFORE_ERROR_MS) {
-                    // Check if fallback is enabled and available
-                    if (fallbackEnabled) {
-                        const fallbackModel = getFallbackModel(model);
-                        if (fallbackModel) {
-                            logger.warn(`[CloudCode] All accounts exhausted for ${model} (${formatDuration(minWaitMs)} wait). Attempting fallback to ${fallbackModel}`);
-                            const fallbackRequest = { ...anthropicRequest, model: fallbackModel };
-                            return await sendMessage(fallbackRequest, accountManager, false);
-                        }
+                    if (rewriteToFallback(`${formatDuration(minWaitMs)} wait`)) {
+                        continue outerLoop;
                     }
                     throw new Error(
-                        `RESOURCE_EXHAUSTED: Rate limited on ${model}. Quota will reset after ${formatDuration(minWaitMs)}. Next available: ${resetTime}`
+                        `RESOURCE_EXHAUSTED: Rate limited on ${currentModel}. Quota will reset after ${formatDuration(minWaitMs)}. Next available: ${resetTime}`
                     );
                 }
 
@@ -103,18 +149,20 @@ export async function sendMessage(anthropicRequest, accountManager, fallbackEnab
                 await sleep(minWaitMs + 500); // Add 500ms buffer
                 accountManager.clearExpiredLimits();
 
-                // CRITICAL FIX: Don't count waiting for rate limits as a failed attempt
-                // This prevents "Max retries exceeded" when we are just patiently waiting
                 attempt--;
                 continue; // Retry the loop
             }
 
-            // No accounts available and not rate-limited (shouldn't happen normally)
-            throw new Error('No accounts available');
+            // O1: Pool empty for family -> fallback now
+            if (rewriteToFallback(`no accounts`)) {
+                continue outerLoop;
+            }
+
+            throw new Error(`No accounts available for ${currentModel}`);
         }
 
         // Select account using configured strategy
-        const { account, waitMs } = accountManager.selectAccount(model);
+        const { account, waitMs } = accountManager.selectAccount(currentModel, { apiProfile: anthropicRequest.apiProfile, taskTier: anthropicRequest.taskTier });
 
         // If strategy returns a wait time without an account, sleep and retry
         if (!account && waitMs > 0) {
@@ -132,17 +180,29 @@ export async function sendMessage(anthropicRequest, accountManager, fallbackEnab
         }
 
         if (!account) {
-            logger.warn(`[CloudCode] Strategy returned no account for ${model} (attempt ${attempt + 1}/${maxAttempts})`);
+            logger.warn(`[CloudCode] Strategy returned no account for ${currentModel} (attempt ${attempt + 1}/${maxAttempts})`);
             continue;
         }
 
         try {
             // Get token and project for this account
             const token = await accountManager.getTokenForAccount(account);
+
+            if (account.type === 'apikey') {
+                try {
+                    const response = await sendGeminiDirect(anthropicRequest, token);
+                    accountManager.notifySuccess(account, currentModel);
+                    return response;
+                } catch (err) {
+                    logger.error(`[CloudCode] Gemini direct request failed for ${account.email}: ${err.message}`);
+                    throw err;
+                }
+            }
+
             const project = await accountManager.getProjectForAccount(account, token);
             const payload = buildCloudCodeRequest(anthropicRequest, project, account.email);
 
-            logger.debug(`[CloudCode] Sending request for model: ${model}`);
+            logger.debug(`[CloudCode] Sending request for model: ${currentModel}`);
 
             // Try each endpoint with index-based loop for capacity retry support
             let lastError = null;
@@ -158,7 +218,7 @@ export async function sendMessage(anthropicRequest, accountManager, fallbackEnab
 
                     const response = await throttledFetch(url, {
                         method: 'POST',
-                        headers: buildHeaders(token, model, isThinking ? 'text/event-stream' : 'application/json', payload.request.sessionId),
+                        headers: buildHeaders(token, currentModel, isThinking ? 'text/event-stream' : 'application/json', payload.request.sessionId),
                         body: JSON.stringify(payload)
                     });
 
@@ -205,7 +265,7 @@ export async function sendMessage(anthropicRequest, accountManager, fallbackEnab
                             }
 
                             // Get rate limit backoff with exponential backoff and state reset
-                            const backoff = getRateLimitBackoff(account.email, model, resetMs);
+                            const backoff = getRateLimitBackoff(account.email, currentModel, resetMs);
 
                             // For very short rate limits (< 1 second), always wait and retry
                             // Switching accounts won't help when all accounts have per-second rate limits
@@ -221,7 +281,7 @@ export async function sendMessage(anthropicRequest, accountManager, fallbackEnab
                             if (backoff.isDuplicate) {
                                 const smartBackoffMs = calculateSmartBackoff(errorText, resetMs, consecutiveFailures);
                                 logger.info(`[CloudCode] Skipping retry due to recent rate limit on ${account.email} (attempt ${backoff.attempt}), switching account...`);
-                                accountManager.markRateLimited(account.email, smartBackoffMs, model);
+                                accountManager.markRateLimited(account.email, smartBackoffMs, currentModel);
                                 throw new Error(`RATE_LIMITED_DEDUP: ${errorText}`);
                             }
 
@@ -235,7 +295,7 @@ export async function sendMessage(anthropicRequest, accountManager, fallbackEnab
                                 const waitMs = backoff.delayMs;
                                 // markRateLimited already increments consecutiveFailures internally
                                 // This prevents concurrent retry storms and ensures progressive backoff escalation
-                                accountManager.markRateLimited(account.email, waitMs, model);
+                                accountManager.markRateLimited(account.email, waitMs, currentModel);
                                 logger.info(`[CloudCode] First rate limit on ${account.email}, quick retry after ${formatDuration(waitMs)}...`);
                                 await sleep(waitMs);
                                 // Don't increment endpointIndex - retry same endpoint
@@ -244,13 +304,13 @@ export async function sendMessage(anthropicRequest, accountManager, fallbackEnab
                                 // Long-term quota exhaustion (> 10s) - wait SWITCH_ACCOUNT_DELAY_MS then switch
                                 logger.info(`[CloudCode] Quota exhausted for ${account.email} (${formatDuration(smartBackoffMs)}), switching account after ${formatDuration(SWITCH_ACCOUNT_DELAY_MS)} delay...`);
                                 await sleep(SWITCH_ACCOUNT_DELAY_MS);
-                                accountManager.markRateLimited(account.email, smartBackoffMs, model);
+                                accountManager.markRateLimited(account.email, smartBackoffMs, currentModel);
                                 throw new Error(`QUOTA_EXHAUSTED: ${errorText}`);
                             } else {
                                 // Short-term rate limit but not first attempt - use exponential backoff delay
                                 const waitMs = backoff.delayMs;
                                 // markRateLimited already increments consecutiveFailures internally
-                                accountManager.markRateLimited(account.email, waitMs, model);
+                                accountManager.markRateLimited(account.email, waitMs, currentModel);
                                 logger.info(`[CloudCode] Rate limit on ${account.email} (attempt ${backoff.attempt}), waiting ${formatDuration(waitMs)}...`);
                                 await sleep(waitMs);
                                 // Don't increment endpointIndex - retry same endpoint
@@ -275,7 +335,7 @@ export async function sendMessage(anthropicRequest, accountManager, fallbackEnab
                                 }
                                 // Max capacity retries exceeded - switch account
                                 logger.warn(`[CloudCode] Max capacity retries (${MAX_CAPACITY_RETRIES}) exceeded on ${response.status}, switching account`);
-                                accountManager.markRateLimited(account.email, BACKOFF_BY_ERROR_TYPE.MODEL_CAPACITY_EXHAUSTED, model);
+                                accountManager.markRateLimited(account.email, BACKOFF_BY_ERROR_TYPE.MODEL_CAPACITY_EXHAUSTED, currentModel);
                                 throw new Error(`CAPACITY_EXHAUSTED: ${errorText}`);
                             }
 
@@ -321,8 +381,8 @@ export async function sendMessage(anthropicRequest, accountManager, fallbackEnab
                     if (isThinking) {
                         const result = await parseThinkingSSEResponse(response, anthropicRequest.model);
                         // Clear rate limit state on success
-                        clearRateLimitState(account.email, model);
-                        accountManager.notifySuccess(account, model);
+                        clearRateLimitState(account.email, currentModel);
+                        accountManager.notifySuccess(account, currentModel);
                         return result;
                     }
 
@@ -330,8 +390,8 @@ export async function sendMessage(anthropicRequest, accountManager, fallbackEnab
                     const data = await response.json();
                     logger.debug('[CloudCode] Response received');
                     // Clear rate limit state on success
-                    clearRateLimitState(account.email, model);
-                    accountManager.notifySuccess(account, model);
+                    clearRateLimitState(account.email, currentModel);
+                    accountManager.notifySuccess(account, currentModel);
                     return convertGoogleToAnthropic(data, anthropicRequest.model);
 
                 } catch (endpointError) {
@@ -356,7 +416,7 @@ export async function sendMessage(anthropicRequest, accountManager, fallbackEnab
             if (lastError) {
                 if (lastError.is429) {
                     logger.warn(`[CloudCode] All endpoints rate-limited for ${account.email}`);
-                    accountManager.markRateLimited(account.email, lastError.resetMs, model);
+                    accountManager.markRateLimited(account.email, lastError.resetMs, currentModel);
                     throw new Error(`Rate limited: ${lastError.errorText}`);
                 }
                 throw lastError;
@@ -365,7 +425,7 @@ export async function sendMessage(anthropicRequest, accountManager, fallbackEnab
         } catch (error) {
             if (isRateLimitError(error)) {
                 // Rate limited - already marked, notify strategy and continue to next account
-                accountManager.notifyRateLimit(account, model);
+                accountManager.notifyRateLimit(account, currentModel);
                 logger.info(`[CloudCode] Account ${account.email} rate-limited, trying next...`);
 
                 // CRITICAL FIX: If this is a duplicate rate limit (account was already known to be
@@ -385,20 +445,20 @@ export async function sendMessage(anthropicRequest, accountManager, fallbackEnab
             if (isAccountForbiddenError(error)) {
                 // 403 VALIDATION_REQUIRED / PERMISSION_DENIED - account-level error
                 // Already marked with cooldown, notify strategy and rotate to next account
-                accountManager.notifyFailure(account, model);
+                accountManager.notifyFailure(account, currentModel);
                 logger.warn(`[CloudCode] Account ${account.email} forbidden (403 VALIDATION_REQUIRED), trying next...`);
                 continue;
             }
             // Handle 5xx errors
             if (error.message.includes('API error 5') || error.message.includes('500') || error.message.includes('503')) {
-                accountManager.notifyFailure(account, model);
+                accountManager.notifyFailure(account, currentModel);
 
                 // Track 5xx errors for extended cooldown
                 // Note: markRateLimited already increments consecutiveFailures internally
                 const currentFailures = accountManager.getConsecutiveFailures(account.email);
                 if (currentFailures + 1 >= MAX_CONSECUTIVE_FAILURES) {
                     logger.warn(`[CloudCode] Account ${account.email} has ${currentFailures + 1} consecutive failures, applying extended cooldown (${formatDuration(EXTENDED_COOLDOWN_MS)})`);
-                    accountManager.markRateLimited(account.email, EXTENDED_COOLDOWN_MS, model);
+                    accountManager.markRateLimited(account.email, EXTENDED_COOLDOWN_MS, currentModel);
                 } else {
                     accountManager.incrementConsecutiveFailures(account.email);
                     logger.warn(`[CloudCode] Account ${account.email} failed with 5xx error (${currentFailures + 1}/${MAX_CONSECUTIVE_FAILURES}), trying next...`);
@@ -407,14 +467,14 @@ export async function sendMessage(anthropicRequest, accountManager, fallbackEnab
             }
 
             if (isNetworkError(error)) {
-                accountManager.notifyFailure(account, model);
+                accountManager.notifyFailure(account, currentModel);
 
                 // Track network errors for extended cooldown
                 // Note: markRateLimited already increments consecutiveFailures internally
                 const currentFailures = accountManager.getConsecutiveFailures(account.email);
                 if (currentFailures + 1 >= MAX_CONSECUTIVE_FAILURES) {
                     logger.warn(`[CloudCode] Account ${account.email} has ${currentFailures + 1} consecutive network failures, applying extended cooldown (${formatDuration(EXTENDED_COOLDOWN_MS)})`);
-                    accountManager.markRateLimited(account.email, EXTENDED_COOLDOWN_MS, model);
+                    accountManager.markRateLimited(account.email, EXTENDED_COOLDOWN_MS, currentModel);
                 } else {
                     accountManager.incrementConsecutiveFailures(account.email);
                     logger.warn(`[CloudCode] Network error for ${account.email} (${currentFailures + 1}/${MAX_CONSECUTIVE_FAILURES}), trying next account... (${error.message})`);
@@ -424,18 +484,25 @@ export async function sendMessage(anthropicRequest, accountManager, fallbackEnab
             }
 
             throw error;
+        } // end inner for loop
+        throw error;
+    } // end for loop
+
+    // All retries exhausted - try local engine fallback (Turbo Fieldfare / Ollama) if available
+    try {
+        if (!isThinking && await isLocalEngineAvailable()) {
+            logger.warn(`[CloudCode] Cloud pool exhausted. Falling back to local engine.`);
+            return await sendLocalEngineRequest(anthropicRequest, currentModel);
         }
+    } catch (e) {
+        logger.error(`[CloudCode] Local engine fallback failed: ${e.message}`);
     }
 
-    // All retries exhausted - try fallback model if enabled
-    if (fallbackEnabled) {
-        const fallbackModel = getFallbackModel(model);
-        if (fallbackModel) {
-            logger.warn(`[CloudCode] All retries exhausted for ${model}. Attempting fallback to ${fallbackModel}`);
-            const fallbackRequest = { ...anthropicRequest, model: fallbackModel };
-            return await sendMessage(fallbackRequest, accountManager, false);
-        }
+    if (rewriteToFallback(`max retries exhausted`)) {
+        logger.warn(`[CloudCode] Max retries exhausted, rewriting to ${currentModel}`);
+        continue outerLoop;
     }
 
-    throw new Error('Max retries exceeded');
+    throw new Error(`Max retries exceeded (${maxAttempts}) for ${currentModel}. Account pool is likely exhausted or rate-limited.`);
+    } // end while loop
 }
