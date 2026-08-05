@@ -28,6 +28,7 @@ export async function loadAccounts(configPath = ACCOUNT_CONFIG_PATH) {
 
         const accounts = (config.accounts || []).map(acc => ({
             ...acc,
+            refreshToken: acc.refreshToken || acc.refresh_token || null,
             lastUsed: acc.lastUsed || null,
             enabled: acc.enabled !== false, // Default to true if not specified
             // Reset invalid flag on startup - give accounts a fresh chance
@@ -125,12 +126,12 @@ export async function saveAccounts(configPath, accounts, settings, activeIndex) 
         await mkdir(dir, { recursive: true });
 
         const config = {
-            accounts: accounts.map(acc => ({
+            accounts: accounts.filter(acc => acc.source !== '1password' && acc.type !== 'apikey').map(acc => ({
                 email: acc.email,
                 source: acc.source,
                 enabled: acc.enabled !== false,
                 dbPath: acc.dbPath || null,
-                refreshToken: acc.source === 'oauth' ? acc.refreshToken : undefined,
+                refreshToken: (acc.source === 'oauth' || acc.refreshToken?.startsWith('PENDING_AUTH')) ? acc.refreshToken : undefined,
                 apiKey: acc.source === 'manual' ? acc.apiKey : undefined,
                 projectId: acc.projectId || undefined,
                 addedAt: acc.addedAt || undefined,

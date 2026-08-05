@@ -13,6 +13,7 @@ import {
     DEFAULT_PROJECT_ID
 } from '../constants.js';
 import { refreshAccessToken, parseRefreshParts, formatRefreshParts } from '../auth/oauth.js';
+import { getDelegatedAccessToken } from '../auth/service-account.js';
 import { getAuthStatus } from '../auth/database.js';
 import { logger } from '../utils/logger.js';
 import { isNetworkError, throttledFetch } from '../utils/helpers.js';
@@ -74,7 +75,22 @@ export async function getTokenForAccount(account, tokenCache, onInvalid, onSave)
     // Get fresh token based on source
     let token;
 
-    if (account.source === 'oauth' && account.refreshToken) {
+    if (account.refreshToken?.startsWith('PENDING_AUTH')) {
+        try {
+            const tokens = await getDelegatedAccessToken(account.email);
+            token = tokens.accessToken;
+            if (account.isInvalid) {
+                account.isInvalid = false;
+                account.invalidReason = null;
+                if (onSave) await onSave();
+            }
+            logger.success(`[AccountManager] Generated DWD token for: ${account.email}`);
+        } catch (error) {
+            logger.error(`[AccountManager] Failed to generate DWD token for ${account.email}:`, error.message);
+            if (onInvalid) onInvalid(account.email, error.message);
+            throw new Error(`AUTH_INVALID_DWD: ${account.email}: ${error.message}`);
+        }
+    } else if (account.source === 'oauth' && account.refreshToken) {
         // OAuth account - use refresh token to get new access token
         try {
             const tokens = await refreshAccessToken(account.refreshToken);
