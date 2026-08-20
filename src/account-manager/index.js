@@ -597,10 +597,12 @@ export class AccountManager {
     markRateLimited(email, resetMs = null, modelId = null, autoDisable = true) {
         markLimited(this.#accounts, email, resetMs, modelId);
         
-        // Auto-disable account on 429 rate limit to force active state switch
-        // This ensures the backend proxy automatically switches states without relying on the UI
+        // Auto-disable account ONLY on account-wide 429 (modelId === null).
+        // Per-model 429s are already handled by getAvailableAccounts(modelId)
+        // filtering, so disabling the whole account here would cascade-disable
+        // every other model on the pool when one shared model is exhausted.
         const account = this.#accounts.find(a => a.email === email);
-        if (account && account.enabled !== false && autoDisable) {
+        if (account && account.enabled !== false && autoDisable && modelId === null) {
             account.enabled = false;
             account.disabledBy429 = true;
             logger.warn(`[AccountManager] Account ${email} automatically disabled due to 429 rate limit`);
