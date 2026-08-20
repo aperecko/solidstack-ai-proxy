@@ -30,7 +30,11 @@ function deepMerge(target, source) {
 
 // Default config
 const DEFAULT_CONFIG = {
-    apiKey: '',
+    apiKey: '', // Deprecated, use apiKeys instead
+    apiKeys: {
+        'sk-gui-default': { tier: 'gui' },
+        'sk-cli-default': { tier: 'cli', maxQuotaDrain: 0.30 }
+    },
     webuiPassword: '',
     debug: false,
     devMode: false,
@@ -82,6 +86,13 @@ const DEFAULT_CONFIG = {
             quota: 3,                 // Weight for quota awareness component
             lru: 0.1                  // Weight for LRU freshness component
         }
+    },
+    localEngine: {
+        enabled: true,
+        provider: 'auto', // 'turbo-fieldfare' | 'ollama' | 'auto'
+        turboEndpoint: 'http://127.0.0.1:8088/v1',
+        ollamaEndpoint: 'http://127.0.0.1:11434/v1',
+        defaultModel: 'gemma-4-26b-a4b'
     }
 };
 
@@ -123,6 +134,10 @@ function loadConfig() {
 
         // Environment overrides
         if (process.env.API_KEY) config.apiKey = process.env.API_KEY;
+        // Merge API key from env into apiKeys if it doesn't exist
+        if (config.apiKey && !config.apiKeys[config.apiKey]) {
+            config.apiKeys[config.apiKey] = { tier: 'gui' };
+        }
         if (process.env.WEBUI_PASSWORD) config.webuiPassword = process.env.WEBUI_PASSWORD;
         if (process.env.DEBUG === 'true') config.debug = true;
         if (process.env.DEV_MODE === 'true') config.devMode = true;
@@ -145,6 +160,12 @@ export function getPublicConfig() {
     // Redact sensitive values
     if (publicConfig.webuiPassword) publicConfig.webuiPassword = '********';
     if (publicConfig.apiKey) publicConfig.apiKey = '********';
+    if (publicConfig.apiKeys) {
+        publicConfig.apiKeys = Object.keys(publicConfig.apiKeys).reduce((acc, key) => {
+            acc['********'] = publicConfig.apiKeys[key];
+            return acc;
+        }, {});
+    }
 
     return publicConfig;
 }

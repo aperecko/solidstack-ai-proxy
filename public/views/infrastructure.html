@@ -1,0 +1,70 @@
+<div x-data="infrastructure" class="view-container">
+    <div class="flex items-center justify-between gap-4 mb-6">
+        <div class="flex flex-wrap items-center gap-4">
+            <h1 class="text-2xl font-bold text-white tracking-tight">Infrastructure Management</h1>
+            <div class="flex items-center h-6 px-3 rounded-full bg-space-800/80 border border-space-border/50 shadow-sm backdrop-blur-sm">
+                <span class="text-[10px] font-mono text-gray-400 uppercase tracking-wider">
+                    Virtual Machine Consolidation & Deployments
+                </span>
+            </div>
+        </div>
+        <div class="flex items-center gap-2">
+            <button class="btn btn-xs btn-outline border-space-border text-gray-400 hover:text-white transition-all gap-2 h-8" @click="fetchVms()">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                <span>Refresh</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Stats Row -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <div class="view-card border-l-4 border-l-neon-purple flex flex-col justify-between">
+            <div class="text-xs text-gray-500 uppercase font-bold tracking-wider mb-2">Total VMs</div>
+            <div class="text-3xl font-bold font-mono text-white" x-text="vms.length">0</div>
+        </div>
+        <div class="view-card border-l-4 border-l-neon-green flex flex-col justify-between">
+            <div class="text-xs text-gray-500 uppercase font-bold tracking-wider mb-2">Consolidated Modes</div>
+            <div class="text-3xl font-bold font-mono text-white">4</div>
+        </div>
+        <div class="view-card border-l-4 border-l-yellow-500 flex flex-col justify-between">
+            <div class="text-xs text-gray-500 uppercase font-bold tracking-wider mb-2">Pending Migration</div>
+            <div class="text-3xl font-bold font-mono text-white">2</div>
+        </div>
+    </div>
+
+    <div class="view-card !p-0">
+        <table class="w-full">
+            <thead>
+                <tr class="bg-space-900/50 border-b border-space-border/50">
+                    <th class="pl-6 py-3 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-12">State</th>
+                    <th class="py-3 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider">Instance</th>
+                    <th class="py-3 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider">Provider</th>
+                    <th class="py-3 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider">IP Address</th>
+                    <th class="py-3 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider">Role</th>
+                    <th class="py-3 pr-6 text-right text-[10px] font-bold text-gray-500 uppercase tracking-wider">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <template x-for="vm in vms" :key="vm.id">
+                    <tr class="border-b border-space-border/30 hover:bg-white/5 transition-colors">
+                        <td class="pl-6 py-4">
+                            <div class="w-2 h-2 rounded-full mx-auto" :class="vm.state === 'running' ? 'bg-neon-green shadow-[0_0_8px_rgba(34,197,94,0.6)] animate-pulse' : 'bg-gray-600'"></div>
+                        </td>
+                        <td class="py-4 font-mono text-sm text-gray-300" x-text="vm.name"></td>
+                        <td class="py-4">
+                            <span class="px-2 py-1 text-[10px] font-bold uppercase tracking-wider rounded border"
+                                :class="vm.provider === 'oracle' ? 'bg-red-900/20 text-red-400 border-red-800/30' : 'bg-blue-900/20 text-blue-400 border-blue-800/30'"
+                                x-text="vm.provider"></span>
+                        </td>
+                        <td class="py-4 font-mono text-xs text-gray-500" x-text="vm.ip || 'Unassigned'"></td>
+                        <td class="py-4 font-mono text-xs text-gray-400" x-text="vm.role"></td>
+                        <td class="py-4 pr-6 text-right">
+                            <button class="btn btn-xs btn-ghost text-gray-400 hover:text-white">Manage</button>
+                        </td>
+                    </tr>
+                </template>
+                <tr x-show="vms.length === 0"><td colspan="6" class="py-8 text-center text-gray-500 text-sm">No VMs provisioned</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>

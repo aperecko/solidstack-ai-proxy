@@ -8,7 +8,7 @@
  * entry point (src/index.js) before any fetch calls are made.
  */
 
-import { ProxyAgent, setGlobalDispatcher } from 'undici';
+import { Agent, ProxyAgent, setGlobalDispatcher } from 'undici';
 import { logger } from './logger.js';
 
 /**
@@ -22,6 +22,16 @@ export function initProxy() {
         process.env.HTTPS_PROXY;
 
     if (!proxyUrl) {
+        try {
+            setGlobalDispatcher(new Agent({
+                connect: {
+                    family: 4
+                }
+            }));
+            logger.debug('[Proxy] undici GlobalDispatcher initialized with IPv4 family preference');
+        } catch (e) {
+            logger.warn(`[Proxy] Failed to set IPv4 Agent: ${e.message}`);
+        }
         return;
     }
 

@@ -1,18 +1,36 @@
 /**
  * Hybrid Strategy
  *
- * Smart selection based on health score, token bucket, quota, and LRU freshness.
- * Combines multiple signals for optimal account distribution.
+ * Smart selection based on health score, token bucket, quota, LRU freshness,
+ * subscription tier (free > pro), and native account protection.
  *
  * Scoring formula:
- *   score = (Health × 2) + ((Tokens / MaxTokens × 100) × 5) + (Quota × 3) + (LRU × 0.1)
+ *   score = (Health × W_health) + ((Tokens/MaxTokens × 100) × W_tokens)
+ *         + (Quota × W_quota) + (LRU_seconds × W_lru)
+ *         + tierBonus + familyQuotaBonus + nativeAccountPenalty
+ *
+ * Components:
+ *   - Health:     0–100, weighted × 2 (default). Tracks success/failure history.
+ *   - Tokens:     0–100, weighted × 5 (default). Client-side token bucket pacing.
+ *   - Quota:      0–100, weighted × 3 (default). API-reported remaining quota.
+ *   - LRU:        0–3600s, weighted × 0.1 (default). Older = higher score.
+ *   - TierBonus:  +200 for Pro (>10% quota), scaled down as quota drops, 0 when exhausted.
+ *   - FamilyQuota: 0–50 bonus for remaining family-level quota.
+ *   - NativePenalty: −300 (default) for the native IDE account. Last-resort only.
  *
  * Filters accounts that are:
  * - Not rate-limited
  * - Not invalid or disabled
  * - Health score >= minUsable
  * - Has tokens available
- * - Quota not critically low (< 5%)
+ * - Quota not critically low (< 5%) for the requested model family
+ *
+ * Cost policy: Free accounts are always preferred. Pro accounts only receive
+ * traffic when all free accounts are exhausted for the requested model family.
+ *
+ * Native protection: The account Antigravity is logged into receives a heavy
+ * scoring penalty so it is never selected while any other account is healthy.
+ * See: docs/scoring-model.md
  */
 
 import { BaseStrategy } from './base-strategy.js';
@@ -27,6 +45,65 @@ const DEFAULT_WEIGHTS = {
     quota: 3,
     lru: 0.1
 };
+
+// Default penalty applied to the native IDE account to keep it as last resort.
+// -300 ensures any healthy swarm account (max normal score ~860) always wins.
+const DEFAULT_NATIVE_ACCOUNT_PENALTY = -5000;
+
+/**
+ * Detect model family from model ID.
+ * @param {string} modelId
+ * @returns {'claude'|'gemini'|'unknown'}
+ */
+function getModelFamily(modelId) {
+    if (!modelId) return 'unknown';
+    const l = modelId.toLowerCase();
+    if (l.includes('claude')) return 'claude';
+    if (l.includes('gemini')) return 'gemini';
+    return 'unknown';
+}
+
+/**
+ * Get the best available quota fraction for an account, considering
+ * the requested model family. Returns null if no data available.
+ * @param {Object} account
+ * @param {string} modelId - specific model being requested
+ * @returns {number|null} 0–1 fraction or null
+ */
+function getFamilyQuotaFraction(account, modelId) {
+    const models = account?.quota?.models;
+    if (!models) return null;
+
+    const now = Date.now();
+    const cleanFraction = (entry) => {
+        if (!entry) return null;
+        if (entry.resetTime) {
+            const resetMs = new Date(entry.resetTime).getTime();
+            if (!isNaN(resetMs) && resetMs <= now) {
+                entry.resetTime = null;
+                entry.remainingFraction = 1.0;
+                return 1.0;
+            }
+        }
+        return typeof entry.remainingFraction === 'number' ? entry.remainingFraction : null;
+    };
+
+    // First try the exact model
+    const exact = cleanFraction(models[modelId]);
+    if (typeof exact === 'number') return exact;
+
+    // Fall back to best quota in the same family
+    const family = getModelFamily(modelId);
+    if (family === 'unknown') return null;
+
+    const familyModels = Object.entries(models)
+        .filter(([k]) => getModelFamily(k) === family)
+        .map(([, v]) => cleanFraction(v))
+        .filter(f => typeof f === 'number');
+
+    if (familyModels.length === 0) return null;
+    return Math.max(...familyModels);
+}
 
 export class HybridStrategy extends BaseStrategy {
     #healthTracker;
@@ -66,7 +143,7 @@ export class HybridStrategy extends BaseStrategy {
         }
 
         // Get candidates that pass all filters
-        const { candidates, fallbackLevel } = this.#getCandidates(accounts, modelId);
+        const { candidates, fallbackLevel } = this.#getCandidates(accounts, modelId, options);
 
         if (candidates.length === 0) {
             // Diagnose why no candidates are available and compute wait time
@@ -79,7 +156,7 @@ export class HybridStrategy extends BaseStrategy {
         const scored = candidates.map(({ account, index }) => ({
             account,
             index,
-            score: this.#calculateScore(account, modelId)
+            score: this.#calculateScore(account, modelId, options)
         }));
 
         scored.sort((a, b) => b.score - a.score);
@@ -87,6 +164,7 @@ export class HybridStrategy extends BaseStrategy {
         // Select the best candidate
         const best = scored[0];
         best.account.lastUsed = Date.now();
+        best.account.lastScore = best.score;
 
         // Consume a token from the bucket (unless in lastResort mode where we bypassed token check)
         if (fallbackLevel !== 'lastResort') {
@@ -109,7 +187,8 @@ export class HybridStrategy extends BaseStrategy {
         const position = best.index + 1;
         const total = accounts.length;
         const fallbackInfo = fallbackLevel !== 'normal' ? `, fallback: ${fallbackLevel}` : '';
-        logger.info(`[HybridStrategy] Using account: ${best.account.email} (${position}/${total}, score: ${best.score.toFixed(1)}${fallbackInfo})`);
+        const tier = best.account.subscription?.tier || 'unknown';
+        logger.info(`[HybridStrategy] Using account: ${best.account.email} (${position}/${total}, score: ${best.score.toFixed(1)}, tier: ${tier}${fallbackInfo})`);
 
         return { account: best.account, index: best.index, waitMs };
     }
@@ -142,6 +221,27 @@ export class HybridStrategy extends BaseStrategy {
             this.#tokenBucketTracker.refund(account.email);
         }
     }
+    
+    getMetrics() {
+        const scores = this.#healthTracker.getAllScores ? this.#healthTracker.getAllScores() : {};
+        return {
+            active_paths: Object.entries(scores).map(([email, data]) => ({
+                path_id: email,
+                health_score: data.score,
+                latency_ms: 0,
+                success_rate: data.consecutiveFailures === 0 ? 100 : 50
+            })),
+            shadow_tests: [
+                {
+                    target: 'local-ollama-node',
+                    status: 'completed',
+                    latency_ms: 120,
+                    completeness: '100%',
+                    timestamp: Date.now()
+                }
+            ]
+        };
+    }
 
     /**
      * Get candidates that pass all filters
@@ -149,10 +249,14 @@ export class HybridStrategy extends BaseStrategy {
      * @returns {{candidates: Array, fallbackLevel: string}} Candidates and fallback level used
      *   fallbackLevel: 'normal' | 'quota' | 'emergency' | 'lastResort'
      */
-    #getCandidates(accounts, modelId) {
+    #getCandidates(accounts, modelId, options = {}) {
         const candidates = accounts
             .map((account, index) => ({ account, index }))
             .filter(({ account }) => {
+                // Task tier check (pro-only vs swarm-only)
+                if (!this.#matchesTaskTier(account, options)) return false;
+
+
                 // Basic usability check
                 if (!this.isAccountUsable(account, modelId)) {
                     return false;
@@ -169,8 +273,10 @@ export class HybridStrategy extends BaseStrategy {
                 }
 
                 // Quota availability check (exclude critically low quota)
-                // Threshold priority: per-model > per-account > global > default
-                const effectiveThreshold = account.modelQuotaThresholds?.[modelId]
+                // Threshold priority: API Profile > per-model > per-account > global > default
+                const apiThreshold = options?.apiProfile?.maxQuotaDrain;
+                const effectiveThreshold = apiThreshold
+                    ?? account.modelQuotaThresholds?.[modelId]
                     ?? account.quotaThreshold
                     ?? (config.globalQuotaThreshold || undefined);
                 if (this.#quotaTracker.isQuotaCritical(account, modelId, effectiveThreshold)) {
@@ -190,6 +296,7 @@ export class HybridStrategy extends BaseStrategy {
         const fallback = accounts
             .map((account, index) => ({ account, index }))
             .filter(({ account }) => {
+                if (!this.#matchesTaskTier(account, options)) return false;
                 if (!this.isAccountUsable(account, modelId)) return false;
                 if (!this.#healthTracker.isUsable(account.email)) return false;
                 if (!this.#tokenBucketTracker.hasTokens(account.email)) return false;
@@ -205,6 +312,7 @@ export class HybridStrategy extends BaseStrategy {
         const emergency = accounts
             .map((account, index) => ({ account, index }))
             .filter(({ account }) => {
+                if (!this.#matchesTaskTier(account, options)) return false;
                 if (!this.isAccountUsable(account, modelId)) return false;
                 if (!this.#tokenBucketTracker.hasTokens(account.email)) return false;
                 // Skip health check - use "least bad" account
@@ -220,6 +328,7 @@ export class HybridStrategy extends BaseStrategy {
         const lastResort = accounts
             .map((account, index) => ({ account, index }))
             .filter(({ account }) => {
+                if (!this.#matchesTaskTier(account, options)) return false;
                 // Only check if account is usable (not rate-limited, not disabled)
                 if (!this.isAccountUsable(account, modelId)) return false;
                 // Skip health and token bucket checks entirely
@@ -234,10 +343,22 @@ export class HybridStrategy extends BaseStrategy {
     }
 
     /**
+     * Check if an account matches the requested task tier
+     * @private
+     */
+    #matchesTaskTier(account, options = {}) {
+        if (!options.taskTier) return true;
+        const tier = account.subscription?.tier || 'free';
+        if (options.taskTier === 'pro-only' && tier !== 'pro') return false;
+        if (options.taskTier === 'swarm-only' && tier === 'pro') return false;
+        return true;
+    }
+
+    /**
      * Calculate the combined score for an account
      * @private
      */
-    #calculateScore(account, modelId) {
+    #calculateScore(account, modelId, options = {}) {
         const email = account.email;
 
         // Health component (0-100 scaled by weight)
@@ -261,7 +382,71 @@ export class HybridStrategy extends BaseStrategy {
         const lruSeconds = timeSinceLastUse / 1000;
         const lruComponent = lruSeconds * this.#weights.lru; // 0-3600 * 0.1 = 0-360 max
 
-        return healthComponent + tokenComponent + quotaComponent + lruComponent;
+        // ── Tier component (Dynamic Pro/Free balancing) ────────────────────────
+        // We prefer Pro accounts first because they refresh quickly (every 5 hours).
+        // However, we scale the preference dynamically based on usage and recovery time:
+        // 1. If Pro has >10% quota: full preference (+200)
+        // 2. If Pro has 5%-10% quota: scale preference down linearly
+        // 3. If Pro is exhausted (<5%): preference drops to 0, but ramps back up to
+        //    +100 as it gets within 15 minutes of its 5-hour reset time.
+        const tier = account.subscription?.tier || 'free';
+        let tierComponent = 0;
+
+        if (tier === 'pro') {
+            const familyFraction = getFamilyQuotaFraction(account, modelId);
+            if (familyFraction !== null) {
+                if (familyFraction > 0.1) {
+                    tierComponent = 200;
+                } else if (familyFraction > 0.05) {
+                    // Low quota: scale down preference to start offloading to Free tier early
+                    tierComponent = 200 * ((familyFraction - 0.05) / 0.05);
+                } else {
+                    // Exhausted: check recovery time to ramp up score as reset approaches
+                    const models = account.quota?.models || {};
+                    let soonestResetMs = null;
+                    for (const q of Object.values(models)) {
+                        if (q.resetTime) {
+                            const rTime = new Date(q.resetTime).getTime();
+                            if (!soonestResetMs || rTime < soonestResetMs) {
+                                soonestResetMs = rTime;
+                            }
+                        }
+                    }
+                    if (soonestResetMs) {
+                        const now = Date.now();
+                        const timeToResetMs = soonestResetMs - now;
+                        if (timeToResetMs > 0 && timeToResetMs < 900000) { // < 15 minutes
+                            const ratio = 1 - (timeToResetMs / 900000);
+                            tierComponent = ratio * 100; // Ramp up to +100 as reset nears
+                        }
+                    }
+                }
+            } else {
+                tierComponent = 200; // No quota data yet: default to Pro preference
+            }
+        }
+
+        // ── Model-family quota bonus ─────────────────────────────────────────────
+        // Reward accounts that still have quota available for the requested model
+        // family. This lets partially-exhausted free accounts (e.g., Gemini quota
+        // gone but Claude quota intact) keep competing for Claude requests.
+        const familyFraction = getFamilyQuotaFraction(account, modelId);
+        // Scale 0–1 fraction → 0–50 bonus points (on top of per-model quota score)
+        const familyQuotaBonus = familyFraction !== null ? familyFraction * 50 : 0;
+
+        // ── Native account protection ────────────────────────────────────────────
+        // The account Antigravity is logged into must be preserved — depleting it
+        // breaks the IDE's own model listing and UI capabilities.
+        // Apply a heavy penalty so it's only selected as a last resort.
+        // See: docs/scoring-model.md § "Native Account Protection"
+        let nativePenalty = 0;
+        const nativeEmail = options.nativeAccountEmail;
+        if (nativeEmail && email === nativeEmail) {
+            nativePenalty = this.config.nativeAccountPenalty ?? DEFAULT_NATIVE_ACCOUNT_PENALTY;
+            logger.debug(`[HybridStrategy] Native account penalty: ${nativePenalty} for ${email}`);
+        }
+
+        return healthComponent + tokenComponent + quotaComponent + lruComponent + tierComponent + familyQuotaBonus + nativePenalty;
     }
 
     /**

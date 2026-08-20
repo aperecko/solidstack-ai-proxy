@@ -25,6 +25,7 @@ import { logger } from '../utils/logger.js';
 import { parseResetTime } from './rate-limit-parser.js';
 import { sendGeminiDirect } from './gemini-direct.js';
 import { isLocalEngineAvailable, sendLocalEngineRequest } from './local-engine-fallback.js';
+import { classifyRequest } from '../routing/classifier.js';
 import { buildCloudCodeRequest, buildHeaders } from './request-builder.js';
 import { parseThinkingSSEResponse } from './sse-parser.js';
 import { getFallbackChain } from '../fallback-config.js';
@@ -57,12 +58,24 @@ export async function sendMessage(anthropicRequest, accountManager, fallbackEnab
     let currentModel = anthropicRequest.model;
     const isThinking = isThinkingModel(currentModel);
 
-    // O10: MoE gating to local engine (only eligible for lightweight tasks)
-    const isLocalEligible = !isThinking && (currentModel.includes('flash-low') || anthropicRequest.taskTier === 'background');
+    // Phase 1: Turbo Fieldfare Prompt Classifier
+    const isLocalEligible = !isThinking;
     if (isLocalEligible && await isLocalEngineAvailable()) {
         try {
-            logger.info(`[CloudCode] MoE Routing: Gate eligible request for ${currentModel} to local engine.`);
-            return await sendLocalEngineRequest(anthropicRequest, currentModel);
+            const lastMsgContent = anthropicRequest.messages?.[anthropicRequest.messages.length - 1]?.content;
+            const textPrompt = typeof lastMsgContent === 'string' 
+                ? lastMsgContent 
+                : (Array.isArray(lastMsgContent) ? lastMsgContent.map(p => p.text).join(' ') : '');
+                
+            const classification = await classifyRequest(textPrompt);
+            
+            if (classification === 'PERSONAL') {
+                logger.info(`[CloudCode] MoE Routing: Classification PERSONAL, routing to native account.`);
+                anthropicRequest.apiProfile = 'native';
+            } else {
+                logger.info(`[CloudCode] MoE Routing: Classification GENERIC, routing to hybrid pool.`);
+                // Do nothing, let it fall through to standard hybrid strategy selection
+            }
         } catch (e) {
             logger.warn(`[CloudCode] Local engine MoE expert failed, falling back to cloud pool: ${e.message}`);
         }
@@ -334,8 +347,8 @@ export async function sendMessage(anthropicRequest, accountManager, fallbackEnab
                                     continue;
                                 }
                                 // Max capacity retries exceeded - switch account
-                                logger.warn(`[CloudCode] Max capacity retries (${MAX_CAPACITY_RETRIES}) exceeded on ${response.status}, switching account`);
-                                accountManager.markRateLimited(account.email, BACKOFF_BY_ERROR_TYPE.MODEL_CAPACITY_EXHAUSTED, currentModel);
+                                logger.warn(`[CloudCode] Max capacity retries (${MAX_CAPACITY_RETRIES}) exceeded on ${response.status}, switching account (preserving account state)`);
+                                accountManager.markRateLimited(account.email, BACKOFF_BY_ERROR_TYPE.MODEL_CAPACITY_EXHAUSTED, currentModel, false);
                                 throw new Error(`CAPACITY_EXHAUSTED: ${errorText}`);
                             }
 

@@ -189,9 +189,17 @@
                             </div>
                         </td>
                         <td>
-                            <div class="font-bold text-gray-200 group-hover:text-neon-purple transition-colors"
-                                :class="$store.settings.compact ? 'text-xs' : ''"
-                                x-text="row.modelId"></div>
+                            <div class="flex items-center gap-2">
+                                <div class="font-bold text-gray-200 group-hover:text-neon-purple transition-colors"
+                                    :class="$store.settings.compact ? 'text-xs' : ''"
+                                    :title="row.allModelIds.join(', ')"
+                                    x-text="row.displayName"></div>
+                                <template x-if="row.allModelIds.length > 1">
+                                    <span class="badge badge-outline border-space-border text-[9px] text-gray-500 font-mono"
+                                          :title="row.allModelIds.join(', ')"
+                                          x-text="`+${row.allModelIds.length - 1} models`"></span>
+                                </template>
+                            </div>
                             <div class="text-[10px] font-mono text-gray-500 uppercase"
                                 x-show="!$store.settings.compact"
                                 x-text="$store.global.t('family' + row.family.charAt(0).toUpperCase() + row.family.slice(1))">
@@ -311,29 +319,25 @@
                                         x-text="$store.global.t('activeCount', {count: row.quotaInfo?.filter(q => q.pct > 0).length || 0})">
                                     </div>
                                 </div>
-                                <!-- Account Status Indicators -->
-                                <div class="flex flex-wrap gap-1 justify-start max-w-[200px]" x-data="{ maxVisible: 12 }">
+                                <!-- Account Status Indicators (Consolidated Quota Buckets) -->
+                                <div class="flex flex-wrap gap-1 justify-start max-w-[220px]">
                                     <template x-if="!row.quotaInfo || row.quotaInfo.length === 0">
                                         <div class="text-[10px] text-gray-600 italic" x-text="$store.global.t('noData')">No data</div>
                                     </template>
                                     <template x-if="row.quotaInfo && row.quotaInfo.length > 0">
-                                        <div class="flex flex-wrap gap-1 justify-start">
-                                            <!-- Visible accounts (limited to maxVisible) -->
-                                            <template x-for="(q, idx) in row.quotaInfo.slice(0, maxVisible)" :key="q.fullEmail">
-                                                <div class="tooltip tooltip-left"
-                                                     :data-tip="`${Redact.email(q.fullEmail)} (${q.pct}%)` + (q.thresholdPct > 0 ? ` · min: ${q.thresholdPct}%` : '')">
-                                                    <div class="w-2.5 h-2.5 rounded-[2px] transition-all hover:scale-125 cursor-help"
-                                                        :class="q.pct > 50 ? 'bg-neon-green opacity-80' : (q.pct > 0 ? 'bg-yellow-500 opacity-80' : 'bg-red-900 opacity-50')">
-                                                    </div>
-                                                </div>
-                                            </template>
-                                            <!-- Overflow indicator -->
-                                            <template x-if="row.quotaInfo.length > maxVisible">
-                                                <div class="tooltip tooltip-left"
-                                                     :data-tip="row.quotaInfo.slice(maxVisible).map(q => `${Redact.email(q.fullEmail)} (${q.pct}%)` + (q.thresholdPct > 0 ? ` · min: ${q.thresholdPct}%` : '')).join('\n')">
-                                                    <div class="w-2.5 h-2.5 rounded-[2px] bg-gray-700/50 border border-gray-600 flex items-center justify-center cursor-help hover:bg-gray-600/70 transition-colors">
-                                                        <span class="text-[6px] text-gray-400 font-bold leading-none"
-                                                              x-text="`+${row.quotaInfo.length - maxVisible}`"></span>
+                                        <div class="flex flex-wrap gap-1.5 justify-start">
+                                            <template x-for="b in (row.consolidatedQuotas || [])" :key="b.type + '-' + b.pct">
+                                                <div class="tooltip tooltip-left cursor-help"
+                                                     :data-tip="`${b.count} Account(s) @ ${b.pct}% Quota:\n` + b.accounts.map(a => '• ' + Redact.email(a)).join('\n')">
+                                                    <div class="px-1.5 py-0.5 rounded border text-[8px] font-mono font-bold flex items-center gap-1 backdrop-blur-sm shadow-sm transition-transform hover:scale-105"
+                                                         :class="b.pct === 0
+                                                             ? 'bg-red-950/40 border-red-500/40 text-red-400'
+                                                             : (b.type === 'apikey'
+                                                                 ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-300'
+                                                                 : 'bg-purple-950/40 border-purple-500/40 text-purple-300')">
+                                                        <span class="w-1.5 h-1.5 rounded-full"
+                                                              :class="b.pct === 0 ? 'bg-red-500 animate-pulse' : (b.type === 'apikey' ? 'bg-emerald-400' : 'bg-purple-400')"></span>
+                                                        <span x-text="b.count > 1 ? `${b.count} accs (${b.pct}%)` : `${Redact.shortLabel(b.accounts[0])} (${b.pct}%)`"></span>
                                                     </div>
                                                 </div>
                                             </template>
@@ -429,6 +433,401 @@
                 </tr>
             </tbody>
         </table>
+    </div>
+
+    <!-- Style for request flow packet animation -->
+    <style>
+        @keyframes flowRequest {
+            0% {
+                left: 14%;
+                top: 45%;
+                opacity: 0;
+                transform: scale(0.6);
+            }
+            15% {
+                opacity: 1;
+            }
+            50% {
+                left: 50%;
+                top: 45%;
+                opacity: 1;
+                transform: scale(1.6);
+                box-shadow: 0 0 15px #a855f7;
+            }
+            85% {
+                opacity: 1;
+            }
+            100% {
+                left: 80%;
+                top: 45%;
+                opacity: 0;
+                transform: scale(0.6);
+            }
+        }
+    </style>
+
+    <!-- Primary Quota Bucket Pools (Replaces Pedantic Per-Model Clutter) -->
+    <div class="mb-8 grid grid-cols-1 md:grid-cols-2 gap-4">
+        <!-- Pool 1: Google OAuth Accounts -->
+        <div class="view-card !p-5 border-l-4 border-l-neon-purple bg-gradient-to-br from-space-card to-neon-purple/5">
+            <div class="flex items-center justify-between mb-3">
+                <div class="flex items-center gap-2">
+                    <div class="w-8 h-8 rounded-lg bg-neon-purple/10 border border-neon-purple/30 flex items-center justify-center text-neon-purple font-bold">
+                        🟣
+                    </div>
+                    <div>
+                        <h3 class="text-sm font-bold text-white tracking-tight">Google OAuth Account Pool</h3>
+                        <div class="text-[10px] font-mono text-gray-400">Shared Backend Quota Bucket for Gemini & Claude</div>
+                    </div>
+                </div>
+                <div class="px-2.5 py-1 rounded-full text-[10px] font-mono font-bold border"
+                     :class="$store.data.accounts.filter(a => a.type !== 'apikey' && a.status === 'ok').length > 0
+                         ? 'bg-neon-purple/20 text-neon-purple border-neon-purple/40 shadow-[0_0_10px_rgba(168,85,247,0.2)]'
+                         : 'bg-red-950/40 text-red-400 border-red-500/40'">
+                    <span x-text="`${$store.data.accounts.filter(a => a.type !== 'apikey' && a.status === 'ok').length}/${$store.data.accounts.filter(a => a.type !== 'apikey').length} ACCOUNTS READY`"></span>
+                </div>
+            </div>
+
+            <!-- Bucket Progress Bar -->
+            <div class="w-full bg-space-bg rounded-full h-2 mb-3 border border-space-border/40 overflow-hidden">
+                <div class="bg-gradient-to-r from-neon-purple to-neon-blue h-full rounded-full transition-all duration-500"
+                     :style="`width: ${Math.round(($store.data.accounts.filter(a => a.type !== 'apikey' && a.status === 'ok').length / Math.max(1, $store.data.accounts.filter(a => a.type !== 'apikey').length)) * 100)}%`"></div>
+            </div>
+
+            <!-- Account Breakdown Pills -->
+            <div class="flex flex-wrap gap-1.5 pt-1">
+                <template x-for="acc in $store.data.accounts.filter(a => a.type !== 'apikey')" :key="acc.email">
+                    <div class="px-2 py-0.5 rounded text-[9px] font-mono border flex items-center gap-1.5"
+                         :class="acc.status === 'ok' ? 'bg-space-card/80 border-space-border text-gray-300' : 'bg-red-950/40 border-red-500/40 text-red-400 font-bold'">
+                        <span class="w-1.5 h-1.5 rounded-full" :class="acc.status === 'ok' ? 'bg-neon-purple' : 'bg-red-500 animate-pulse'"></span>
+                        <span x-text="Redact.shortLabel(acc.email)"></span>
+                        <span x-show="acc.status !== 'ok'" class="text-[8px] uppercase tracking-wider text-red-400">(EXHAUSTED)</span>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <!-- Pool 2: Developer API Keys -->
+        <div class="view-card !p-5 border-l-4 border-l-neon-green bg-gradient-to-br from-space-card to-neon-green/5">
+            <div class="flex items-center justify-between mb-3">
+                <div class="flex items-center gap-2">
+                    <div class="w-8 h-8 rounded-lg bg-neon-green/10 border border-neon-green/30 flex items-center justify-center text-neon-green font-bold">
+                        ⚡️
+                    </div>
+                    <div>
+                        <h3 class="text-sm font-bold text-white tracking-tight">Virtual API Key Pool</h3>
+                        <div class="text-[10px] font-mono text-gray-400">High-Throughput Developer API Key Pool</div>
+                    </div>
+                </div>
+                <div class="px-2.5 py-1 rounded-full text-[10px] font-mono font-bold bg-neon-green/20 text-neon-green border border-neon-green/40 shadow-[0_0_10px_rgba(34,197,94,0.2)]">
+                    UNLIMITED CAPABILITY
+                </div>
+            </div>
+
+            <!-- Bucket Progress Bar -->
+            <div class="w-full bg-space-bg rounded-full h-2 mb-3 border border-space-border/40 overflow-hidden">
+                <div class="bg-gradient-to-r from-neon-green to-emerald-400 h-full rounded-full w-full"></div>
+            </div>
+
+            <!-- API Key Pills -->
+            <div class="flex flex-wrap gap-1.5 pt-1">
+                <template x-for="acc in $store.data.accounts.filter(a => a.type === 'apikey')" :key="acc.email">
+                    <div class="px-2 py-0.5 rounded text-[9px] font-mono border border-neon-green/30 bg-neon-green/10 text-emerald-300 flex items-center gap-1.5">
+                        <span class="w-1.5 h-1.5 rounded-full bg-neon-green"></span>
+                        <span x-text="Redact.email(acc.email).split('@')[0]"></span>
+                        <span class="text-[8px] text-neon-green font-bold">API KEY</span>
+                    </div>
+                </template>
+            </div>
+        </div>
+    </div>
+
+    <!-- Load Balancer Analytics & Real-Time Flow -->
+    <div class="mt-8 border-t border-space-border/30 pt-8" x-data="loadBalancer">
+        <div class="flex items-center gap-3 mb-6">
+            <h2 class="text-xl font-bold text-white tracking-tight">Load Balancer Routing Flow</h2>
+            <div class="px-2 py-0.5 rounded bg-neon-purple/10 border border-neon-purple/20 text-[9px] font-mono text-neon-purple uppercase tracking-wider" x-text="stats.strategyLabel || 'Smart Distribution'">Smart Distribution</div>
+            <button @click="toggleMode()" class="ml-auto px-2.5 py-1 rounded-md text-[10px] font-mono font-bold uppercase transition-all duration-300 flex items-center gap-1.5 cursor-pointer"
+                    :class="mode === 'native_bypass' ? 'bg-red-500/20 text-red-300 border border-red-500/50 shadow-[0_0_10px_rgba(239,68,68,0.3)]' : 'bg-neon-purple/10 text-neon-purple border border-neon-purple/30 hover:bg-neon-purple/20'">
+                <span class="w-2 h-2 rounded-full" :class="mode === 'native_bypass' ? 'bg-red-500 animate-pulse' : 'bg-neon-green'"></span>
+                <span x-text="mode === 'native_bypass' ? '🛡️ EMERGENCY BYPASS ACTIVE' : '⚡ LOAD BALANCER ACTIVE'"></span>
+            </button>
+        </div>
+
+        <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
+            <!-- Left Column: Real-Time Flow Visualization -->
+            <div class="xl:col-span-2 view-card !p-6 flex flex-col justify-between min-h-[350px]">
+                <div class="flex items-center justify-between mb-4">
+                    <span class="text-xs font-mono uppercase tracking-wider text-gray-400">Request Routing Pipeline</span>
+                    <span class="text-xs font-mono text-gray-500" x-text="'Active Pool Size: ' + $store.data.accounts.length + ' accounts'"></span>
+                </div>
+
+                <!-- Visualization Area -->
+                <div class="relative h-64 border border-space-border/40 bg-space-950/90 rounded-xl overflow-hidden p-2">
+                    <!-- Grid background -->
+                    <div class="absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.01)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.01)_1px,transparent_1px)] bg-[size:14px_24px]"></div>
+
+                    <!-- Subway Map SVG Layout -->
+                    <svg viewBox="0 0 800 240" class="w-full h-full overflow-visible select-none z-10 relative">
+                        <!-- Definitions for glowing shadows -->
+                        <defs>
+                            <filter id="glow-purple" x="-20%" y="-20%" width="140%" height="140%">
+                                <feGaussianBlur stdDeviation="6" result="blur" />
+                                <feComposite in="SourceGraphic" in2="blur" operator="over" />
+                            </filter>
+                            <filter id="glow-green" x="-20%" y="-20%" width="140%" height="140%">
+                                <feGaussianBlur stdDeviation="6" result="blur" />
+                                <feComposite in="SourceGraphic" in2="blur" operator="over" />
+                <!-- Visualization Area (Side-by-Side Flex Layout) -->
+                <div class="flex flex-col lg:flex-row gap-6 items-stretch flex-1">
+                    <!-- Left: SVG Subway Map -->
+                    <div class="flex-1 min-h-[300px] border border-space-border/40 bg-space-950/90 rounded-xl overflow-hidden p-4 relative flex items-center justify-center">
+                        <!-- Grid background -->
+                        <div class="absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.01)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.01)_1px,transparent_1px)] bg-[size:14px_24px]"></div>
+
+                        <!-- Subway Map SVG Layout -->
+                        <svg viewBox="0 0 800 240" class="w-full h-full overflow-visible select-none z-10 relative">
+                            <!-- Tracks (Lines) -->
+                            <!-- Purple Line (OAuth Route) -->
+                            <path id="track-oauth" d="M 60 120 H 220 L 320 60 H 660" fill="none" stroke="#a855f7" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" class="opacity-10" />
+                            <!-- Green Line (API Key Route) -->
+                            <path id="track-apikey" d="M 60 120 H 660" fill="none" stroke="#10b981" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" class="opacity-10" />
+                            <!-- Blue Line (Ollama Fallback) -->
+                            <path id="track-ollama" d="M 60 120 H 220 L 320 180 H 660" fill="none" stroke="#06b6d4" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" class="opacity-10" />
+
+                            <!-- Active Glowing Track Highlighting (Matches selected account color) -->
+                            <path x-show="animating && selectedEmail"
+                                  :d="selectedType === 'apikey' ? 'M 60 120 H 660' : (selectedType === 'ollama' ? 'M 60 120 H 220 L 320 180 H 660' : 'M 60 120 H 220 L 320 60 H 660')"
+                                  fill="none"
+                                  :stroke="getAccountColor(selectedEmail)"
+                                  stroke-width="5"
+                                  stroke-linecap="round"
+                                  stroke-linejoin="round"
+                                  :style="`filter: drop-shadow(0px 0px 8px ${getAccountColor(selectedEmail)}); opacity: 0.95; transition: stroke 0.3s ease, filter 0.3s ease;`" />
+
+                            <!-- Animated Trains (Transit Units with unique account colors and fade trail) -->
+                            <template x-if="animating && selectedEmail">
+                                <g>
+                                    <!-- Faint fading trail 3 -->
+                                    <circle cx="0" cy="0" r="3" :fill="getAccountColor(selectedEmail)" opacity="0.15">
+                                        <animateMotion dur="1.2s" begin="0.18s" repeatCount="1" fill="freeze">
+                                            <mpath :href="selectedType === 'apikey' ? '#track-apikey' : (selectedType === 'ollama' ? '#track-ollama' : '#track-oauth')" />
+                                        </animateMotion>
+                                    </circle>
+                                    <!-- Fading trail 2 -->
+                                    <circle cx="0" cy="0" r="4.5" :fill="getAccountColor(selectedEmail)" opacity="0.35">
+                                        <animateMotion dur="1.2s" begin="0.12s" repeatCount="1" fill="freeze">
+                                            <mpath :href="selectedType === 'apikey' ? '#track-apikey' : (selectedType === 'ollama' ? '#track-ollama' : '#track-oauth')" />
+                                        </animateMotion>
+                                    </circle>
+                                    <!-- Fading trail 1 -->
+                                    <circle cx="0" cy="0" r="6" :fill="getAccountColor(selectedEmail)" opacity="0.6">
+                                        <animateMotion dur="1.2s" begin="0.06s" repeatCount="1" fill="freeze">
+                                            <mpath :href="selectedType === 'apikey' ? '#track-apikey' : (selectedType === 'ollama' ? '#track-ollama' : '#track-oauth')" />
+                                        </animateMotion>
+                                    </circle>
+                                    <!-- Lead Train (glowing node) -->
+                                    <circle cx="0" cy="0" r="8" fill="#ffffff" :stroke="getAccountColor(selectedEmail)" stroke-width="2.5"
+                                            :style="`filter: drop-shadow(0px 0px 8px ${getAccountColor(selectedEmail)})`">
+                                        <animateMotion dur="1.2s" begin="0s" repeatCount="1" fill="freeze">
+                                            <mpath :href="selectedType === 'apikey' ? '#track-apikey' : (selectedType === 'ollama' ? '#track-ollama' : '#track-oauth')" />
+                                        </animateMotion>
+                                    </circle>
+                                </g>
+                            </template>
+
+                            <!-- Station Markers -->
+                            <!-- Origin: AI Client -->
+                            <circle cx="60" cy="120" r="10" fill="#090514" stroke="#e2e8f0" stroke-width="4" />
+                            <circle cx="60" cy="120" r="4" fill="#a855f7" />
+                            <text x="60" y="145" text-anchor="middle" fill="#94a3b8" class="text-[9px] font-mono font-bold tracking-wider">IDE CLIENT</text>
+
+                            <!-- Interchange: Load Balancer Router -->
+                            <rect x="205" y="105" width="30" height="30" rx="8" fill="#090514" stroke="#a855f7" stroke-width="3" />
+                            <circle cx="220" cy="120" r="6" fill="#c084fc" class="animate-pulse" />
+                            <text x="220" y="152" text-anchor="middle" fill="#c084fc" class="text-[9px] font-mono font-bold tracking-wider uppercase" x-text="(stats.strategyLabel || 'Smart').split(' ')[0].split('(')[0]"></text>
+
+                            <!-- Intermediate junction stations -->
+                            <!-- OAuth Junction Station -->
+                            <circle cx="320" cy="60" r="7" fill="#090514" stroke="#a855f7" stroke-width="2" />
+                            <text x="320" y="45" text-anchor="middle" fill="#a855f7" class="text-[8px] font-mono uppercase tracking-wider font-semibold">OAuth Line</text>
+
+                            <!-- API Key Junction Station -->
+                            <circle cx="320" cy="120" r="7" fill="#090514" stroke="#10b981" stroke-width="2" />
+                            <text x="320" y="108" text-anchor="middle" fill="#10b981" class="text-[8px] font-mono uppercase tracking-wider font-semibold">API Key Line</text>
+
+                            <!-- Ollama Junction Station -->
+                            <circle cx="320" cy="180" r="7" fill="#090514" stroke="#06b6d4" stroke-width="2" />
+                            <text x="320" y="202" text-anchor="middle" fill="#06b6d4" class="text-[8px] font-mono uppercase tracking-wider font-semibold">Fallback Line</text>
+
+                            <!-- Terminus Pool Stations -->
+                            <!-- OAuth Pool Terminus -->
+                            <g>
+                                <rect x="520" y="40" width="140" height="20" rx="4"
+                                      :fill="selectedType === 'oauth' && animating ? `${getAccountColor(selectedEmail)}20` : '#1e1b4b'"
+                                      :stroke="selectedType === 'oauth' && animating ? getAccountColor(selectedEmail) : '#a855f7'"
+                                      stroke-width="1.5" class="transition-all duration-700"
+                                      :style="selectedType === 'oauth' && animating ? `filter: drop-shadow(0 0 6px ${getAccountColor(selectedEmail)})` : ''" />
+                                <text x="590" y="53" text-anchor="middle" fill="#e9d5ff" class="text-[8px] font-mono font-bold uppercase tracking-wider"
+                                      x-text="selectedType === 'oauth' && selectedEmail && animating ? Redact.email(selectedEmail).split('@')[0] : 'Google OAuth Pool'"></text>
+                                <circle cx="670" cy="50" r="6" :fill="selectedType === 'oauth' && animating ? getAccountColor(selectedEmail) : '#22c55e'" class="transition-all duration-700" :style="selectedType === 'oauth' && animating ? `filter: drop-shadow(0 0 8px ${getAccountColor(selectedEmail)})` : ''" />
+                            </g>
+
+                            <!-- API Keys Pool Terminus -->
+                            <g>
+                                <rect x="520" y="110" width="140" height="20" rx="4"
+                                      :fill="selectedType === 'apikey' && animating ? `${getAccountColor(selectedEmail)}20` : '#022c22'"
+                                      :stroke="selectedType === 'apikey' && animating ? getAccountColor(selectedEmail) : '#10b981'"
+                                      stroke-width="1.5" class="transition-all duration-700"
+                                      :style="selectedType === 'apikey' && animating ? `filter: drop-shadow(0 0 6px ${getAccountColor(selectedEmail)})` : ''" />
+                                <text x="590" y="123" text-anchor="middle" fill="#d1fae5" class="text-[8px] font-mono font-bold uppercase tracking-wider"
+                                      x-text="selectedType === 'apikey' && selectedEmail && animating ? Redact.email(selectedEmail).split('@')[0] : 'Developer Keys'"></text>
+                                <circle cx="670" cy="120" r="6" :fill="selectedType === 'apikey' && animating ? getAccountColor(selectedEmail) : '#22c55e'" class="transition-all duration-700" :style="selectedType === 'apikey' && animating ? `filter: drop-shadow(0 0 8px ${getAccountColor(selectedEmail)})` : ''" />
+                            </g>
+
+                            <!-- Ollama Fallback Terminus -->
+                            <g>
+                                <rect x="520" y="170" width="140" height="20" rx="4"
+                                      :fill="selectedType === 'ollama' && animating ? `${getAccountColor(selectedEmail)}20` : '#164e63'"
+                                      :stroke="selectedType === 'ollama' && animating ? getAccountColor(selectedEmail) : '#06b6d4'"
+                                      stroke-width="1.5" class="transition-all duration-700"
+                                      :style="selectedType === 'ollama' && animating ? `filter: drop-shadow(0 0 6px ${getAccountColor(selectedEmail)})` : ''" />
+                                <text x="590" y="183" text-anchor="middle" fill="#cffafe" class="text-[8px] font-mono font-bold uppercase tracking-wider"
+                                      x-text="selectedType === 'ollama' && animating ? 'Local Ollama Node' : 'Local Ollama'"></text>
+                                <circle cx="670" cy="180" r="6" :fill="selectedType === 'ollama' && animating ? getAccountColor(selectedEmail) : '#6b7280'" class="transition-all duration-700" :style="selectedType === 'ollama' && animating ? `filter: drop-shadow(0 0 8px ${getAccountColor(selectedEmail)})` : ''" />
+                            </g>
+
+                            <!-- Real-Time HUD Overlay (Displays leveraged account details) -->
+                            <g transform="translate(480, 15)" x-show="animating && selectedEmail" class="transition-all duration-500">
+                                <rect x="-170" y="-12" width="340" height="22" rx="4" fill="#090514" :stroke="getAccountColor(selectedEmail)" stroke-width="1.5" class="opacity-95 transition-all duration-300" :style="`filter: drop-shadow(0 0 4px ${getAccountColor(selectedEmail)})`" />
+                                <text x="0" y="2" text-anchor="middle" fill="#e2e8f0" class="text-[9px] font-mono tracking-wider font-bold">
+                                    LEVERAGED NODE: <tspan :fill="getAccountColor(selectedEmail)" x-text="Redact.email(selectedEmail)"></tspan>
+                                </text>
+                            </g>
+                        </svg>
+                    </div>
+
+                    <!-- Right: Active Accounts List (Clean sidebar overflow design) -->
+                    <div class="w-full lg:w-72 flex-shrink-0 flex flex-col gap-4 z-10 max-h-[300px] overflow-y-auto pr-1 border border-space-border/20 bg-space-950/40 rounded-xl p-4">
+                        <!-- Group 1: Developer Keys -->
+                        <div>
+                            <div class="text-[9px] font-mono uppercase text-emerald-400 font-bold mb-2 tracking-wider flex items-center gap-1.5">
+                                <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                                Developer API Keys
+                            </div>
+                            <div class="space-y-1.5">
+                                <template x-for="acc in $store.data.accounts.filter(a => a.type === 'apikey')" :key="acc.email">
+                                    <div class="px-3 py-1.5 rounded-lg border text-left flex items-center justify-between gap-2 backdrop-blur-sm transition-all duration-500"
+                                         :class="acc.enabled === false
+                                             ? 'bg-red-950/20 border-red-500/30 text-gray-500 opacity-60'
+                                             : (selectedEmail === acc.email && animating
+                                                 ? 'text-white scale-102 font-semibold'
+                                                 : 'bg-space-900/60 border-space-border/60 text-gray-400')"
+                                         :style="selectedEmail === acc.email && animating ? `background-color: ${getAccountColor(acc.email)}15; border-color: ${getAccountColor(acc.email)}; box-shadow: 0 0 15px ${getAccountColor(acc.email)}25` : ''">
+                                        <div class="flex flex-col min-w-0">
+                                            <span class="text-[9px] font-mono font-bold truncate max-w-[110px]" :style="`color: ${getAccountColor(acc.email)}`" x-text="Redact.email(acc.email).split('@')[0]"></span>
+                                            <span class="text-[8px] font-mono opacity-60" x-text="acc.enabled === false ? 'DISABLED' : 'Developer API Key'"></span>
+                                        </div>
+                                        <div class="flex items-center gap-1.5">
+                                            <button @click.stop="toggleAccount(acc.email, acc.enabled === false)"
+                                                    class="px-1.5 py-0.5 rounded text-[7px] font-mono font-bold uppercase transition-colors"
+                                                    :class="acc.enabled === false ? 'bg-red-500/20 text-red-400 border border-red-500/40 hover:bg-red-500/30' : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 hover:bg-emerald-500/30'"
+                                                    x-text="acc.enabled === false ? 'DONT USE' : 'USE'"></button>
+                                            <div class="w-1.5 h-1.5 rounded-full transition-all duration-300"
+                                                 :class="acc.enabled === false ? 'bg-gray-600' : (acc.isInvalid ? 'bg-red-500 animate-pulse' : '')"
+                                                 :style="acc.enabled !== false && !acc.isInvalid ? `background-color: ${getAccountColor(acc.email)}; box-shadow: 0 0 8px ${getAccountColor(acc.email)}` : ''"></div>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+
+                        <!-- Group 2: Google OAuth Accounts -->
+                        <div>
+                            <div class="text-[9px] font-mono uppercase text-neon-purple font-bold mb-2 tracking-wider flex items-center gap-1.5">
+                                <span class="w-1.5 h-1.5 rounded-full bg-neon-purple"></span>
+                                Google OAuth Accounts
+                            </div>
+                            <div class="space-y-1.5">
+                                <template x-for="acc in $store.data.accounts.filter(a => a.type !== 'apikey')" :key="acc.email">
+                                    <div class="px-3 py-1.5 rounded-lg border text-left flex items-center justify-between gap-2 backdrop-blur-sm transition-all duration-500"
+                                         :class="acc.enabled === false
+                                             ? 'bg-red-950/20 border-red-500/30 text-gray-500 opacity-60'
+                                             : (selectedEmail === acc.email && animating
+                                                 ? 'text-white scale-102 font-semibold'
+                                                 : 'bg-space-900/60 border-space-border/60 text-gray-400')"
+                                         :style="selectedEmail === acc.email && animating ? `background-color: ${getAccountColor(acc.email)}15; border-color: ${getAccountColor(acc.email)}; box-shadow: 0 0 15px ${getAccountColor(acc.email)}25` : ''">
+                                        <div class="flex flex-col min-w-0">
+                                            <span class="text-[9px] font-mono font-bold truncate max-w-[110px]" :style="`color: ${getAccountColor(acc.email)}`" x-text="Redact.email(acc.email).split('@')[0]"></span>
+                                            <span class="text-[8px] font-mono opacity-60" x-text="acc.enabled === false ? 'DISABLED' : 'Google OAuth Account'"></span>
+                                        </div>
+                                        <div class="flex items-center gap-1.5">
+                                            <button @click.stop="toggleAccount(acc.email, acc.enabled === false)"
+                                                    class="px-1.5 py-0.5 rounded text-[7px] font-mono font-bold uppercase transition-colors"
+                                                    :class="acc.enabled === false ? 'bg-red-500/20 text-red-400 border border-red-500/40 hover:bg-red-500/30' : 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 hover:bg-emerald-500/30'"
+                                                    x-text="acc.enabled === false ? 'DONT USE' : 'USE'"></button>
+                                            <div class="w-1.5 h-1.5 rounded-full transition-all duration-300"
+                                                 :class="acc.enabled === false ? 'bg-gray-600' : (acc.isInvalid ? 'bg-red-500 animate-pulse' : '')"
+                                                 :style="acc.enabled !== false && !acc.isInvalid ? `background-color: ${getAccountColor(acc.email)}; box-shadow: 0 0 8px ${getAccountColor(acc.email)}` : ''"></div>
+                                        </div>
+                                    </div>
+                                </template>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Dashboard Stats -->
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div>
+                        <div class="text-xs font-mono text-neon-green uppercase">Success</div>
+                        <div class="text-lg font-bold text-neon-green font-mono" x-text="stats.successCount">0</div>
+                    </div>
+                    <div>
+                        <div class="text-xs font-mono text-yellow-500 uppercase">Throttled</div>
+                        <div class="text-lg font-bold text-yellow-500 font-mono" x-text="stats.rateLimitCount">0</div>
+                    </div>
+                    <div>
+                        <div class="text-xs font-mono text-neon-purple uppercase font-semibold">Success Rate</div>
+                        <div class="text-lg font-bold text-neon-purple font-mono" x-text="stats.successRate + '%'">100%</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Column: Live Decision Log -->
+            <div class="view-card !p-6 flex flex-col min-h-[350px]">
+                <span class="text-xs font-mono uppercase tracking-wider text-gray-400 mb-4 block">Load Balancing Log</span>
+                
+                <div class="flex-1 overflow-y-auto space-y-3 max-h-[260px] pr-1">
+                    <template x-for="log in stats.history" :key="log.id">
+                        <div class="p-3 bg-space-950/50 border border-space-border/40 rounded-xl flex flex-col gap-1 text-left relative overflow-hidden transition-all hover:border-space-border">
+                            <!-- Left border indicator -->
+                            <div class="absolute left-0 top-0 bottom-0 w-1"
+                                 :class="log.status === 'success' ? 'bg-neon-green' : (log.status === 'rate_limit' ? 'bg-yellow-500' : 'bg-red-500')"></div>
+                            
+                            <div class="flex items-center justify-between text-[9px] font-mono font-bold">
+                                <span class="text-gray-200" x-text="Redact.email(log.email).split('@')[0]"></span>
+                                <span class="px-1.5 py-0.5 rounded text-[8px] font-bold border" :class="getStatusColor(log.status)" x-text="getStatusText(log.status)"></span>
+                            </div>
+                            
+                            <div class="text-[9px] font-mono text-gray-500 truncate" x-text="'Model: ' + log.model"></div>
+                            
+                            <div class="flex items-center justify-between text-[8px] font-mono text-gray-600 mt-1">
+                                <span x-text="'Score: ' + (log.score || 'N/A')"></span>
+                                <span x-text="new Date(log.timestamp).toLocaleTimeString()"></span>
+                            </div>
+                        </div>
+                    </template>
+                    
+                    <template x-if="stats.history.length === 0">
+                        <div class="h-full flex items-center justify-center text-xs text-gray-600 font-mono py-12">
+                            Waiting for request routing activity...
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
     </div>
 </div>
 </div>

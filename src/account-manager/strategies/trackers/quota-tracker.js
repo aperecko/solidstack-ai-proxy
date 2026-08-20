@@ -33,7 +33,19 @@ export class QuotaTracker {
      */
     getQuotaFraction(account, modelId) {
         if (!account?.quota?.models?.[modelId]) return null;
-        const fraction = account.quota.models[modelId].remainingFraction;
+        const q = account.quota.models[modelId];
+        
+        // Auto-expire stale quota when resetTime has passed
+        if (q.resetTime) {
+            const resetMs = new Date(q.resetTime).getTime();
+            if (!isNaN(resetMs) && resetMs <= Date.now()) {
+                q.resetTime = null;
+                q.remainingFraction = 1.0;
+                return 1.0;
+            }
+        }
+        
+        const fraction = q.remainingFraction;
         return typeof fraction === 'number' ? fraction : null;
     }
 

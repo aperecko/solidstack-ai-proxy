@@ -32,7 +32,8 @@ document.addEventListener('alpine:init', () => {
             family: 'all',
             search: '',
             sortCol: 'avgQuota',
-            sortAsc: true
+            sortAsc: true,
+            status: 'all'
         },
 
         // Settings for calculation
@@ -127,6 +128,8 @@ document.addEventListener('alpine:init', () => {
 
                 const data = await response.json();
                 this.accounts = data.accounts || [];
+                this.routingMode = data.routingMode || 'load_balancer';
+                this.nativeAccount = data.nativeAccount || null;
                 if (data.models && data.models.length > 0) {
                     this.models = data.models;
                 }
@@ -239,7 +242,7 @@ document.addEventListener('alpine:init', () => {
 
         computeQuotaRows() {
             const models = this.models || [];
-            const rows = [];
+            const groups = {}; // key -> { modelIds: [], family, quotaInfo, ... }
             const showExhausted = Alpine.store('settings')?.showExhausted ?? true;
 
             models.forEach(modelId => {
@@ -248,13 +251,9 @@ document.addEventListener('alpine:init', () => {
                 const family = this.getModelFamily(modelId);
 
                 // Visibility Logic for Models Page (quotaRows):
-                // 1. If explicitly hidden via config, ALWAYS hide (clean interface)
-                // 2. If no config, default 'unknown' families to HIDDEN
-                // 3. Known families (Claude/Gemini) default to VISIBLE
-                // Note: To manage hidden models, use Settings → Models tab
                 let isHidden = config.hidden;
                 if (isHidden === undefined) {
-                    isHidden = (family === 'other' || family === 'unknown');
+                    isHidden = (family === 'unknown');
                 }
 
                 // Models Page: Check settings for visibility
@@ -280,12 +279,14 @@ document.addEventListener('alpine:init', () => {
 
                 this.accounts.forEach(acc => {
                     if (acc.enabled === false) return;
-                    if (this.filters.account !== 'all' && acc.email !== this.filters.account) return;
+                    const filterAccount = this.filters.account;
+                    const matchAll = filterAccount === 'all' || !this.accounts.some(a => a.email === filterAccount);
+                    if (!matchAll && acc.email !== filterAccount) return;
 
                     const limit = acc.limits?.[modelId];
                     if (!limit) return;
 
-                    const pct = limit.remainingFraction !== null ? Math.round(limit.remainingFraction * 100) : 0;
+                    const pct = (limit.remainingFraction !== null && limit.remainingFraction !== undefined) ? Math.round(limit.remainingFraction * 100) : 100;
                     minQuota = Math.min(minQuota, pct);
 
                     // Accumulate for average
@@ -322,25 +323,91 @@ document.addEventListener('alpine:init', () => {
                 if (quotaInfo.length === 0) return;
                 const avgQuota = validAccountCount > 0 ? Math.round(totalQuotaSum / validAccountCount) : 0;
 
-                if (!showExhausted && minQuota === 0) return;
+                const maxQuota = quotaInfo.length > 0 ? Math.max(...quotaInfo.map(q => q.pct)) : 0;
+                if (!showExhausted && maxQuota === 0) return;
+                
+                if (this.filters.status === 'depleted' && minQuota > 0) return;
 
-                // Check if thresholds vary across accounts
-                const uniqueThresholds = new Set(quotaInfo.map(q => q.thresholdPct));
+                // Group by family and the exact quota level across accounts to eliminate redundancy
+                const quotaProfileKey = family + '_' + quotaInfo.map(q => `${q.fullEmail}:${q.pct}`).sort().join('|');
+
+                if (!groups[quotaProfileKey]) {
+                    groups[quotaProfileKey] = {
+                        modelIds: [],
+                        family,
+                        minQuota,
+                        avgQuota,
+                        minResetTime,
+                        quotaInfo,
+                        pinned: !!config.pinned,
+                        hidden: !!isHidden,
+                        maxEffectiveThreshold
+                    };
+                }
+                groups[quotaProfileKey].modelIds.push(modelId);
+                if (minResetTime && (!groups[quotaProfileKey].minResetTime || new Date(minResetTime) < new Date(groups[quotaProfileKey].minResetTime))) {
+                    groups[quotaProfileKey].minResetTime = minResetTime;
+                }
+                if (maxEffectiveThreshold > groups[quotaProfileKey].maxEffectiveThreshold) {
+                    groups[quotaProfileKey].maxEffectiveThreshold = maxEffectiveThreshold;
+                }
+                if (config.pinned) {
+                    groups[quotaProfileKey].pinned = true;
+                }
+            });
+
+            // Convert groups to rows
+            const rows = [];
+            Object.values(groups).forEach(g => {
+                const uniqueThresholds = new Set(g.quotaInfo.map(q => q.thresholdPct));
                 const hasVariedThresholds = uniqueThresholds.size > 1;
 
+                // Consolidate redundant quotas into shared buckets
+                const bucketMap = new Map();
+                g.quotaInfo.forEach(q => {
+                    const isApiKey = q.fullEmail.includes('virtual-gemini-key') || q.thresholdSource === 'apikey';
+                    const type = isApiKey ? 'apikey' : 'oauth';
+                    const key = `${type}_${q.pct}`;
+                    if (!bucketMap.has(key)) {
+                        bucketMap.set(key, {
+                            type,
+                            pct: q.pct,
+                            count: 0,
+                            accounts: [],
+                            thresholdPct: q.thresholdPct
+                        });
+                    }
+                    const b = bucketMap.get(key);
+                    b.count++;
+                    b.accounts.push(q.email);
+                });
+                const consolidatedQuotas = Array.from(bucketMap.values());
+
+                // Format display name
+                let displayName = g.family.toUpperCase() + ' Grouped Models';
+                if (g.modelIds.length === 1) {
+                    displayName = g.modelIds[0];
+                } else if (g.family === 'gemini') {
+                    displayName = 'Google Gemini Pool';
+                } else if (g.family === 'claude') {
+                    displayName = 'Anthropic Claude Pool';
+                }
+
                 rows.push({
-                    modelId,
-                    displayName: modelId, // Simplified: no longer using alias
-                    family,
-                    minQuota,
-                    avgQuota, // Added Average Quota
-                    minResetTime,
-                    resetIn: minResetTime ? window.utils.formatTimeUntil(minResetTime) : '-',
-                    quotaInfo,
-                    pinned: !!config.pinned,
-                    hidden: !!isHidden, // Use computed visibility
-                    activeCount: quotaInfo.filter(q => q.pct > 0).length,
-                    effectiveThresholdPct: Math.round(maxEffectiveThreshold * 100),
+                    modelId: g.modelIds[0], // primary model ID for sorting/config key
+                    allModelIds: g.modelIds,
+                    displayName,
+                    family: g.family,
+                    minQuota: g.minQuota,
+                    avgQuota: g.avgQuota,
+                    minResetTime: g.minResetTime,
+                    resetIn: g.minResetTime ? window.utils.formatTimeUntil(g.minResetTime) : '-',
+                    quotaInfo: g.quotaInfo,
+                    consolidatedQuotas,
+                    pinned: g.pinned,
+                    hidden: g.hidden,
+                    activeCount: g.quotaInfo.filter(q => q.pct > 0).length,
+                    effectiveThresholdPct: Math.round(g.maxEffectiveThreshold * 100),
                     hasVariedThresholds
                 });
             });
@@ -390,6 +457,7 @@ document.addEventListener('alpine:init', () => {
             const lower = modelId.toLowerCase();
             if (lower.includes('claude')) return 'claude';
             if (lower.includes('gemini')) return 'gemini';
+            if (lower.includes('gpt') || lower.includes('openai')) return 'openai';
             return 'other';
         },
 
@@ -419,7 +487,7 @@ document.addEventListener('alpine:init', () => {
                     if (acc.enabled === false) return;
                     const limit = acc.limits?.[modelId];
                     if (!limit) return;
-                    const pct = limit.remainingFraction !== null ? Math.round(limit.remainingFraction * 100) : 0;
+                    const pct = (limit.remainingFraction !== null && limit.remainingFraction !== undefined) ? Math.round(limit.remainingFraction * 100) : 100;
                     quotaInfo.push({ pct });
                 });
 

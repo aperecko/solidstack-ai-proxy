@@ -231,7 +231,7 @@
                                     class="loading loading-spinner loading-xs text-gray-400"></span>
                             </div>
                             <span class="text-[11px] text-gray-500">
-                                <template x-if="currentMode === 'proxy'"><span x-text="$store.global.t('usingLocalProxy', {port: getProxyPort()})">Using local proxy server</span></template>
+                                <template x-if="currentMode === 'proxy'"><span x-text="$store.global.t('usingLocalProxy', {port: $store.settings.port})">Using local proxy server</span></template>
                                 <template x-if="currentMode === 'paid'"><span x-text="$store.global.t('usingOfficialApi')">Using official Anthropic API (requires subscription)</span></template>
                             </span>
                         </div>
@@ -328,7 +328,7 @@
                         <div>
                             <div class="text-[11px] text-gray-400 mb-1 font-mono">ANTHROPIC_BASE_URL</div>
                             <input type="text" x-model="config.env.ANTHROPIC_BASE_URL"
-                                placeholder="http://localhost:8080"
+                                placeholder="http://localhost:1987"
                                 class="input input-sm input-bordered !bg-space-800 w-full font-mono text-sm !border-space-border focus:!border-neon-purple !text-white placeholder:!text-gray-600">
                         </div>
                         <div>

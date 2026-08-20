@@ -33,3 +33,8 @@ tests/utils/*.jpeg
 # Build output
 dist/
 build/
+
+# macOS resource forks
+Icon
+Icon?
+*Icon\r

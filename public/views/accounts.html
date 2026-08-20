@@ -1,3 +1,10 @@
+<style>
+    .status-pill-apikey {
+        background-color: rgba(34, 197, 94, 0.1) !important;
+        color: rgb(34, 197, 94) !important;
+        border-color: rgba(34, 197, 94, 0.3) !important;
+    }
+</style>
 <div x-data="accountManager" class="view-container">
     <!-- Compact Header -->
     <div class="flex items-center justify-between gap-4 mb-6">
@@ -69,9 +76,7 @@
                       x-text="$store.data.accounts.length + '/' + $store.data.maxAccounts"></span>
             </div>
             <button class="btn bg-neon-purple hover:bg-purple-600 border-none text-white btn-xs gap-2 shadow-lg shadow-neon-purple/20 h-8"
-                :class="{ 'opacity-50 cursor-not-allowed': $store.data.accounts.length >= $store.data.maxAccounts }"
-                :disabled="$store.data.accounts.length >= $store.data.maxAccounts"
-                @click="$store.data.accounts.length < $store.data.maxAccounts && document.getElementById('add_account_modal').showModal()">
+                @click="document.getElementById('add_account_modal').showModal()">
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
                 </svg>
@@ -129,7 +134,7 @@
                 </template>
 
                 <!-- Account Rows -->
-                <template x-for="acc in filteredAccounts" :key="acc.email">
+                <template x-for="acc in pagedAccounts" :key="acc.email">
                     <tr class="border-b border-space-border/30 last:border-0 hover:bg-white/5 transition-colors group">
                         <td class="pl-6 py-4">
                             <label class="relative inline-flex items-center cursor-pointer">
@@ -153,11 +158,12 @@
                         </td>
                         <td class="py-4">
                             <span :class="{
-                                      'status-pill-ultra': acc.subscription?.tier === 'ultra',
-                                      'status-pill-pro': acc.subscription?.tier === 'pro',
-                                      'status-pill-free': !acc.subscription || acc.subscription.tier === 'free' || acc.subscription.tier === 'unknown'
+                                      'status-pill-apikey': acc.type === 'apikey',
+                                      'status-pill-ultra': acc.type !== 'apikey' && acc.subscription?.tier === 'ultra',
+                                      'status-pill-pro': acc.type !== 'apikey' && acc.subscription?.tier === 'pro',
+                                      'status-pill-free': acc.type !== 'apikey' && (!acc.subscription || acc.subscription.tier === 'free' || acc.subscription.tier === 'unknown')
                                   }"
-                                  x-text="(acc.subscription?.tier || 'free').toUpperCase()">
+                                  x-text="acc.type === 'apikey' ? 'API KEY' : (acc.subscription?.tier || 'free').toUpperCase()">
                             </span>
                         </td>
                         <td class="py-4 cursor-pointer" @click="openQuotaModal(acc)">
@@ -274,6 +280,23 @@
                 </template>
             </tbody>
         </table>
+    </div>
+
+    <!-- Pagination Controls -->
+    <div x-show="totalPages > 1" class="flex justify-between items-center mt-4 px-2">
+        <div class="text-sm text-gray-500 font-mono">
+            Showing <span x-text="((currentPage - 1) * pageSize) + 1"></span> - 
+            <span x-text="Math.min(currentPage * pageSize, filteredAccounts.length)"></span> of 
+            <span x-text="filteredAccounts.length"></span>
+        </div>
+        <div class="join">
+            <button class="join-item btn btn-sm border-space-border/30 bg-space-900/50 hover:bg-space-800 text-gray-400 hover:text-white"
+                :disabled="currentPage === 1"
+                @click="currentPage--">« Prev</button>
+            <button class="join-item btn btn-sm border-space-border/30 bg-space-900/50 hover:bg-space-800 text-gray-400 hover:text-white"
+                :disabled="currentPage === totalPages"
+                @click="currentPage++">Next »</button>
+        </div>
     </div>
 
     <!-- Account Status Info -->

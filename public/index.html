@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Antigravity Console</title>
+    <title>SolidStack Commander</title>
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
 
     <!-- Libraries -->
@@ -73,13 +73,11 @@
 
             <div
                 class="w-8 h-8 rounded bg-gradient-to-br from-neon-purple to-blue-600 flex items-center justify-center text-white font-bold shadow-[0_0_15px_rgba(168,85,247,0.4)]">
-                AG</div>
+                SSC</div>
             <div class="flex flex-col">
-                <span class="text-sm font-bold tracking-wide text-white"
-                    x-text="$store.global.t('systemName')">ANTIGRAVITY</span>
+                <span class="text-sm font-bold tracking-wide text-white">SOLIDSTACK</span>
                 <div class="flex items-center gap-1.5">
-                    <span class="text-[10px] text-gray-500 font-mono tracking-wider"
-                        x-text="$store.global.t('systemDesc')">CLAUDE PROXY SYSTEM</span>
+                    <span class="text-[10px] text-gray-500 font-mono tracking-wider">COMMANDER</span>
                     <span class="text-[10px] text-gray-500 font-mono tracking-wider"
                         x-text="'v' + $store.global.version">v1.0.0</span>
                 </div>
@@ -87,6 +85,30 @@
         </div>
 
         <div class="flex items-center gap-4">
+            <!-- Routing Status Pill -->
+            <template x-if="connectionStatus === 'connected'">
+                <div class="flex items-center gap-2 px-3 py-1 rounded-full text-xs font-mono border transition-all duration-300"
+                    :class="$store.data.routingMode === 'load_balancer' 
+                        ? ($store.data.accounts.filter(a => !a.isInvalid).length > 0 
+                            ? 'bg-neon-purple/10 border-neon-purple/20 text-neon-purple' 
+                            : 'bg-red-500/10 border-red-500/20 text-red-500')
+                        : 'bg-amber-500/10 border-amber-500/20 text-amber-500'">
+                    <div class="w-1.5 h-1.5 rounded-full"
+                        :class="$store.data.routingMode === 'load_balancer' 
+                            ? ($store.data.accounts.filter(a => !a.isInvalid).length > 0 
+                                ? 'bg-neon-purple shadow-[0_0_8px_rgba(168,85,247,0.6)]' 
+                                : 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]')
+                            : 'bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.6)]'">
+                    </div>
+                    <span x-text="$store.data.routingMode === 'load_balancer' 
+                        ? ($store.data.accounts.filter(a => !a.isInvalid).length > 0 ? 'Multi-Account [Active]' : 'System Error [0 Accounts]') 
+                        : 'Native Bypass [Active]'"></span>
+                </div>
+            </template>
+            <template x-if="connectionStatus === 'connected'">
+                <div class="h-4 w-px bg-space-border"></div>
+            </template>
+
             <!-- Connection Pill -->
             <div class="flex items-center gap-2 px-3 py-1 rounded-full text-xs font-mono border transition-all duration-300"
                 :class="connectionStatus === 'connected'
@@ -188,6 +210,57 @@
                     </button>
                 </nav>
 
+                <!-- Commander -->
+                <div class="px-4 mt-8 mb-2 text-xs font-bold text-neon-purple uppercase tracking-widest hidden lg:block">
+                    COMMANDER
+                </div>
+                
+                <nav class="flex flex-col gap-1">
+                    <button
+                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
+                        :class="{'active': $store.global.activeTab === 'processes'}"
+                        @click="$store.global.activeTab = 'processes'">
+                        <svg class="w-5 h-5 text-neon-purple" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <span>Processes</span>
+                    </button>
+                    <button
+                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
+                        :class="{'active': $store.global.activeTab === 'infrastructure'}"
+                        @click="$store.global.activeTab = 'infrastructure'">
+                        <svg class="w-5 h-5 text-neon-cyan" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" />
+                        </svg>
+                        <span>Infrastructure</span>
+                    </button>
+                    <button
+                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-fuchsia-500/10"
+                        :class="{'bg-fuchsia-500/20 text-fuchsia-400 shadow-[0_0_15px_rgba(217,70,239,0.2)]': $store.global.activeTab === 'agent-skills'}"
+                        @click="$store.global.activeTab = 'agent-skills'">
+                        <svg class="w-5 h-5 text-fuchsia-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
+                        </svg>
+                        <span>Agent Skills</span>
+                    </button>
+
+                    <div class="px-4 mt-6">
+                        <button @click="fetch('http://127.0.0.1:8002/api/orchestrate/ai-stack', { method: 'POST' }); $store.global.showToast('AI Stack Launch Initiated', 'success')" 
+                            class="w-full p-3 rounded-xl flex items-center justify-center gap-2 transition-all bg-emerald-500/20 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.2)] hover:bg-emerald-500/30 font-bold" 
+                            title="Start AI Stack">
+                            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                            </svg>
+                            Start AI Stack
+                        </button>
+                    </div>
+                </nav>
+
                 <div class="px-4 mt-8 mb-2 text-xs font-bold text-gray-600 uppercase tracking-widest"
                     x-text="$store.global.t('system')">System</div>
                 <nav class="flex flex-col gap-1">
@@ -251,6 +324,21 @@
             <div x-show="$store.global.activeTab === 'accounts'" x-load-view="'accounts'"
                 x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from"
                 class="w-full"></div>
+
+            <!-- Processes -->
+            <div x-show="$store.global.activeTab === 'processes'" x-load-view="'processes'"
+                x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from"
+                class="w-full"></div>
+
+            <!-- Infrastructure -->
+            <div x-show="$store.global.activeTab === 'infrastructure'" x-load-view="'infrastructure'"
+                x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from"
+                class="w-full"></div>
+
+            <!-- Agent Skills -->
+            <div x-show="$store.global.activeTab === 'agent-skills'" x-load-view="'skills'"
+                x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from"
+                class="w-full h-full flex flex-col"></div>
 
             <!-- Settings -->
             <div x-show="$store.global.activeTab === 'settings'" x-load-view="'settings'"
@@ -412,23 +500,27 @@
     <script src="js/translations/pt.js"></script>
     <!-- 2. Alpine Stores (register alpine:init listeners) -->
     <script src="js/store.js"></script>
-    <script src="js/data-store.js"></script>
+    <script src="js/data-store.js?v=3.2.0"></script>
     <script src="js/settings-store.js"></script>
     <!-- 3. Components (register to window.Components) -->
     <!-- Dashboard modules (load before main dashboard) -->
-    <script src="js/components/dashboard/stats.js"></script>
+    <script src="js/components/dashboard/stats.js?v=3.2.0"></script>
     <script src="js/components/dashboard/charts.js"></script>
     <script src="js/components/dashboard/filters.js"></script>
     <script src="js/components/dashboard.js"></script>
-    <script src="js/components/models.js"></script>
+    <script src="js/components/models.js?v=3.2.0"></script>
     <script src="js/components/account-manager.js"></script>
+    <script src="js/components/swarm-visualizer.js"></script>
     <script src="js/components/claude-config.js"></script>
     <script src="js/components/model-dropdown.js"></script>
     <script src="js/components/logs-viewer.js"></script>
     <script src="js/components/server-config.js"></script>
     <script src="js/components/add-account-modal.js"></script>
+    <script src="js/components/commander.js"></script>
+    <script src="js/components/skills.js"></script>
+    <script src="js/components/load-balancer.js?v=3.2.0"></script>
     <!-- 4. App (registers Alpine components from window.Components) -->
-    <script src="app.js"></script>
+    <script src="app.js?v=3.2.0"></script>
 </body>
 
 </html>

@@ -11,9 +11,14 @@ document.addEventListener('alpine:init', () => {
     Alpine.data('dashboard', window.Components.dashboard);
     Alpine.data('models', window.Components.models);
     Alpine.data('accountManager', window.Components.accountManager);
+    Alpine.data('swarmVisualizer', window.Components.swarmVisualizer);
     Alpine.data('claudeConfig', window.Components.claudeConfig);
     Alpine.data('logsViewer', window.Components.logsViewer);
     Alpine.data('addAccountModal', window.Components.addAccountModal);
+    Alpine.data('processes', window.Components.processes);
+    Alpine.data('infrastructure', window.Components.infrastructure);
+    Alpine.data('agentSkills', window.Components.agentSkills);
+    Alpine.data('loadBalancer', window.Components.loadBalancer);
 
     // View Loader Directive
     Alpine.directive('load-view', (el, { expression }, { evaluate }) => {
@@ -128,6 +133,13 @@ document.addEventListener('alpine:init', () => {
 
         async addAccountWeb(reAuthEmail = null) {
             const password = Alpine.store('global').webuiPassword;
+            
+            // Open window synchronously to avoid popup blockers
+            const oauthWindow = window.open('', 'google_oauth', 'width=600,height=700,scrollbars=yes');
+            if (oauthWindow) {
+                oauthWindow.document.write('<div style="font-family:sans-serif;padding:20px;">Loading authorization page...</div>');
+            }
+
             try {
                 const urlPath = reAuthEmail
                     ? `/api/auth/url?email=${encodeURIComponent(reAuthEmail)}`
@@ -143,7 +155,11 @@ document.addEventListener('alpine:init', () => {
                     Alpine.store('global').showToast(Alpine.store('global').t('oauthInProgress'), 'info');
 
                     // Open OAuth window
-                    const oauthWindow = window.open(data.url, 'google_oauth', 'width=600,height=700,scrollbars=yes');
+                    if (oauthWindow) {
+                        oauthWindow.location.href = data.url;
+                    } else {
+                        window.open(data.url, 'google_oauth', 'width=600,height=700,scrollbars=yes');
+                    }
 
                     // Poll for account changes instead of relying on postMessage
                     // (since OAuth callback is now on port 51121, not this server)
@@ -215,11 +231,13 @@ document.addEventListener('alpine:init', () => {
                                 'warning'
                             );
                         }
-                    }, 2000); // Poll every 2 seconds
+                    }, 5000); // Poll every 5 seconds instead of 2 to reduce load
                 } else {
+                    if (oauthWindow) oauthWindow.close();
                     Alpine.store('global').showToast(data.error || Alpine.store('global').t('failedToGetAuthUrl'), 'error');
                 }
             } catch (e) {
+                if (oauthWindow) oauthWindow.close();
                 Alpine.store('global').showToast(Alpine.store('global').t('failedToStartOAuth') + ': ' + e.message, 'error');
             }
         }

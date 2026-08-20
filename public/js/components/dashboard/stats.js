@@ -42,35 +42,38 @@ window.DashboardStats.updateStats = function(component) {
     const enabledAccounts = accounts.filter(acc => acc.enabled !== false);
 
     enabledAccounts.forEach(acc => {
-        if (acc.status === 'ok') {
-            const limits = Object.entries(acc.limits || {});
-
-            if (limits.length === 0) {
-                // No limit data available, consider limited to be safe
-                limited++;
-                return;
-            }
-
-            // Check if ANY tracked model is rate limited (<= 5%)
-            // We consider all models in the limits object as "tracked"
-            const hasRateLimitedModel = limits.some(([_, l]) => {
-                // Treat null/undefined fraction as 0 (limited)
-                if (!l || l.remainingFraction === null || l.remainingFraction === undefined) return true;
-                return l.remainingFraction <= 0.05;
-            });
-
-            if (hasRateLimitedModel) {
-                limited++;
-            } else {
-                active++;
-            }
-        } else {
+        if (acc.isInvalid) {
             limited++;
+            return;
+        }
+
+        const limitsObj = acc.limits || {};
+        const entries = Object.entries(limitsObj);
+
+        // Filter to entries that actually have data (non-null value)
+        const withData = entries.filter(([_, l]) => l !== null && l !== undefined);
+
+        if (withData.length === 0) {
+            // No quota data at all (e.g. swarm accounts that haven't been used yet)
+            // Treat as active/standby, not rate-limited
+            active++;
+            return;
+        }
+
+        // Check if ANY tracked model with data is rate limited (<= 5%)
+        const hasRateLimitedModel = withData.some(([_, l]) => {
+            if (l.remainingFraction === null || l.remainingFraction === undefined) return false;
+            return l.remainingFraction <= 0.05;
+        });
+
+        if (hasRateLimitedModel) {
+            limited++;
+        } else {
+            active++;
         }
     });
 
     // TOTAL shows only enabled accounts
-    // Disabled accounts are excluded from all statistics
     component.stats.total = enabledAccounts.length;
     component.stats.active = active;
     component.stats.limited = limited;
@@ -80,10 +83,12 @@ window.DashboardStats.updateStats = function(component) {
     let totalTrackedModels = 0;
 
     enabledAccounts.forEach(acc => {
-         const limits = Object.entries(acc.limits || {});
-         limits.forEach(([id, l]) => {
+         const entries = Object.entries(acc.limits || {});
+         entries.forEach(([id, l]) => {
+             // Skip null entries (no data)
+             if (l === null || l === undefined) return;
              totalTrackedModels++;
-             if (!l || l.remainingFraction == null || l.remainingFraction <= 0.05) {
+             if (l.remainingFraction !== null && l.remainingFraction !== undefined && l.remainingFraction <= 0.05) {
                  totalLimitedModels++;
              }
          });
@@ -95,15 +100,19 @@ window.DashboardStats.updateStats = function(component) {
     };
 
     // Calculate subscription tier distribution
-    const subscription = { ultra: 0, pro: 0, free: 0 };
+    const subscription = { ultra: 0, pro: 0, free: 0, apikey: 0 };
     enabledAccounts.forEach(acc => {
-        const tier = acc.subscription?.tier || 'free';
-        if (tier === 'ultra') {
-            subscription.ultra++;
-        } else if (tier === 'pro') {
-            subscription.pro++;
+        if (acc.type === 'apikey') {
+            subscription.apikey++;
         } else {
-            subscription.free++;
+            const tier = acc.subscription?.tier || 'free';
+            if (tier === 'ultra') {
+                subscription.ultra++;
+            } else if (tier === 'pro') {
+                subscription.pro++;
+            } else {
+                subscription.free++;
+            }
         }
     });
     component.stats.subscription = subscription;

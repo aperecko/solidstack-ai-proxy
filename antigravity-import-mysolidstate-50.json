@@ -1,0 +1,454 @@
+{
+  "accounts": [
+    {
+      "email": "01@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "02@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "03@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "04@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "05@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "06@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "07@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "08@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "09@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "10@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "11@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "12@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "13@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "14@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "15@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "16@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "17@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "18@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "19@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "20@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "21@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "22@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "23@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "24@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "25@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "26@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "27@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "28@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "29@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "30@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "31@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "32@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "33@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "34@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "35@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "36@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "37@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "38@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "39@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "40@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "41@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "42@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "43@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "44@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "45@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "46@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "47@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "48@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "49@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "50@mysolidstate.ca",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    }
+  ]
+}

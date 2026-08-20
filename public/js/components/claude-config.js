@@ -17,16 +17,15 @@ window.Components.claudeConfig = () => ({
     modeLoading: false,
 
     /**
-     * Extract port from ANTHROPIC_BASE_URL for display
-     * @returns {string} Port number or '8080' as fallback
+     * Helper to get the server port
+     * @returns {string} Port number or '1987' as fallback
      */
-    getProxyPort() {
-        const baseUrl = this.config?.env?.ANTHROPIC_BASE_URL || '';
+    getServerPort() {
         try {
-            const url = new URL(baseUrl);
-            return url.port || '8080';
-        } catch {
-            return '8080';
+            const url = new URL(window.location.href);
+            return url.port || '1987';
+        } catch (e) {
+            return '1987';
         }
     },
 
@@ -208,22 +207,43 @@ window.Components.claudeConfig = () => ({
     // ==========================================
 
     /**
-     * Fetch all saved presets from the server
+     * Fetch all saved presets from the server, merged with dynamic presets
      */
     async fetchPresets() {
         const password = Alpine.store('global').webuiPassword;
         try {
-            const { response, newPassword } = await window.utils.request('/api/claude/presets', {}, password);
-            if (newPassword) Alpine.store('global').webuiPassword = newPassword;
+            // Fetch user-saved presets and dynamic presets in parallel
+            const [savedRes, dynamicRes] = await Promise.allSettled([
+                window.utils.request('/api/claude/presets', {}, password),
+                fetch('/webui/api/dynamic-presets').then(r => r.json())
+            ]);
 
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            const data = await response.json();
-            if (data.status === 'ok') {
-                this.presets = data.presets || [];
-                // Auto-select first preset if none selected
-                if (this.presets.length > 0 && !this.selectedPresetName) {
-                    this.selectedPresetName = this.presets[0].name;
+            let savedPresets = [];
+            if (savedRes.status === 'fulfilled') {
+                const { response, newPassword } = savedRes.value;
+                if (newPassword) Alpine.store('global').webuiPassword = newPassword;
+                if (response.ok) {
+                    const data = await response.json();
+                    if (data.status === 'ok') {
+                        savedPresets = data.presets || [];
+                    }
                 }
+            }
+
+            let dynamicPresets = [];
+            if (dynamicRes.status === 'fulfilled' && dynamicRes.value.presets) {
+                dynamicPresets = dynamicRes.value.presets;
+            }
+
+            // Merge: dynamic presets first, then user-saved presets
+            // Filter out any user presets that share a name with a dynamic one
+            const dynamicNames = new Set(dynamicPresets.map(p => p.name));
+            const uniqueSaved = savedPresets.filter(p => !dynamicNames.has(p.name));
+            this.presets = [...dynamicPresets, ...uniqueSaved];
+
+            // Auto-select first preset if none selected
+            if (this.presets.length > 0 && !this.selectedPresetName) {
+                this.selectedPresetName = this.presets[0].name;
             }
         } catch (e) {
             console.error('Failed to fetch presets:', e);

@@ -3,6 +3,55 @@
  * Entry point - starts the proxy server
  */
 
+// Global DNS Patch: Bypasses /etc/hosts for outbound Google API requests to prevent loopback proxy loops.
+import dns from 'dns';
+try {
+    dns.setDefaultResultOrder('ipv4first');
+} catch {}
+const originalLookup = dns.lookup;
+dns.lookup = function(hostname, options, callback) {
+    if (typeof options === 'function') {
+        callback = options;
+        options = {};
+    }
+    const lower = (hostname || '').toLowerCase();
+    if (lower === 'cloudcode-pa.googleapis.com' || lower === 'daily-cloudcode-pa.googleapis.com') {
+        // Resolve both A and AAAA so Node's autoSelectFamily (happy eyeballs) can
+        // pick a reachable path. Pinning IPv4-only breaks on networks where IPv4
+        // to Google is unreachable but IPv6 works (e.g. WARP routing issues).
+        const entries = [];
+        let pending = 2;
+        const done = () => {
+            if (--pending > 0) return;
+            if (entries.length === 0) {
+                originalLookup(hostname, options, callback);
+                return;
+            }
+            const family = options && options.family;
+            const addresses = family === 4 ? entries.filter(e => e.family === 4) :
+                              family === 6 ? entries.filter(e => e.family === 6) :
+                              entries;
+            if (options && options.all) {
+                callback(null, addresses.map(e => ({ address: e.address, family: e.family })));
+            } else if (addresses.length > 0) {
+                callback(null, addresses[0].address, addresses[0].family);
+            } else {
+                callback(new Error('No addresses found'));
+            }
+        };
+        dns.resolve4(hostname, (err, addresses) => {
+            if (!err && addresses) for (const a of addresses) entries.push({ address: a, family: 4 });
+            done();
+        });
+        dns.resolve6(hostname, (err, addresses) => {
+            if (!err && addresses) for (const a of addresses) entries.push({ address: a, family: 6 });
+            done();
+        });
+    } else {
+        originalLookup(hostname, options, callback);
+    }
+};
+
 // Initialize proxy support BEFORE any other imports that may use fetch
 import './utils/proxy.js';
 
@@ -14,6 +63,7 @@ import { getStrategyLabel, STRATEGY_NAMES, DEFAULT_STRATEGY } from './account-ma
 import { getPackageVersion } from './utils/helpers.js';
 import path from 'path';
 import os from 'os';
+import fs from 'fs';
 
 const packageVersion = getPackageVersion();
 
@@ -65,6 +115,22 @@ const HOME_DIR = os.homedir();
 const CONFIG_DIR = path.join(HOME_DIR, '.antigravity-claude-proxy');
 
 const server = app.listen(PORT, HOST, () => {
+    // Auto-align ~/.claude/settings.json to point ANTHROPIC_BASE_URL to canonical port 1987
+    try {
+        const claudeSettingsPath = path.join(HOME_DIR, '.claude', 'settings.json');
+        if (fs.existsSync(claudeSettingsPath)) {
+            const content = fs.readFileSync(claudeSettingsPath, 'utf-8');
+            const data = JSON.parse(content);
+            data.env = data.env || {};
+            data.env.ANTHROPIC_BASE_URL = `http://127.0.0.1:${PORT}`;
+            data.env.ANTHROPIC_AUTH_TOKEN = 'solidstack-proxy';
+            fs.writeFileSync(claudeSettingsPath, JSON.stringify(data, null, 2) + '\n');
+            logger.info(`[Startup] Aligned ~/.claude/settings.json to http://127.0.0.1:${PORT}`);
+        }
+    } catch (e) {
+        // Non-fatal
+    }
+
     // Get actual bound address
     const address = server.address();
     const boundHost = typeof address === 'string' ? address : address.address;

@@ -13,6 +13,8 @@ window.Components.accountManager = () => ({
     reloading: false,
     selectedAccountEmail: '',
     selectedAccountLimits: {},
+    currentPage: 1,
+    pageSize: 50,
 
     // Health Inspector (Developer Mode)
     healthData: {},
@@ -25,7 +27,27 @@ window.Components.accountManager = () => ({
     },
 
     get filteredAccounts() {
-        const accounts = Alpine.store('data').accounts || [];
+        const dataStore = Alpine.store('data');
+        let accounts = dataStore.accounts || [];
+        
+        if (dataStore.filters && dataStore.filters.status === 'limited') {
+            accounts = accounts.filter(acc => {
+                if (acc.isInvalid) return true;
+                // Check limits (remainingFraction) for quota exhaustion
+                const limitsObj = acc.limits || {};
+                for (const [model, l] of Object.entries(limitsObj)) {
+                    if (l && l.remainingFraction !== null && l.remainingFraction !== undefined && l.remainingFraction <= 0.05) return true;
+                }
+                // Also check modelRateLimits for hard 429 blocks
+                if (acc.modelRateLimits) {
+                    for (const model of Object.keys(acc.modelRateLimits)) {
+                        if (acc.modelRateLimits[model].isRateLimited) return true;
+                    }
+                }
+                return false;
+            });
+        }
+        
         if (!this.searchQuery || this.searchQuery.trim() === '') {
             return accounts;
         }
@@ -36,6 +58,15 @@ window.Components.accountManager = () => ({
                    (acc.projectId && acc.projectId.toLowerCase().includes(query)) ||
                    (acc.source && acc.source.toLowerCase().includes(query));
         });
+    },
+    
+    get pagedAccounts() {
+        const start = (this.currentPage - 1) * this.pageSize;
+        return this.filteredAccounts.slice(start, start + this.pageSize);
+    },
+    
+    get totalPages() {
+        return Math.ceil(this.filteredAccounts.length / this.pageSize);
     },
 
     formatEmail(email) {
@@ -129,6 +160,13 @@ window.Components.accountManager = () => ({
         // Otherwise fall back to OAuth re-auth
         store.showToast(store.t('reauthenticating', { email: Redact.email(email) }), 'info');
         const password = store.webuiPassword;
+        
+        // Open window synchronously to avoid popup blockers
+        const oauthWindow = window.open('', 'google_oauth', 'width=600,height=700,scrollbars=yes');
+        if (oauthWindow) {
+            oauthWindow.document.write('<div style="font-family:sans-serif;padding:20px;">Loading authorization page...</div>');
+        }
+
         try {
             const urlPath = `/api/auth/url?email=${encodeURIComponent(email)}`;
             const { response, newPassword } = await window.utils.request(urlPath, {}, password);
@@ -136,11 +174,67 @@ window.Components.accountManager = () => ({
 
             const data = await response.json();
             if (data.status === 'ok') {
-                window.open(data.url, 'google_oauth', 'width=600,height=700,scrollbars=yes');
+                if (oauthWindow) {
+                    oauthWindow.location.href = data.url;
+                } else {
+                    window.open(data.url, 'google_oauth', 'width=600,height=700,scrollbars=yes');
+                }
+                
+                let pollCount = 0;
+                const maxPolls = 60; // 2 minutes
+                let cancelled = false;
+
+                store.oauthProgress = {
+                    active: true,
+                    current: 0,
+                    max: maxPolls,
+                    cancel: () => {
+                        cancelled = true;
+                        clearInterval(pollInterval);
+                        store.oauthProgress.active = false;
+                        if (oauthWindow && !oauthWindow.closed) oauthWindow.close();
+                    }
+                };
+
+                const pollInterval = setInterval(async () => {
+                    if (cancelled) {
+                        clearInterval(pollInterval);
+                        return;
+                    }
+
+                    pollCount++;
+                    store.oauthProgress.current = pollCount;
+
+                    if (oauthWindow && oauthWindow.closed && !cancelled) {
+                        clearInterval(pollInterval);
+                        store.oauthProgress.active = false;
+                        store.showToast(store.t('oauthWindowClosed') || 'OAuth window closed', 'warning');
+                        return;
+                    }
+
+                    await dataStore.fetchData();
+                    const updatedAcc = (dataStore.accounts || []).find(a => a.email === email);
+
+                    // Check if it's fixed (no longer invalid, and status is ok)
+                    if (updatedAcc && !updatedAcc.isInvalid && updatedAcc.status === 'ok') {
+                        clearInterval(pollInterval);
+                        store.oauthProgress.active = false;
+                        store.showToast(store.t('accountReauthSuccess') || 'Account re-authenticated successfully', 'success');
+                        if (oauthWindow && !oauthWindow.closed) oauthWindow.close();
+                    }
+
+                    if (pollCount >= maxPolls) {
+                        clearInterval(pollInterval);
+                        store.oauthProgress.active = false;
+                        store.showToast(store.t('oauthTimeout') || 'OAuth timed out', 'warning');
+                    }
+                }, 5000); // Poll every 5 seconds instead of 2 to reduce load
             } else {
+                if (oauthWindow) oauthWindow.close();
                 store.showToast(data.error || store.t('authUrlFailed'), 'error');
             }
         } catch (e) {
+            if (oauthWindow) oauthWindow.close();
             store.showToast(store.t('authUrlFailed') + ': ' + e.message, 'error');
         }
     },
@@ -331,14 +425,20 @@ window.Components.accountManager = () => ({
      * @returns {Object} { percent: number|null, model: string }
      */
     getMainModelQuota(account) {
+        if (!account) return { percent: null, model: '-' };
+        
+        // Developer Mode Health Tracker info
+        if (account._healthInfo && typeof account._healthInfo.quota === 'number') {
+            return { percent: Math.round(account._healthInfo.quota * 100), model: 'health-check' };
+        }
+
         const limits = account.limits || {};
         
+        // Helper to safely get remaining fraction
         const getQuotaVal = (id) => {
              const l = limits[id];
-             if (!l) return -1;
-             if (l.remainingFraction !== null) return l.remainingFraction;
-             if (l.resetTime) return 0; // Rate limited
-             return -1; // Unknown
+             if (!l || l.remainingFraction === null || l.remainingFraction === undefined) return -1;
+             return l.remainingFraction;
         };
 
         const validIds = Object.keys(limits).filter(id => getQuotaVal(id) >= 0);

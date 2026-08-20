@@ -90,7 +90,8 @@ export async function fetchAvailableModels(token, projectId = null) {
             const response = await throttledFetch(url, {
                 method: 'POST',
                 headers,
-                body: JSON.stringify(body)
+                body: JSON.stringify(body),
+                signal: AbortSignal.timeout(1500)
             });
 
             if (!response.ok) {
@@ -137,6 +138,12 @@ export async function getModelQuotas(token, projectId = null) {
                 // When remainingFraction is missing but resetTime is present, quota is exhausted (0%)
                 remainingFraction: modelData.quotaInfo.remainingFraction ?? (modelData.quotaInfo.resetTime ? 0 : null),
                 resetTime: modelData.quotaInfo.resetTime ?? null
+            };
+        } else {
+            // Fallback for models without explicit quota limits (e.g. free tier or unlimited models)
+            quotas[modelId] = {
+                remainingFraction: 1.0,
+                resetTime: null
             };
         }
     }

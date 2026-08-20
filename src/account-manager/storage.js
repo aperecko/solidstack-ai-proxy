@@ -31,10 +31,9 @@ export async function loadAccounts(configPath = ACCOUNT_CONFIG_PATH) {
             refreshToken: acc.refreshToken || acc.refresh_token || null,
             lastUsed: acc.lastUsed || null,
             enabled: acc.enabled !== false, // Default to true if not specified
-            // Reset invalid flag on startup - give accounts a fresh chance
-            // EXCEPT accounts with a verifyUrl — those need user intervention
-            isInvalid: acc.verifyUrl ? (acc.isInvalid || false) : false,
-            invalidReason: acc.verifyUrl ? (acc.invalidReason || null) : null,
+            // Preserve invalid flag on startup so we don't spam requests for permanently failed accounts
+            isInvalid: acc.isInvalid || false,
+            invalidReason: acc.invalidReason || null,
             verifyUrl: acc.verifyUrl || null,
             modelRateLimits: acc.modelRateLimits || {},
             // New fields for subscription and quota tracking
@@ -143,7 +142,9 @@ export async function saveAccounts(configPath, accounts, settings, activeIndex) 
                 subscription: acc.subscription || { tier: 'unknown', projectId: null, detectedAt: null },
                 quota: acc.quota || { models: {}, lastChecked: null },
                 quotaThreshold: acc.quotaThreshold,
-                modelQuotaThresholds: Object.keys(acc.modelQuotaThresholds || {}).length > 0 ? acc.modelQuotaThresholds : undefined
+                modelQuotaThresholds: Object.keys(acc.modelQuotaThresholds || {}).length > 0 ? acc.modelQuotaThresholds : undefined,
+                disabledBy429: acc.disabledBy429 || false,
+                consecutiveFailures: acc.consecutiveFailures || 0
             })),
             settings: settings,
             activeIndex: activeIndex

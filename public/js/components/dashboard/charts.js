@@ -31,8 +31,11 @@ const FAMILY_COLORS = {
   get gemini() {
     return getThemeColor("--color-neon-green");
   },
-  get other() {
+  get openai() {
     return getThemeColor("--color-neon-cyan");
+  },
+  get other() {
+    return "#f59e0b"; // amber for unrecognized families
   },
 };
 
@@ -216,7 +219,9 @@ window.DashboardCharts.updateCharts = function (component) {
   const familyColors = {
     claude: getThemeColor("--color-neon-purple") || "#a855f7",
     gemini: getThemeColor("--color-neon-green") || "#22c55e",
-    unknown: getThemeColor("--color-neon-cyan") || "#06b6d4",
+    openai: getThemeColor("--color-neon-cyan") || "#06b6d4",
+    other: "#f59e0b",
+    unknown: "#6b7280",
   };
 
   const data = [];

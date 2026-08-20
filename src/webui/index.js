@@ -13,6 +13,7 @@
  */
 
 import path from 'path';
+import fs from 'fs';
 import express from 'express';
 import { getPublicConfig, saveConfig, config } from '../config.js';
 import { DEFAULT_PORT, ACCOUNT_CONFIG_PATH, MAX_ACCOUNTS, DEFAULT_PRESETS, DEFAULT_SERVER_PRESETS } from '../constants.js';
@@ -22,6 +23,8 @@ import { logger } from '../utils/logger.js';
 import { getAuthorizationUrl, completeOAuthFlow, startCallbackServer } from '../auth/oauth.js';
 import { loadAccounts, saveAccounts } from '../account-manager/storage.js';
 import { getPackageVersion } from '../utils/helpers.js';
+import { getRoutingStats } from '../cloudcode/routing-logger.js';
+import { eventLogger } from '../utils/event-logger.js';
 
 // Get package version
 const packageVersion = getPackageVersion();
@@ -47,6 +50,7 @@ async function setAccountEnabled(email, enabled) {
     }
     account.enabled = enabled;
     await saveAccounts(ACCOUNT_CONFIG_PATH, accounts, settings, activeIndex);
+    eventLogger.logEvent(enabled ? 're-enabled' : 'disabled', { email });
     logger.info(`[WebUI] Account ${email} ${enabled ? 'enabled' : 'disabled'}`);
 }
 
@@ -63,6 +67,7 @@ async function removeAccount(email) {
     // Adjust activeIndex if needed
     const newActiveIndex = activeIndex >= accounts.length ? Math.max(0, accounts.length - 1) : activeIndex;
     await saveAccounts(ACCOUNT_CONFIG_PATH, accounts, settings, newActiveIndex);
+    eventLogger.logEvent('account_removed', { email });
     logger.info(`[WebUI] Account ${email} removed`);
 }
 
@@ -85,6 +90,7 @@ async function addAccount(accountData) {
             invalidReason: null,
             addedAt: accounts[existingIndex].addedAt || new Date().toISOString()
         };
+        eventLogger.logEvent('account_updated', { email: accountData.email });
         logger.info(`[WebUI] Account ${accountData.email} updated`);
     } else {
         // Check MAX_ACCOUNTS limit before adding new account
@@ -101,6 +107,7 @@ async function addAccount(accountData) {
             lastUsed: null,
             addedAt: new Date().toISOString()
         });
+        eventLogger.logEvent('added', { email: accountData.email });
         logger.info(`[WebUI] Account ${accountData.email} added`);
     }
 
@@ -108,13 +115,23 @@ async function addAccount(accountData) {
 }
 
 /**
- * Auth Middleware - Optional password protection for WebUI
- * Password can be set via WEBUI_PASSWORD env var or config.json
+ * Auth Middleware - Password protection for WebUI & API endpoints
+ * Supports WEBUI_PASSWORD / DASHBOARD_PASSWORD env vars or config.json.
+ * Supports HTTP Basic Auth, x-webui-password header, and ?password= query param.
+ * Allows optional localhost bypass when ALLOW_LOCALHOST_UNAUTH is set.
  */
 function createAuthMiddleware() {
     return (req, res, next) => {
-        const password = config.webuiPassword;
+        const password = process.env.WEBUI_PASSWORD || process.env.DASHBOARD_PASSWORD || config.webuiPassword;
         if (!password) return next();
+
+        // Optional localhost bypass for local developer convenience
+        const allowLocalhost = process.env.ALLOW_LOCALHOST_UNAUTH !== 'false';
+        const clientIp = req.ip || req.socket.remoteAddress || '';
+        const isLocalhost = clientIp.includes('127.0.0.1') || clientIp.includes('::1') || clientIp === '::ffff:127.0.0.1';
+        if (allowLocalhost && isLocalhost) {
+            return next();
+        }
 
         // Determine if this path should be protected
         const isApiRoute = req.path.startsWith('/api/');
@@ -123,9 +140,21 @@ function createAuthMiddleware() {
         const isProtected = (isApiRoute && !isAuthUrl && !isConfigGet) || req.path === '/account-limits' || req.path === '/health';
 
         if (isProtected) {
-            const providedPassword = req.headers['x-webui-password'] || req.query.password;
+            let providedPassword = req.headers['x-webui-password'] || req.query.password;
+
+            // Check Basic Auth header (Authorization: Basic base64(user:password))
+            const authHeader = req.headers.authorization;
+            if (!providedPassword && authHeader && authHeader.startsWith('Basic ')) {
+                try {
+                    const credentials = Buffer.from(authHeader.substring(6), 'base64').toString('utf8');
+                    const parts = credentials.split(':');
+                    providedPassword = parts[1] || parts[0];
+                } catch (e) {}
+            }
+
             if (providedPassword !== password) {
-                return res.status(401).json({ status: 'error', error: 'Unauthorized: Password required' });
+                res.set('WWW-Authenticate', 'Basic realm="SolidStack Commander Dashboard"');
+                return res.status(401).json({ status: 'error', error: 'Unauthorized: Valid password required' });
             }
         }
         next();
@@ -256,12 +285,247 @@ export function mountWebUI(app, dirname, accountManager) {
     // Apply auth middleware
     app.use(createAuthMiddleware());
 
+    // Serve compiled production control plane dist bundle if present
+    const distPath = path.join(dirname, '../../dist');
+    if (fs.existsSync(distPath)) {
+        app.use(express.static(distPath));
+    }
+
     // Serve static files from public directory
     app.use(express.static(path.join(dirname, '../public')));
 
     // ==========================================
     // Account Management API
     // ==========================================
+
+    /**
+     * GET /api/utilization - Comprehensive per-account utilization snapshot
+     *
+     * Returns every signal that feeds into routing decisions:
+     * - Per-model quota fractions + exact reset timestamps
+     * - Rate-limit status + ms until reset
+     * - Subscription tier (free/pro)
+     * - Health scores (if hybrid strategy)
+     * - Token bucket state
+     * - Last-used timestamps
+     * - Routing priority score breakdown
+     *
+     * Designed for the /monitor dashboard and external alerting.
+     */
+    app.get('/api/utilization', (req, res) => {
+        try {
+            const allAccounts = accountManager.getAllAccounts();
+            const now = Date.now();
+            const healthData = accountManager.getStrategyHealthData();
+            const healthByEmail = {};
+            if (healthData?.trackers?.accounts) {
+                for (const h of healthData.trackers.accounts) {
+                    healthByEmail[h.email] = h;
+                }
+            }
+
+            const accounts = allAccounts.map(account => {
+                const email = account.email;
+                const tier = account.subscription?.tier || 'unknown';
+
+                // ── Rate limits ────────────────────────────────────────────
+                const rateLimits = {};
+                for (const [modelId, limit] of Object.entries(account.modelRateLimits || {})) {
+                    const resetTime = limit.resetTime;
+                    const isLimited = !!(limit.isRateLimited && resetTime && resetTime > now);
+                    rateLimits[modelId] = {
+                        isRateLimited: isLimited,
+                        resetTime: resetTime || null,
+                        resetInMs: isLimited ? Math.max(0, resetTime - now) : 0,
+                        resetInSec: isLimited ? Math.ceil((resetTime - now) / 1000) : 0,
+                        actualResetMs: limit.actualResetMs || null
+                    };
+                }
+
+                // ── Quota ──────────────────────────────────────────────────
+                const quota = {};
+                const models = account.quota?.models || {};
+                let geminiExhausted = 0, geminiTotal = 0;
+                let claudeExhausted = 0, claudeTotal = 0;
+
+                for (const [modelId, q] of Object.entries(models)) {
+                    const frac = typeof q.remainingFraction === 'number' ? q.remainingFraction : null;
+                    const resetISO = q.resetTime || null;
+                    const resetMs = resetISO ? Math.max(0, new Date(resetISO).getTime() - now) : null;
+                    const exhausted = frac !== null && frac < 0.05;
+
+                    quota[modelId] = {
+                        remainingFraction: frac,
+                        remainingPct: frac !== null ? Math.round(frac * 100) : null,
+                        exhausted,
+                        resetTime: resetISO,
+                        resetInMs: resetMs,
+                        resetInSec: resetMs !== null ? Math.ceil(resetMs / 1000) : null,
+                        resetInMin: resetMs !== null ? Math.ceil(resetMs / 60000) : null
+                    };
+
+                    const family = modelId.includes('claude') ? 'claude' : modelId.includes('gemini') ? 'gemini' : null;
+                    if (family === 'gemini') { geminiTotal++; if (exhausted) geminiExhausted++; }
+                    if (family === 'claude') { claudeTotal++; if (exhausted) claudeExhausted++; }
+                }
+
+                const geminiAvailable = geminiTotal > 0 && geminiExhausted < geminiTotal;
+                const claudeAvailable = claudeTotal > 0 && claudeExhausted < claudeTotal;
+                const fullyExhausted = geminiTotal > 0 && claudeTotal > 0 && !geminiAvailable && !claudeAvailable;
+
+                // ── Health tracker ─────────────────────────────────────────
+                const health = healthByEmail[email] || null;
+
+                // ── Cooldown ───────────────────────────────────────────────
+                const cooldownMs = accountManager.getCooldownRemaining(email);
+
+                // ── Next available time ────────────────────────────────────
+                // The soonest any rate-limited/exhausted model resets
+                const allResets = [
+                    ...Object.values(rateLimits)
+                        .filter(r => r.isRateLimited && r.resetTime)
+                        .map(r => r.resetTime),
+                    ...Object.values(quota)
+                        .filter(q => q.exhausted && q.resetTime)
+                        .map(q => new Date(q.resetTime).getTime())
+                ].filter(Boolean);
+
+                const nextResetMs = allResets.length > 0 ? Math.min(...allResets) : null;
+                const nextResetIn = nextResetMs ? Math.max(0, nextResetMs - now) : null;
+
+                return {
+                    email,
+                    tier,
+                    enabled: account.enabled !== false,
+                    isInvalid: account.isInvalid || false,
+                    invalidReason: account.invalidReason || null,
+                    lastUsed: account.lastUsed || null,
+                    lastUsedAgo: account.lastUsed ? Math.floor((now - account.lastUsed) / 1000) : null,
+                    cooldownMs,
+                    isCoolingDown: cooldownMs > 0,
+                    // Status summary
+                    status: {
+                        geminiAvailable,
+                        claudeAvailable,
+                        fullyExhausted,
+                        geminiExhaustedCount: geminiExhausted,
+                        geminiModelCount: geminiTotal,
+                        claudeExhaustedCount: claudeExhausted,
+                        claudeModelCount: claudeTotal,
+                        nextResetMs,
+                        nextResetInSec: nextResetIn !== null ? Math.ceil(nextResetIn / 1000) : null,
+                        nextResetInMin: nextResetIn !== null ? Math.ceil(nextResetIn / 60000) : null
+                    },
+                    // Health tracker (hybrid strategy only)
+                    health: health ? {
+                        score: health.healthScore,
+                        isUsable: health.isUsable,
+                        consecutiveFailures: health.consecutiveFailures,
+                        tokens: health.tokens,
+                        hasTokens: health.hasTokens,
+                        maxTokens: health.maxTokens
+                    } : null,
+                    rateLimits,
+                    quota
+                };
+            });
+
+            // ── Fleet-wide summary ─────────────────────────────────────────
+            const freeAccounts = accounts.filter(a => a.tier === 'free');
+            const proAccounts  = accounts.filter(a => a.tier === 'pro');
+            const fullyExhaustedCount = accounts.filter(a => a.status.fullyExhausted).length;
+            const geminiAvailableCount = accounts.filter(a => a.status.geminiAvailable).length;
+            const claudeAvailableCount = accounts.filter(a => a.status.claudeAvailable).length;
+
+            const routingStats = getRoutingStats();
+            const persistentEvents = eventLogger.getEvents(50);
+
+            res.json({
+                status: 'ok',
+                generatedAt: new Date().toISOString(),
+                fleet: {
+                    total: accounts.length,
+                    free: freeAccounts.length,
+                    pro: proAccounts.length,
+                    enabled: accounts.filter(a => a.enabled).length,
+                    invalid: accounts.filter(a => a.isInvalid).length,
+                    fullyExhausted: fullyExhaustedCount,
+                    geminiAvailable: geminiAvailableCount,
+                    claudeAvailable: claudeAvailableCount,
+                    strategy: accountManager.getStrategyName()
+                },
+                routingStats,
+                eventLog: persistentEvents,
+                accounts
+            });
+        } catch (error) {
+            logger.error('[WebUI] Error building utilization report:', error);
+            res.status(500).json({ status: 'error', error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/events - Get persistent event log entries
+     */
+    app.get('/api/events', (req, res) => {
+        try {
+            const limit = parseInt(req.query.limit || '50', 10);
+            res.json({
+                status: 'ok',
+                events: eventLogger.getEvents(limit)
+            });
+        } catch (error) {
+            res.status(500).json({ status: 'error', error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/accounts/:email/cooldown - Custom cooldown override (set or clear)
+     */
+    app.post('/api/accounts/:email/cooldown', async (req, res) => {
+        try {
+            const { email } = req.params;
+            const { cooldownMs, clear, reason } = req.body || {};
+
+            if (clear) {
+                if (accountManager && typeof accountManager.clearAccountCooldown === 'function') {
+                    accountManager.clearAccountCooldown(email);
+                }
+                return res.json({
+                    status: 'ok',
+                    message: `Cooldown cleared for account ${email}`
+                });
+            }
+
+            if (typeof cooldownMs !== 'number' || cooldownMs < 0) {
+                return res.status(400).json({
+                    status: 'error',
+                    error: 'cooldownMs must be a non-negative number, or clear must be true'
+                });
+            }
+
+            if (accountManager && typeof accountManager.setAccountCooldown === 'function') {
+                accountManager.setAccountCooldown(email, cooldownMs, reason || 'manual_override');
+            } else if (accountManager && typeof accountManager.markAccountCoolingDown === 'function') {
+                accountManager.markAccountCoolingDown(email, cooldownMs, reason || 'manual_override');
+            }
+
+            res.json({
+                status: 'ok',
+                message: `Cooldown set to ${cooldownMs}ms for ${email}`,
+                cooldownRemainingMs: accountManager.getCooldownRemaining(email)
+            });
+        } catch (error) {
+            res.status(500).json({ status: 'error', error: error.message });
+        }
+    });
+
+    /**
+     * GET /monitor - Standalone utilization monitoring page
+     */
+    app.get('/monitor', (req, res) => {
+        res.send(buildMonitorPage());
+    });
 
     /**
      * GET /api/accounts - List all accounts with status
@@ -322,10 +586,12 @@ export function mountWebUI(app, dirname, accountManager) {
                 return res.status(400).json({ status: 'error', error: 'enabled must be a boolean' });
             }
 
-            await setAccountEnabled(email, enabled);
-
-            // Reload AccountManager to pick up changes
-            await accountManager.reload();
+            if (accountManager && typeof accountManager.setAccountEnabled === 'function') {
+                await accountManager.setAccountEnabled(email, enabled);
+            } else {
+                await setAccountEnabled(email, enabled);
+                await accountManager.reload();
+            }
 
             res.json({
                 status: 'ok',

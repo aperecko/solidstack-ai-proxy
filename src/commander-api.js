@@ -15,7 +15,8 @@
 import express from 'express';
 import fs from 'fs';
 import path from 'path';
-import { exec, execSync, spawn } from 'child_process';
+import { exec, execFile, execSync, spawn } from 'child_process';
+
 import net from 'net';
 import * as yaml from 'js-yaml';
 import { fileURLToPath } from 'url';
@@ -1254,8 +1255,531 @@ Output ONLY the rewritten prompt, wrapped in triple backticks.`;
         });
     });
 
+    // 35b. GET /api/consideration/frontiers — Frontier horizons and ledger state
+    router.get('/consideration/frontiers', (req, res) => {
+        const pyScript = `from ss.consider import get_research_frontiers, load_discovery_ledger; import json; f=get_research_frontiers(); l=load_discovery_ledger(); print(json.dumps({'frontiers': f, 'active_frontier_index': l.get('frontier_index', 0) % len(f) if f else 0, 'total_discovered': l.get('total_discovered', 0)}))`;
+        exec(`python3 -c ${JSON.stringify(pyScript)}`, { cwd: BASE_DIR }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to parse frontiers' });
+            }
+        });
+    });
+
+    // 35b2. POST /api/consideration/frontiers/refresh — Re-synthesize dynamic evolutionary frontiers from codebase state
+    router.post('/consideration/frontiers/refresh', (req, res) => {
+        const pyScript = `from ss.consider import get_research_frontiers, load_discovery_ledger; import json; f=get_research_frontiers(refresh=True); l=load_discovery_ledger(); print(json.dumps({'frontiers': f, 'active_frontier_index': 0, 'total_discovered': l.get('total_discovered', 0)}))`;
+        exec(`python3 -c ${JSON.stringify(pyScript)}`, { cwd: BASE_DIR, timeout: 20000 }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to refresh frontiers' });
+            }
+        });
+    });
+
+
+    // 35c. POST /api/consideration/discover — Trigger AI Idea Hunter across rotating/targeted frontiers
+    router.post('/consideration/discover', (req, res) => {
+        const { frontier_idx = null, limit = 3, force = false, custom_query = null } = req.body || {};
+        const pyScript = `from ss.consider import discover_novel_candidates; import json; print(json.dumps(discover_novel_candidates(frontier_idx=${frontier_idx === null ? 'None' : frontier_idx}, limit=${limit}, force=${force ? 'True' : 'False'}, custom_query=${custom_query ? JSON.stringify(custom_query) : 'None'})))`;
+        exec(`python3 -c ${JSON.stringify(pyScript)}`, { cwd: BASE_DIR, timeout: 30000 }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to parse discovery response' });
+            }
+        });
+    });
+
+    // 35d. GET /api/consideration/items — Directory of assessed features and summary counts
+    router.get('/consideration/items', (req, res) => {
+        const pyScript = `from ss.consider import list_items, get_status_summary; import json; items=list_items(); summary=get_status_summary(); print(json.dumps({'total': summary.get('total', len(items)), 'analyzed': summary.get('analyzed', 0), 'high_relevance': sum(1 for i in items if ((i.get('analysis') or {}).get('relevance') or 0) >= 4), 'deployed': summary.get('deployed', 0), 'items': items}))`;
+        exec(`python3 -c ${JSON.stringify(pyScript)}`, { cwd: BASE_DIR }, (err, stdout) => {
+
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to parse consideration items' });
+            }
+        });
+    });
+
+    // 35e. POST /api/consideration/evaluate — On-demand URL evaluation
+    router.post('/consideration/evaluate', (req, res) => {
+        const { url, force = false } = req.body || {};
+        if (!url) return res.status(400).json({ error: 'url is required' });
+        const pyScript = `from ss.consider import evaluate_feature_url; import json; print(json.dumps(evaluate_feature_url(${JSON.stringify(url)}, force=${force ? 'True' : 'False'})))`;
+        exec(`python3 -c ${JSON.stringify(pyScript)}`, { cwd: BASE_DIR, timeout: 60000 }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to parse evaluation response' });
+            }
+        });
+    });
+
+    // 35f. GET /api/audit/utility — 4-Quadrant System State and Utility Audit
+    router.get('/audit/utility', (req, res) => {
+        const pyScript = `from ss.system_state_auditor import run_system_utility_audit; import json; print(json.dumps(run_system_utility_audit()))`;
+        exec(`python3 -c ${JSON.stringify(pyScript)}`, { cwd: BASE_DIR, timeout: 10000 }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to parse audit response' });
+            }
+        });
+    });
+
+    // 35g. POST /api/audit/harness/generate — Auto-generate test fixtures for unevaluated/dark modules
+    router.post('/audit/harness/generate', (req, res) => {
+        const { limit = 10 } = req.body || {};
+        const pyScript = `from ss.harness_generator import auto_generate_harnesses_for_all_dark_modules; import json; print(json.dumps(auto_generate_harnesses_for_all_dark_modules(limit=${limit})))`;
+        exec(`python3 -c ${JSON.stringify(pyScript)}`, { cwd: BASE_DIR, timeout: 30000 }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to parse harness generation response' });
+            }
+        });
+    });
+
+    // 35h. POST /api/evolution/run — Trigger recursive evolution supervisor
+    router.post('/evolution/run', (req, res) => {
+        const { cycles = 2, session_id = 'evolution-live' } = req.body || {};
+        const pyScript = `from scripts.recursive_evolution_supervisor import run_recursive_evolution; import json; print(json.dumps(run_recursive_evolution(cycles=${cycles}, session_id=${JSON.stringify(session_id)})))`;
+        exec(`python3 -c ${JSON.stringify(pyScript)}`, { cwd: BASE_DIR, timeout: 120000 }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to parse evolution run response' });
+            }
+        });
+    });
+
+
+    // 35h. POST /api/consideration/sync — Sync all enabled sources (GitHub + YouTube + Research)
+    router.post('/consideration/sync', (req, res) => {
+        const { force = false } = req.body || {};
+        const pyScript = `from ss.consider import sync_sources; import json; res = sync_sources(force=${force ? 'True' : 'False'}); print(json.dumps(res))`;
+        exec(`python3 -c ${JSON.stringify(pyScript)}`, { cwd: BASE_DIR, timeout: 90000 }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.json({ status: 'ok', raw: stdout.trim() });
+            }
+        });
+    });
+
+    // 35h2. POST /api/consideration/sync-youtube — Dedicated YouTube playlist check & sync
+    router.post('/consideration/sync-youtube', (req, res) => {
+        const { force = false } = req.body || {};
+        const pyScript = `from ss.consider import sync_sources; import json; res = sync_sources(force=${force ? 'True' : 'False'}, sources_filter=['youtube']); print(json.dumps(res))`;
+        exec(`python3 -c ${JSON.stringify(pyScript)}`, { cwd: BASE_DIR, timeout: 60000 }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.json({ status: 'ok', raw: stdout.trim() });
+            }
+        });
+    });
+
+    // 35h3. POST /api/consideration/youtube-chat — Interactive Gemini chat with YouTube video transcript & architecture advisor
+    router.post('/consideration/youtube-chat', (req, res) => {
+        const { video_url = '', message = '', conversation_history = [] } = req.body || {};
+        if (!video_url || !message) {
+            return res.status(400).json({ error: 'video_url and message are required' });
+        }
+        const pyScript = `from ss.consider import youtube_ai_chat; import json; res = youtube_ai_chat(${JSON.stringify(video_url)}, ${JSON.stringify(message)}, ${JSON.stringify(conversation_history)}); print(json.dumps(res))`;
+        execFile('python3', ['-c', pyScript], { cwd: BASE_DIR, timeout: 60000 }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message, reply: `Execution error: ${err.message}` });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.json({ success: true, reply: stdout.trim() });
+            }
+        });
+    });
+
+
+    // 35i. GET /api/consideration/sources — Return configured YouTube playlists, GitHub lists, and research providers
+
+    router.get('/consideration/sources', (req, res) => {
+        const pyScript = `from pathlib import Path; import yaml, json; p = Path('registry/consideration/sources.yaml'); data = yaml.safe_load(p.read_text(encoding='utf-8')) if p.exists() else {}; print(json.dumps(data))`;
+
+        exec(`python3 -c ${JSON.stringify(pyScript)}`, { cwd: BASE_DIR }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to parse sources' });
+            }
+        });
+    });
+
+    // 35j. POST /api/consideration/re-evaluate-stateful — Re-assess consideration candidates against live 4-quadrant system state
+    router.post('/consideration/re-evaluate-stateful', (req, res) => {
+        const { item_id = null } = req.body || {};
+        const pyScript = `from ss.stateful_reassessment import run_stateful_reassessment; import json; print(json.dumps(run_stateful_reassessment(${item_id ? JSON.stringify([item_id]) : 'None'})))`;
+        exec(`python3 -c ${JSON.stringify(pyScript)}`, { cwd: BASE_DIR, timeout: 60000 }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to parse stateful reassessment response' });
+            }
+        });
+    });
+
+    // 35k. GET /api/consideration/stateful-ledger — Get master stateful re-assessment ledger
+    router.get('/consideration/stateful-ledger', (req, res) => {
+        const pyScript = `from pathlib import Path; import json; p = Path('registry/consideration/stateful_audit_ledger.json'); print(p.read_text(encoding='utf-8') if p.exists() else '{"summary":{}}')`;
+        exec(`python3 -c ${JSON.stringify(pyScript)}`, { cwd: BASE_DIR }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to read stateful ledger' });
+            }
+        });
+    });
+
+    // 35l. GET /api/features/trends — Return feature lifecycle trends and core value audit
+    router.get('/features/trends', (req, res) => {
+        const pyScript = `from pathlib import Path; import json; p = Path('registry/audits/feature_value_trends.json'); from ss.feature_trend_engine import evaluate_feature_value_trends; print(p.read_text(encoding='utf-8') if p.exists() else json.dumps(evaluate_feature_value_trends()))`;
+        exec(`python3 -c ${JSON.stringify(pyScript)}`, { cwd: BASE_DIR }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to read feature trends' });
+            }
+        });
+    });
+
+    // 35m. POST /api/features/trends/recalculate — Recompute feature lifecycle value trends
+    router.post('/features/trends/recalculate', (req, res) => {
+        const pyScript = `from ss.feature_trend_engine import evaluate_feature_value_trends; import json; print(json.dumps(evaluate_feature_value_trends()))`;
+        exec(`python3 -c ${JSON.stringify(pyScript)}`, { cwd: BASE_DIR, timeout: 60000 }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to recalculate feature trends' });
+            }
+        });
+    });
+
+    // 35n. POST /api/lifecycle/auto-pilot — Execute automated lifecycle policies (auto-archive, auto-promote, auto-enqueue)
+    router.post('/lifecycle/auto-pilot', (req, res) => {
+        const { dry_run = false } = req.body || {};
+        const pyScript = `from ss.lifecycle_actuator import execute_lifecycle_autopilot; import json; print(json.dumps(execute_lifecycle_autopilot(dry_run=${dry_run ? 'True' : 'False'})))`;
+        exec(`python3 -c ${JSON.stringify(pyScript)}`, { cwd: BASE_DIR, timeout: 60000 }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to execute lifecycle auto-pilot' });
+            }
+        });
+    });
+
+    // 35o. GET /api/features/dynamic-valuation — Return 5-vector utility index and optimality headroom
+    router.get('/features/dynamic-valuation', (req, res) => {
+        const pyScript = `from pathlib import Path; import json; p = Path('registry/audits/dynamic_valuation_audit.json'); from ss.dynamic_valuation_engine import evaluate_dynamic_valuations; print(p.read_text(encoding='utf-8') if p.exists() else json.dumps(evaluate_dynamic_valuations()))`;
+        exec(`python3 -c ${JSON.stringify(pyScript)}`, { cwd: BASE_DIR }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to read dynamic valuations' });
+            }
+        });
+    });
+
+    // 35p. POST /api/features/dynamic-valuation/recalculate — Recompute 5-vector utility index
+    router.post('/features/dynamic-valuation/recalculate', (req, res) => {
+        const pyScript = `from ss.dynamic_valuation_engine import evaluate_dynamic_valuations; import json; print(json.dumps(evaluate_dynamic_valuations()))`;
+        exec(`python3 -c ${JSON.stringify(pyScript)}`, { cwd: BASE_DIR, timeout: 60000 }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to recalculate dynamic valuations' });
+            }
+        });
+    });
+
+    // 35q. GET /api/intent — Return active Strategic Intent & Life Model manifest
+    router.get('/intent', (req, res) => {
+        const pyScript = `from ss.dynamic_valuation_engine import load_strategic_intent; import json; print(json.dumps(load_strategic_intent()))`;
+        exec(`python3 -c ${JSON.stringify(pyScript)}`, { cwd: BASE_DIR }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to read strategic intent manifest' });
+            }
+        });
+    });
+
+    // 35r. POST /api/intent/update — Update Strategic Intent & re-align entire valuation stack
+    router.post('/intent/update', (req, res) => {
+        const newManifest = req.body || {};
+        const pyScript = `from pathlib import Path; import yaml; import json; Path('registry/strategic_intent.yaml').write_text(yaml.dump(${JSON.stringify(newManifest)}, sort_keys=False), encoding='utf-8'); from ss.dynamic_valuation_engine import evaluate_dynamic_valuations; from ss.lifecycle_actuator import execute_lifecycle_autopilot; v = evaluate_dynamic_valuations(); a = execute_lifecycle_autopilot(); print(json.dumps({'status': 'success', 'valuation': v, 'autopilot': a}))`;
+        exec(`python3 -c ${JSON.stringify(pyScript)}`, { cwd: BASE_DIR, timeout: 60000 }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to update strategic intent' });
+            }
+        });
+    });
+
+    // 35s. GET /api/alignment/questions — Return context-aware evolving questions
+    router.get('/alignment/questions', (req, res) => {
+        const { route = 'all' } = req.query || {};
+        const pyScript = `from ss.features.operator_alignment_oracle import get_contextual_questions; import json; print(json.dumps(get_contextual_questions(${JSON.stringify(route)})))`;
+        exec(`python3 -c ${JSON.stringify(pyScript)}`, { cwd: BASE_DIR }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to fetch alignment questions' });
+            }
+        });
+    });
+
+    // 35t. POST /api/alignment/answer — Submit question answer & earn Alignment XP
+    router.post('/alignment/answer', (req, res) => {
+        const { question_id, answer_value, notes = '' } = req.body || {};
+        const pyScript = `from ss.features.operator_alignment_oracle import submit_alignment_answer; import json; print(json.dumps(submit_alignment_answer(${JSON.stringify(question_id)}, ${JSON.stringify(answer_value)}, ${JSON.stringify(notes)})))`;
+        exec(`python3 -c ${JSON.stringify(pyScript)}`, { cwd: BASE_DIR }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to record alignment answer' });
+            }
+        });
+    });
+
+    // 35u. GET /api/alignment/profile — Get full alignment stats, level, and improvement proposals
+    router.get('/alignment/profile', (req, res) => {
+        const pyScript = `from ss.features.operator_alignment_oracle import get_operator_alignment_profile; import json; print(json.dumps(get_operator_alignment_profile()))`;
+        exec(`python3 -c ${JSON.stringify(pyScript)}`, { cwd: BASE_DIR }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to fetch alignment profile' });
+            }
+        });
+    });
+
+    // 35v. POST /api/alignment/adopt-suggestion — 1-Click enqueue improvement task in TASK_QUEUE.md
+    router.post('/alignment/adopt-suggestion', (req, res) => {
+        const { suggestion_id } = req.body || {};
+        const pyScript = `from ss.features.operator_alignment_oracle import adopt_improvement_suggestion; import json; print(json.dumps(adopt_improvement_suggestion(${JSON.stringify(suggestion_id)})))`;
+        exec(`python3 -c ${JSON.stringify(pyScript)}`, { cwd: BASE_DIR }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to adopt improvement suggestion' });
+            }
+        });
+    });
+
+    // 35w. GET /api/alignment/resolutions — Return tracked determination states and confirmed policies
+    router.get('/alignment/resolutions', (req, res) => {
+        const pyScript = `from ss.features.operator_alignment_oracle import get_resolutions_ledger; import json; print(json.dumps(get_resolutions_ledger()))`;
+        exec(`python3 -c ${JSON.stringify(pyScript)}`, { cwd: BASE_DIR }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to fetch resolutions ledger' });
+            }
+        });
+    });
+
+    // 35x. GET /api/ui-evolution/proposals — Return UI evolution proposals & A/B staging state
+    router.get('/ui-evolution/proposals', (req, res) => {
+        const pyScript = `from ss.features.ui_evolution_engine import load_ui_proposals; import json; print(json.dumps(load_ui_proposals()))`;
+        exec(`python3 -c ${JSON.stringify(pyScript)}`, { cwd: BASE_DIR }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to fetch UI proposals' });
+            }
+        });
+    });
+
+    // 35y. POST /api/ui-evolution/feedback — Record operator feedback and refinements on a staged proposal
+    router.post('/ui-evolution/feedback', (req, res) => {
+        const { proposal_id, feedback_text, rating = 5 } = req.body || {};
+        const pyScript = `from ss.features.ui_evolution_engine import submit_ui_feedback; import json; print(json.dumps(submit_ui_feedback(${JSON.stringify(proposal_id)}, ${JSON.stringify(feedback_text)}, rating=${rating})))`;
+        exec(`python3 -c ${JSON.stringify(pyScript)}`, { cwd: BASE_DIR }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to record UI feedback' });
+            }
+        });
+    });
+
+    // 35z. POST /api/ui-evolution/stage — Toggle proposal staging in Environment B
+    router.post('/ui-evolution/stage', (req, res) => {
+        const { proposal_id, stage_in_b = true } = req.body || {};
+        const pyScript = `from ss.features.ui_evolution_engine import set_proposal_staging_state; import json; print(json.dumps(set_proposal_staging_state(${JSON.stringify(proposal_id)}, stage_in_b=${stage_in_b ? 'True' : 'False'})))`;
+        exec(`python3 -c ${JSON.stringify(pyScript)}`, { cwd: BASE_DIR }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to toggle staging state' });
+            }
+        });
+    });
+
+    // 35aa. POST /api/ui-evolution/promote — Promote proposal from Environment B to Production Environment A
+    router.post('/ui-evolution/promote', (req, res) => {
+        const { proposal_id } = req.body || {};
+        const pyScript = `from ss.features.ui_evolution_engine import promote_proposal_to_production; import json; print(json.dumps(promote_proposal_to_production(${JSON.stringify(proposal_id)})))`;
+        exec(`python3 -c ${JSON.stringify(pyScript)}`, { cwd: BASE_DIR }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to promote proposal' });
+            }
+        });
+    });
+
+    // 35ab. POST /api/ui-evolution/detect-friction — Scan UI components for friction
+    router.post('/ui-evolution/detect-friction', (req, res) => {
+        const pyScript = `from ss.features.ui_evolution_engine import detect_ui_friction; import json; print(json.dumps(detect_ui_friction()))`;
+        exec(`python3 -c ${JSON.stringify(pyScript)}`, { cwd: BASE_DIR }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to scan UI friction' });
+            }
+        });
+    });
+
+    // 35ac. POST /api/intent/resolve — Open Natural Language Intent Resolver
+    router.post('/intent/resolve', (req, res) => {
+        const { prompt = '' } = req.body || {};
+        const pyScript = `from ss.features.natural_intent_resolver import resolve_natural_intent; import json; print(json.dumps(resolve_natural_intent(${JSON.stringify(prompt)})))`;
+        exec(`python3 -c ${JSON.stringify(pyScript)}`, { cwd: BASE_DIR }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to resolve intent' });
+            }
+        });
+    });
+
+    // 35ad. POST /api/meta/simulate — Execute hypothetical scenario simulation
+    router.post('/meta/simulate', (req, res) => {
+        const { hypothesis = '', scenario_params = null, session_id = null } = req.body || {};
+        const pyScript = `from ss.features.meta_alignment_simulator import simulate_meta_scenario; import json; print(json.dumps(simulate_meta_scenario(${JSON.stringify(hypothesis)}, ${scenario_params ? JSON.stringify(scenario_params) : 'None'}, ${session_id ? JSON.stringify(session_id) : 'None'})))`;
+        exec(`python3 -c ${JSON.stringify(pyScript)}`, { cwd: BASE_DIR }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to simulate meta scenario' });
+            }
+        });
+    });
+
+    // 35ae. GET /api/meta/sessions — Load meta simulation sessions and hypothesis trees
+    router.get('/meta/sessions', (req, res) => {
+        const pyScript = `from ss.features.meta_alignment_simulator import load_meta_sessions; import json; print(json.dumps(load_meta_sessions()))`;
+        exec(`python3 -c ${JSON.stringify(pyScript)}`, { cwd: BASE_DIR }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to load meta sessions' });
+            }
+        });
+    });
+
+    // 35af. POST /api/meta/revert — Step back hypothesis branch
+    router.post('/meta/revert', (req, res) => {
+        const { session_id = null } = req.body || {};
+        const pyScript = `from ss.features.meta_alignment_simulator import step_back_hypothesis; import json; print(json.dumps(step_back_hypothesis(${session_id ? JSON.stringify(session_id) : 'None'})))`;
+        exec(`python3 -c ${JSON.stringify(pyScript)}`, { cwd: BASE_DIR }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to revert hypothesis' });
+            }
+        });
+    });
+
+    // 35ag. POST /api/meta/adopt — Commit Meta Intent to Production with cryptographic snapshot
+    router.post('/meta/adopt', (req, res) => {
+        const { session_id = null } = req.body || {};
+        const pyScript = `from ss.features.meta_alignment_simulator import adopt_meta_intent_to_production; import json; print(json.dumps(adopt_meta_intent_to_production(${session_id ? JSON.stringify(session_id) : 'None'})))`;
+        exec(`python3 -c ${JSON.stringify(pyScript)}`, { cwd: BASE_DIR }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to adopt meta intent' });
+            }
+        });
+    });
+
+    // 35ah. POST /api/help/query — Universal System Help & Walkthrough Generator
+    router.post('/help/query', (req, res) => {
+        const { question = '' } = req.body || {};
+        const pyScript = `from ss.features.system_help_engine import query_system_help; import json; print(json.dumps(query_system_help(${JSON.stringify(question)})))`;
+        exec(`python3 -c ${JSON.stringify(pyScript)}`, { cwd: BASE_DIR }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to generate system help' });
+            }
+        });
+    });
+
     // 36. POST /api/consideration/inspect-manifest — Live dependency & manifest risk analysis
+
+
+
+
+
+
+
+
+
+
     router.post('/consideration/inspect-manifest', (req, res) => {
+
         const { metadata = {} } = req.body || {};
         const pyScript = `from ss.capability import PackageManifestInspector; import json; print(json.dumps(PackageManifestInspector.inspect_metadata(${JSON.stringify(metadata)})))`;
         exec(`python3 -c ${JSON.stringify(pyScript)}`, { cwd: BASE_DIR }, (err, stdout) => {
@@ -1588,6 +2112,20 @@ Output ONLY the rewritten prompt, wrapped in triple backticks.`;
         });
     });
 
+    // 56. POST /api/agent/synthesize — Synthesizes component changes and stages in Environment B
+    router.post('/agent/synthesize', (req, res) => {
+        const directive = (req.body && req.body.directive) || 'Enlarge SolidBot on click';
+        exec(`python3 -m ss.features.autonomous_agent_coder synthesize ${JSON.stringify(directive)}`, { cwd: BASE_DIR }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to parse agent synthesis output' });
+            }
+        });
+    });
+
     return router;
 }
+
 

@@ -20,6 +20,7 @@ import { dirname } from 'path';
 import { spawn } from 'child_process';
 import net from 'net';
 import { ACCOUNT_CONFIG_PATH, DEFAULT_PORT, MAX_ACCOUNTS } from '../constants.js';
+import { discoverSwarmAccounts, provisionSwarmAccounts } from '../account-manager/swarm-admin.js';
 import {
     getAuthorizationUrl,
     startCallbackServer,
@@ -65,13 +66,11 @@ function isServerRunning() {
 async function ensureServerStopped() {
     const isRunning = await isServerRunning();
     if (isRunning) {
-        console.error(`
-\x1b[31mError: Antigravity Proxy server is currently running on port ${SERVER_PORT}.\x1b[0m
+        console.warn(`
+\x1b[33mWarning: Antigravity Proxy server is currently running on port ${SERVER_PORT}.\x1b[0m
 
-Please stop the server (Ctrl+C) before adding or managing accounts.
-This ensures that your account changes are loaded correctly when you restart the server.
+The CLI will notify the server to reload your changes automatically.
 `);
-        process.exit(1);
     }
 }
 
@@ -138,12 +137,16 @@ function saveAccounts(accounts, settings = {}) {
         const config = {
             accounts: accounts.map(acc => ({
                 email: acc.email,
-                source: 'oauth',
+                source: acc.source || 'oauth',
                 refreshToken: acc.refreshToken,
                 projectId: acc.projectId,
                 addedAt: acc.addedAt || new Date().toISOString(),
                 lastUsed: acc.lastUsed || null,
-                modelRateLimits: acc.modelRateLimits || {}
+                modelRateLimits: acc.modelRateLimits || {},
+                subscription: acc.subscription || undefined,
+                enabled: acc.enabled !== undefined ? acc.enabled : true,
+                isInvalid: acc.isInvalid || false,
+                invalidReason: acc.invalidReason || null
             })),
             settings: {
                 maxRetries: 5,
@@ -154,6 +157,24 @@ function saveAccounts(accounts, settings = {}) {
 
         writeFileSync(ACCOUNT_CONFIG_PATH, JSON.stringify(config, null, 2));
         console.log(`\n✓ Saved ${accounts.length} account(s) to ${ACCOUNT_CONFIG_PATH}`);
+        
+        // Notify server to reload if it's running
+        import('http').then(http => {
+            const req = http.request({
+                hostname: '127.0.0.1',
+                port: SERVER_PORT,
+                path: '/api/accounts/reload',
+                method: 'POST'
+            }, (res) => {
+                if (res.statusCode === 200) {
+                    console.log('\x1b[32m✓ Hot-reloaded running proxy server with new accounts.\x1b[0m\n');
+                }
+            });
+            req.on('error', () => {
+                // Ignore, server is just not running
+            });
+            req.end();
+        }).catch(() => {});
     } catch (error) {
         console.error('Error saving accounts:', error.message);
         throw error;
@@ -452,6 +473,79 @@ async function verifyAccounts() {
 }
 
 /**
+ * Auto-discover swarm accounts via Google Admin SDK
+ */
+async function autoDiscoverSwarm() {
+    console.log('\n=== Swarm Auto-Discovery ===\n');
+    console.log('Querying Google Workspace for swarm accounts...');
+    
+    try {
+        const discovered = await discoverSwarmAccounts();
+        if (discovered.length === 0) {
+            console.log('\nNo swarm accounts found matching the expected prefix.');
+            return;
+        }
+
+        const accounts = loadAccounts();
+        const existingEmails = new Set(accounts.map(a => a.email.toLowerCase()));
+        
+        let newCount = 0;
+        for (const email of discovered) {
+            if (!existingEmails.has(email.toLowerCase())) {
+                accounts.push({
+                    email: email,
+                    refreshToken: 'PENDING_AUTH',
+                    source: 'service_account',
+                    subscription: { tier: 'free' },
+                    enabled: true,
+                    addedAt: new Date().toISOString(),
+                    modelRateLimits: {}
+                });
+                newCount++;
+            }
+        }
+        
+        if (newCount > 0) {
+            saveAccounts(accounts);
+            console.log(`\n✓ Imported ${newCount} new swarm account(s) into proxy config.`);
+        } else {
+            console.log('\n✓ All discovered swarm accounts are already in the proxy config.');
+        }
+        
+        console.log(`\nTotal accounts in config: ${accounts.length}`);
+    } catch (error) {
+        console.error('\n✗ Auto-discovery failed:', error.message);
+    }
+}
+
+/**
+ * Provision new swarm accounts
+ */
+async function provisionSwarm(args) {
+    if (args.length < 3) {
+        console.log('\nUsage: node src/cli/accounts.js provision-swarm <domain> <prefix> <count> [startIdx]');
+        console.log('Example: node src/cli/accounts.js provision-swarm mysolidstate.ca z 42');
+        return;
+    }
+    
+    const domain = args[0];
+    const prefix = args[1];
+    const count = parseInt(args[2], 10);
+    const startIdx = args[3] ? parseInt(args[3], 10) : 1;
+    
+    if (isNaN(count) || count <= 0) {
+        console.log('\n✗ Count must be a positive number');
+        return;
+    }
+    
+    try {
+        await provisionSwarmAccounts(domain, prefix, startIdx, count);
+    } catch (error) {
+        console.error('\n✗ Provisioning failed:', error.message);
+    }
+}
+
+/**
  * Main CLI
  */
 async function main() {
@@ -482,13 +576,22 @@ async function main() {
             case 'verify':
                 await verifyAccounts();
                 break;
+            case 'auto-discover':
+                await ensureServerStopped();
+                await autoDiscoverSwarm();
+                break;
+            case 'provision-swarm':
+                await provisionSwarm(args.slice(1));
+                break;
             case 'help':
                 console.log('\nUsage:');
                 console.log('  node src/cli/accounts.js add     Add new account(s)');
                 console.log('  node src/cli/accounts.js list    List all accounts');
-                console.log('  node src/cli/accounts.js verify  Verify account tokens');
-                console.log('  node src/cli/accounts.js clear   Remove all accounts');
-                console.log('  node src/cli/accounts.js help    Show this help');
+                console.log('  node src/cli/accounts.js verify          Verify account tokens');
+                console.log('  node src/cli/accounts.js clear           Remove all accounts');
+                console.log('  node src/cli/accounts.js auto-discover   Discover and import all swarm accounts');
+                console.log('  node src/cli/accounts.js provision-swarm <domain> <prefix> <count>');
+                console.log('  node src/cli/accounts.js help            Show this help');
                 console.log('\nOptions:');
                 console.log('  --no-browser    Manual authorization code input (for headless servers)');
                 break;

@@ -49,3 +49,5 @@ node tests/test-strategies.cjs       # strategy unit tests (no server needed)
 **Dev mode sub-toggles** are client-side only (localStorage in `settings-store.js`): screenshot/redact mode, debug logging, log export, health inspector, placeholder data. No backend involvement.
 
 **`/api/strategy/health`** returns 403 unless dev mode is on.
+
+**Burst Pacing (`src/utils/throttle.js`)**: A global `RequestThrottle` enforces a 150ms micro-delay queue before every request reaches the account selector. This is a hard invariant — it prevents burst concurrency from pinning one account before the load balancer can rotate. Wired into `server.js` and `openai-compat.js`. Do not remove or bypass. See `docs/load-balancing.md` for design rationale.

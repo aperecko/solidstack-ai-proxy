@@ -1,0 +1,436 @@
+{
+  "accounts": [
+    {
+      "email": "01@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "02@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "03@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "04@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "05@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "06@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "07@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "08@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "09@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "10@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "11@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "12@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "13@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "14@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "15@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "16@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "17@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "18@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "19@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "20@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "21@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "22@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "23@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "24@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "25@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "26@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "27@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "28@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "29@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "30@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "31@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "32@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "33@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "34@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "35@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "36@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "37@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "38@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "39@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "40@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "41@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "42@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "43@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "44@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "45@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "46@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "47@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    },
+    {
+      "email": "48@adamassist.com",
+      "refresh_token": "PENDING_AUTH",
+      "source": "manual_import",
+      "subscription": {
+        "tier": "free"
+      },
+      "enabled": true
+    }
+  ]
+}

@@ -53,6 +53,20 @@ export class HealthTracker {
     }
 
     /**
+     * Get all currently tracked health scores
+     */
+    getAllScores() {
+        const result = {};
+        for (const [email, record] of this.#scores.entries()) {
+            result[email] = {
+                score: this.getScore(email),
+                consecutiveFailures: record.consecutiveFailures
+            };
+        }
+        return result;
+    }
+
+    /**
      * Record a successful request for an account
      * @param {string} email - Account email
      */

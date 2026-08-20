@@ -163,7 +163,44 @@ export function isDatabaseAccessible(dbPath = ANTIGRAVITY_DB_PATH) {
     }
 }
 
+/**
+ * Get the email of the account currently authenticated in the Antigravity app.
+ * Lightweight read — only extracts the email field, not the full token.
+ *
+ * Falls back to sqlite3 CLI if better-sqlite3 has a native module mismatch.
+ *
+ * @param {string} [dbPath] - Optional custom database path
+ * @returns {string|null} The authenticated email, or null if unavailable
+ */
+export function getAntigravityAppEmail(dbPath = ANTIGRAVITY_DB_PATH) {
+    // Try better-sqlite3 first (fast, in-process)
+    try {
+        const data = getAuthStatus(dbPath);
+        return data?.email || null;
+    } catch {
+        // Fall through to CLI fallback
+    }
+
+    // Fallback: use sqlite3 CLI (handles native module version mismatches)
+    try {
+        const { execSync } = require('child_process');
+        const raw = execSync(
+            `sqlite3 "${dbPath}" "SELECT value FROM ItemTable WHERE key = 'antigravityAuthStatus'" 2>/dev/null`,
+            { encoding: 'utf8', timeout: 3000 }
+        ).trim();
+        if (raw) {
+            const data = JSON.parse(raw);
+            return data?.email || null;
+        }
+    } catch {
+        // Both methods failed
+    }
+
+    return null;
+}
+
 export default {
     getAuthStatus,
-    isDatabaseAccessible
+    isDatabaseAccessible,
+    getAntigravityAppEmail
 };

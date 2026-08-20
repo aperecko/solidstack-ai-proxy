@@ -131,25 +131,21 @@ const MAX_INTERCEPT_BODY_BYTES = 50 * 1024 * 1024; // Match REQUEST_BODY_LIMIT (
 
 function readRequestBody(req, maxBytes = MAX_INTERCEPT_BODY_BYTES) {
     return new Promise((resolve, reject) => {
-        const chunks = [];
         let total = 0;
-        let finished = false;
+        const chunks = [];
+        const timer = setTimeout(() => req.destroy(new Error('Request Timeout')), 30000);
         req.on('data', (chunk) => {
             total += chunk.length;
             if (total > maxBytes) {
-                finished = true;
-                reject(new Error(`Request body exceeds ${maxBytes} bytes`));
-                req.removeAllListeners('data');
-                req.removeAllListeners('end');
-                return;
+                clearTimeout(timer);
+                req.destroy(new Error('Payload Too Large'));
+                reject(new Error('Payload Too Large'));
+            } else {
+                chunks.push(chunk);
             }
-            chunks.push(chunk);
         });
-        req.on('end', () => {
-            if (finished) return;
-            resolve(Buffer.concat(chunks));
-        });
-        req.on('error', reject);
+        req.on('end', () => { clearTimeout(timer); resolve(Buffer.concat(chunks)); });
+        req.on('error', (err) => { clearTimeout(timer); reject(err); });
     });
 }
 
@@ -236,9 +232,9 @@ function handleQuotaSummarySynthesis(req, res) {
 // present with Transfer-Encoding"). The caller sets the final length itself.
 function sanitizeResponseHeaders(headers, outLength) {
     const out = {};
+    const forbidden = new Set(['transfer-encoding', 'connection', 'keep-alive', 'proxy-connection', 'upgrade', 'trailer', 'te', 'proxy-authenticate', 'proxy-authorization', 'x-forwarded-for']);
     for (const [k, v] of Object.entries(headers || {})) {
-        const lk = k.toLowerCase();
-        if (['transfer-encoding', 'connection', 'keep-alive', 'proxy-connection', 'upgrade', 'trailer', 'te'].includes(lk)) continue;
+        if (forbidden.has(k.toLowerCase())) continue;
         out[k] = v;
     }
     if (outLength != null) out['content-length'] = outLength;
@@ -246,8 +242,6 @@ function sanitizeResponseHeaders(headers, outLength) {
 }
 
 // Manual forward for fetchAvailableModels: extract the response, resolve every
-// model's quotaInfo to healthy (remainingFraction = 1.0), and re-send so AG's
-// model availability display is not locked to whichever pooled account served it.
 function forwardAndNeutralizeQuota(hostName, req, res, bodyText) {
     const headers = { ...req.headers };
     delete headers['transfer-encoding'];
@@ -276,9 +270,34 @@ function forwardAndNeutralizeQuota(hostName, req, res, bodyText) {
             try {
                 const data = JSON.parse(raw.toString('utf8'));
                 if (data && data.models) {
-                    for (const modelData of Object.values(data.models)) {
-                        if (modelData && modelData.quotaInfo && typeof modelData.quotaInfo === 'object') {
-                            modelData.quotaInfo.remainingFraction = 1.0;
+                    for (const [mId, modelData] of Object.entries(data.models)) {
+                        if (modelData) {
+                            if (!modelData.quotaInfo || typeof modelData.quotaInfo !== 'object') {
+                                modelData.quotaInfo = { remainingFraction: 1.0 };
+                            } else {
+                                modelData.quotaInfo.remainingFraction = 1.0;
+                                delete modelData.quotaInfo.resetTime;
+                            }
+                        }
+                    }
+                    // Ensure full Pro & Claude model suite is always present in IDE model list
+                    const REQUIRED_MODELS = [
+                        'claude-opus-4-6-thinking',
+                        'claude-sonnet-4-6',
+                        'gemini-3.7-flash-high',
+                        'gemini-3.7-flash-low',
+                        'gemini-3.1-pro-high',
+                        'gemini-3.1-pro-low',
+                        'gemini-2.5-pro',
+                        'gemini-2.5-flash',
+                        'gemini-pro-agent'
+                    ];
+                    for (const reqModel of REQUIRED_MODELS) {
+                        if (!data.models[reqModel]) {
+                            data.models[reqModel] = {
+                                displayName: reqModel,
+                                quotaInfo: { remainingFraction: 1.0 }
+                            };
                         }
                     }
                     out = Buffer.from(JSON.stringify(data));
@@ -291,7 +310,7 @@ function forwardAndNeutralizeQuota(hostName, req, res, bodyText) {
             if (!res.headersSent) res.writeHead(proxyRes.statusCode, outHeaders);
             res.end(out);
             if (neutralized) {
-                logger.info(`[GUI Interceptor] 🧪 fetchAvailableModels quotaInfo neutralized (${proxyRes.statusCode})`);
+                logger.info(`[GUI Interceptor] 🧪 fetchAvailableModels quotaInfo neutralized & full model suite guaranteed (${proxyRes.statusCode})`);
             }
         });
     });
@@ -343,12 +362,11 @@ app.use(async (req, res, next) => {
         reqPathLower.includes('retrieveuserquotasummary')
     );
 
-    // Identity-bound endpoints (account sign-in / onboarding / model discovery)
+    // Identity-bound endpoints (account sign-in / onboarding)
     // MUST stay authenticated as the account that actually signed into AG. Routing
     // them through the pool with a swapped token breaks the connect-login flow
-    // (Google would onboard / return data for the wrong account). These keep the
-    // request's original Bearer token; the pool-swap below is skipped for them.
-    const IDENTITY_ENDPOINT_MARKERS = ['onboarduser', 'loadcodeassist', 'fetchavailablemodels'];
+    // (Google would onboard / return data for the wrong account).
+    const IDENTITY_ENDPOINT_MARKERS = ['onboarduser', 'loadcodeassist'];
     const isIdentityRequest = IDENTITY_ENDPOINT_MARKERS.some((m) => reqPathLower.includes(m));
 
     if (isAIRequest || isMetadataRequest) {
@@ -613,6 +631,8 @@ usageStats.setupMiddleware(app);
  * Claude Code sends heartbeat/event requests to POST / which we don't need
  * Using app.use instead of app.post for earlier middleware interception
  */
+
+
 app.use((req, res, next) => {
     // Handle Claude Code event logging requests silently
     if (req.method === 'POST' && req.path === '/api/event_logging/batch') {
@@ -773,6 +793,8 @@ function parseError(error) {
 }
 
 // Request logging middleware
+
+
 app.use((req, res, next) => {
     const start = Date.now();
 
@@ -824,6 +846,23 @@ app.post('/test/clear-signature-cache', (req, res) => {
  * Health check endpoint - Detailed status
  * Returns status of all accounts including rate limits and model quotas
  */
+
+// Expose routing appraisals to Commander
+app.get('/api/metrics/routing', async (req, res) => {
+    try {
+        const testingMetrics = accountManager.getRoutingMetrics?.() || {
+            active_paths: [],
+            shadow_tests: []
+        };
+        res.json({
+            status: 'ok',
+            strategy: STRATEGY_OVERRIDE || 'hybrid',
+            ...testingMetrics
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
 app.get('/health', async (req, res) => {
     try {
         await ensureInitialized();
@@ -864,18 +903,25 @@ app.get('/health', async (req, res) => {
                 }
 
                 try {
-                    const token = await accountManager.getTokenForAccount(account);
-                    const projectId = account.subscription?.projectId || null;
-                    const quotas = await getModelQuotas(token, projectId);
+                    const now = Date.now();
+                    const cacheAge = now - (account._lastQuotaFetchTime || 0);
+                    let formattedQuotas = account._cachedFormattedQuotas;
 
-                    // Format quotas for readability
-                    const formattedQuotas = {};
-                    for (const [modelId, info] of Object.entries(quotas)) {
-                        formattedQuotas[modelId] = {
-                            remaining: info.remainingFraction !== null ? `${Math.round(info.remainingFraction * 100)}%` : 'N/A',
-                            remainingFraction: info.remainingFraction,
-                            resetTime: info.resetTime || null
-                        };
+                    if (!formattedQuotas || cacheAge > 60000 || req.query.fresh === 'true') {
+                        const token = await accountManager.getTokenForAccount(account);
+                        const projectId = account.subscription?.projectId || null;
+                        const quotas = await getModelQuotas(token, projectId);
+
+                        formattedQuotas = {};
+                        for (const [modelId, info] of Object.entries(quotas)) {
+                            formattedQuotas[modelId] = {
+                                remaining: info.remainingFraction !== null ? `${Math.round(info.remainingFraction * 100)}%` : 'N/A',
+                                remainingFraction: info.remainingFraction,
+                                resetTime: info.resetTime || null
+                            };
+                        }
+                        account._cachedFormattedQuotas = formattedQuotas;
+                        account._lastQuotaFetchTime = now;
                     }
 
                     return {
@@ -1548,8 +1594,53 @@ app.post('/v1/messages', async (req, res) => {
 usageStats.setupRoutes(app);
 
 // ==========================================
-// SolidStack Dashboard Reverse Proxy (Port 5001)
+// SolidStack Dashboard & Subsystem Reverse Proxies
 // ==========================================
+const ssmcpProxy = createProxyMiddleware({
+    target: process.env.SSMCP_HTTP_TARGET || 'http://127.0.0.1:8765',
+    changeOrigin: true,
+    on: {
+        error: (err, req, res) => {
+            logger.error(`[SSmcp Proxy] Error: ${err.message}`);
+            if (!res.headersSent) {
+                res.status(502).json({ error: 'SSmcp Server Offline (:8765)' });
+            }
+        }
+    }
+});
+
+const daemonProxy = createProxyMiddleware({
+    target: 'http://127.0.0.1:18791',
+    changeOrigin: true,
+    pathRewrite: {
+        '^/daemon-api': '/api'
+    },
+    on: {
+        error: (err, req, res) => {
+            logger.error(`[Daemon Proxy] Error: ${err.message}`);
+            if (!res.headersSent) {
+                res.status(502).json({ error: 'Commander Daemon Offline (:18791)' });
+            }
+        }
+    }
+});
+
+const mcpHttpProxy = createProxyMiddleware({
+    target: 'http://127.0.0.1:8765',
+    changeOrigin: true,
+    pathRewrite: {
+        '^/mcp-api': ''
+    },
+    on: {
+        error: (err, req, res) => {
+            logger.error(`[MCP Proxy] Error: ${err.message}`);
+            if (!res.headersSent) {
+                res.status(502).json({ error: 'SSmcp HTTP Server Offline (:8765)' });
+            }
+        }
+    }
+});
+
 const dashboardProxy = createProxyMiddleware({
     target: 'http://127.0.0.1:5001',
     changeOrigin: true,
@@ -1568,8 +1659,20 @@ const dashboardProxy = createProxyMiddleware({
 });
 
 app.use((req, res, next) => {
-    const flaskRoutes = ['/api/stream', '/api/status', '/api/attention', '/api/heartbeats', '/api/nodes', '/api/services', '/api/containers', '/api/integrations', '/api/taxonomy', '/api/workflow', '/api/coordinator', '/api/agents', '/api/locks', '/api/worktrees', '/api/tasks', '/api/task-progress', '/api/handoffs', '/api/openclaw', '/api/blockers', '/api/service-mobility', '/api/ai-accounts', '/api/ai-proxy', '/api/token-usage', '/api/actions', '/api/discovered', '/api/discovered-devices', '/api/skills', '/api/model-logs', '/api/features', '/api/consideration', '/api/aggregator/status', '/api/local-engines', '/api/model-download-status'];
+    const flaskRoutes = ['/api/stream', '/api/status', '/api/attention', '/api/heartbeats', '/api/nodes', '/api/services', '/api/containers', '/api/integrations', '/api/taxonomy', '/api/workflow', '/api/coordinator', '/api/agents', '/api/locks', '/api/worktrees', '/api/tasks', '/api/task-progress', '/api/handoffs', '/api/openclaw', '/api/blockers', '/api/service-mobility', '/api/ai-accounts', '/api/ai-proxy', '/api/token-usage', '/api/actions', '/api/discovered', '/api/discovered-devices', '/api/skills', '/api/model-logs', '/api/features', '/api/aggregator/status', '/api/local-engines', '/api/model-download-status'];
     
+    if (req.path === '/daemon-api' || req.path.startsWith('/daemon-api/')) {
+        return daemonProxy(req, res, next);
+    }
+
+    if (req.path === '/mcp-api' || req.path.startsWith('/mcp-api/')) {
+        return mcpHttpProxy(req, res, next);
+    }
+
+    if (req.path === '/api/consideration' || req.path.startsWith('/api/consideration/')) {
+        return ssmcpProxy(req, res, next);
+    }
+
     if (req.path === '/dashboard' || req.path.startsWith('/dashboard/') || req.path.startsWith('/static/') || req.path.startsWith('/partials/')) {
         return dashboardProxy(req, res, next);
     }

@@ -331,8 +331,8 @@ export async function* sendMessageStream(anthropicRequest, accountManager, fallb
                                 continue;
                             }
                             // Max capacity retries exceeded - switch account
-                            logger.warn(`[CloudCode] Max capacity retries (${MAX_CAPACITY_RETRIES}) exceeded on ${response.status}, switching account`);
-                            accountManager.markRateLimited(account.email, BACKOFF_BY_ERROR_TYPE.MODEL_CAPACITY_EXHAUSTED, currentModel);
+                            logger.warn(`[CloudCode] Max capacity retries (${MAX_CAPACITY_RETRIES}) exceeded on ${response.status}, switching account (preserving account state)`);
+                            accountManager.markRateLimited(account.email, BACKOFF_BY_ERROR_TYPE.MODEL_CAPACITY_EXHAUSTED, currentModel, false);
                             throw new Error(`CAPACITY_EXHAUSTED: ${errorText}`);
                         }
 

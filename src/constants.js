@@ -254,7 +254,7 @@ const OAUTH_CALLBACK_FALLBACK_PORTS = [51122, 51123, 51124, 51125, 51126];
 
 export const OAUTH_CONFIG = {
     clientId: '1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com',
-    clientSecret: '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',
+    clientSecret: process.env.ANTIGRAVITY_CLIENT_SECRET || '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',
     authUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
     tokenUrl: 'https://oauth2.googleapis.com/token',
     userInfoUrl: 'https://www.googleapis.com/oauth2/v1/userinfo',
@@ -275,28 +275,221 @@ export const OAUTH_REDIRECT_URI = `http://localhost:${OAUTH_CONFIG.callbackPort}
 // Reference: GitHub issue #76, CLIProxyAPI, gcli2api
 export const ANTIGRAVITY_SYSTEM_INSTRUCTION = `You are Antigravity, a powerful agentic AI coding assistant designed by the Google Deepmind team working on Advanced Agentic Coding.You are pair programming with a USER to solve their coding task. The task may require creating a new codebase, modifying or debugging an existing codebase, or simply answering a question.**Absolute paths only****Proactiveness**`;
 
-// Model fallback mapping - maps primary model to fallback when quota exhausted
-export const MODEL_FALLBACK_MAP = {
-    'gemini-3.1-pro-high': 'claude-opus-4-6-thinking',
-    'gemini-3.1-pro-low': 'claude-sonnet-4-6',
-    'gemini-3-flash': 'claude-sonnet-4-6',
-    'claude-opus-4-6-thinking': 'gemini-3.1-pro-high',
-    'claude-sonnet-4-6': 'gemini-3-flash'
+// ─── Model Classification Rules ───────────────────────────────────────────────
+// Stable rules based on naming conventions that persist across model generations.
+// These classify ANY model by parsing its ID — no hardcoded model names required.
+
+/**
+ * Model tier classification. Each function takes a model ID and returns
+ * true if the model belongs to that tier.
+ */
+export const MODEL_TIERS = {
+    /** Thinking/reasoning models (deep, slow, high-quality) */
+    isThinking: (id) => {
+        const l = (id || '').toLowerCase();
+        return l.includes('thinking') || l.includes('pro-high') || l.includes('opus');
+    },
+    /** Fast/lightweight models */
+    isFast: (id) => {
+        const l = (id || '').toLowerCase();
+        return l.includes('flash') || l.includes('haiku');
+    },
+    /** Heavy/powerful models (not necessarily thinking) */
+    isHeavy: (id) => {
+        const l = (id || '').toLowerCase();
+        return l.includes('pro') || l.includes('opus') || l.includes('120b');
+    },
+    /** Mid-tier balanced models (sonnet, medium variants) */
+    isMid: (id) => {
+        const l = (id || '').toLowerCase();
+        return l.includes('sonnet') || l.includes('medium') || (l.includes('flash') && l.includes('high'));
+    }
 };
 
-// Default test models for each family (used by test suite)
-export const TEST_MODELS = {
-    claude: 'claude-sonnet-4-6',
-    gemini: 'gemini-3.5-flash-low'
-};
+/**
+ * Build a cross-family fallback map from a live model list.
+ * For each model, finds the best alternative in a different family.
+ *
+ * @param {string[]} liveModels - Array of model IDs from fetchAvailableModels()
+ * @returns {Object} Map of modelId → fallbackModelId
+ */
+export function buildFallbackMap(liveModels) {
+    if (!liveModels || liveModels.length === 0) return {};
 
-// Default Claude CLI presets (used by WebUI settings)
-export const DEFAULT_PRESETS = [
+    const map = {};
+    const byFamily = {};
+
+    // Group models by family
+    for (const id of liveModels) {
+        const family = getModelFamily(id);
+        if (!byFamily[family]) byFamily[family] = [];
+        byFamily[family].push(id);
+    }
+
+    const families = Object.keys(byFamily);
+
+    for (const id of liveModels) {
+        const myFamily = getModelFamily(id);
+        // Find the best match in a different family
+        for (const otherFamily of families) {
+            if (otherFamily === myFamily || otherFamily === 'unknown') continue;
+
+            const candidates = byFamily[otherFamily];
+            let bestMatch = null;
+
+            if (MODEL_TIERS.isThinking(id)) {
+                // Thinking model → find another thinking model, or heavy model
+                bestMatch = candidates.find(c => MODEL_TIERS.isThinking(c))
+                         || candidates.find(c => MODEL_TIERS.isHeavy(c))
+                         || candidates[0];
+            } else if (MODEL_TIERS.isFast(id)) {
+                // Fast model → find another fast model, or mid-tier
+                bestMatch = candidates.find(c => MODEL_TIERS.isFast(c))
+                         || candidates.find(c => MODEL_TIERS.isMid(c))
+                         || candidates[0];
+            } else if (MODEL_TIERS.isMid(id)) {
+                // Mid model → find another mid model, or fast
+                bestMatch = candidates.find(c => MODEL_TIERS.isMid(c))
+                         || candidates.find(c => MODEL_TIERS.isFast(c))
+                         || candidates[0];
+            } else {
+                // Default: just pick the first available model in the other family
+                bestMatch = candidates[0];
+            }
+
+            if (bestMatch) {
+                map[id] = bestMatch;
+                break; // Use the first alternative family found
+            }
+        }
+    }
+
+    return map;
+}
+
+/**
+ * Build Claude CLI presets dynamically from a live model list.
+ * Generates presets based on what models are actually available.
+ *
+ * @param {string[]} liveModels - Array of model IDs from fetchAvailableModels()
+ * @param {number} [port=1987] - Proxy port
+ * @returns {Array} Array of preset objects for the Claude CLI settings UI
+ */
+export function buildPresets(liveModels, port = 1987) {
+    if (!liveModels || liveModels.length === 0) return _FALLBACK_PRESETS;
+
+    const baseUrl = `http://localhost:${port}`;
+    const presets = [];
+
+    // Group by family
+    const gemini = liveModels.filter(id => getModelFamily(id) === 'gemini');
+    const claude = liveModels.filter(id => getModelFamily(id) === 'claude');
+    const other = liveModels.filter(id => getModelFamily(id) === 'unknown');
+
+    // Helper: pick best model for a role from a candidate list
+    const pickThinking = (list) => list.find(id => MODEL_TIERS.isThinking(id)) || list.find(id => MODEL_TIERS.isHeavy(id)) || list[0];
+    const pickMid      = (list) => list.find(id => MODEL_TIERS.isMid(id)) || list.find(id => MODEL_TIERS.isFast(id)) || list[0];
+    const pickFast     = (list) => list.find(id => MODEL_TIERS.isFast(id)) || list[0];
+
+    // 1. "Best Available" — cross-family, best of everything
+    const allModels = [...liveModels];
+    const bestOpus   = pickThinking(allModels);
+    const bestSonnet = pickMid(allModels.filter(id => id !== bestOpus));
+    const bestHaiku  = pickFast(allModels.filter(id => id !== bestOpus && id !== bestSonnet));
+    if (bestOpus) {
+        presets.push({
+            name: '⚡ Best Available (Auto)',
+            auto: true,
+            config: {
+                ANTHROPIC_AUTH_TOKEN: 'test',
+                ANTHROPIC_BASE_URL: baseUrl,
+                ANTHROPIC_MODEL: bestOpus,
+                ANTHROPIC_DEFAULT_OPUS_MODEL: bestOpus,
+                ANTHROPIC_DEFAULT_SONNET_MODEL: bestSonnet || bestOpus,
+                ANTHROPIC_DEFAULT_HAIKU_MODEL: bestHaiku || bestSonnet || bestOpus,
+                CLAUDE_CODE_SUBAGENT_MODEL: bestSonnet || bestHaiku || bestOpus,
+                ENABLE_EXPERIMENTAL_MCP_CLI: 'true'
+            }
+        });
+    }
+
+    // 2. "Gemini Native" — all Gemini slots
+    if (gemini.length > 0) {
+        const gOpus   = pickThinking(gemini);
+        const gSonnet = pickMid(gemini.filter(id => id !== gOpus)) || pickFast(gemini);
+        const gHaiku  = pickFast(gemini.filter(id => id !== gOpus && id !== gSonnet));
+        presets.push({
+            name: '🟢 Gemini Native',
+            auto: true,
+            config: {
+                ANTHROPIC_AUTH_TOKEN: 'test',
+                ANTHROPIC_BASE_URL: baseUrl,
+                ANTHROPIC_MODEL: gOpus || gemini[0],
+                ANTHROPIC_DEFAULT_OPUS_MODEL: gOpus || gemini[0],
+                ANTHROPIC_DEFAULT_SONNET_MODEL: gSonnet || gOpus || gemini[0],
+                ANTHROPIC_DEFAULT_HAIKU_MODEL: gHaiku || gSonnet || gemini[0],
+                CLAUDE_CODE_SUBAGENT_MODEL: gSonnet || gHaiku || gemini[0],
+                ENABLE_EXPERIMENTAL_MCP_CLI: 'true'
+            }
+        });
+    }
+
+    // 3. "Claude Native" — all Claude slots
+    if (claude.length > 0) {
+        const cOpus   = pickThinking(claude);
+        const cSonnet = pickMid(claude.filter(id => id !== cOpus));
+        const cHaiku  = pickFast(claude.filter(id => id !== cOpus && id !== cSonnet));
+        presets.push({
+            name: '🟣 Claude Native',
+            auto: true,
+            config: {
+                ANTHROPIC_AUTH_TOKEN: 'test',
+                ANTHROPIC_BASE_URL: baseUrl,
+                ANTHROPIC_MODEL: cOpus || claude[0],
+                ANTHROPIC_DEFAULT_OPUS_MODEL: cOpus || claude[0],
+                ANTHROPIC_DEFAULT_SONNET_MODEL: cSonnet || cOpus || claude[0],
+                ANTHROPIC_DEFAULT_HAIKU_MODEL: cHaiku || cSonnet || claude[0],
+                CLAUDE_CODE_SUBAGENT_MODEL: cSonnet || cHaiku || claude[0],
+                ENABLE_EXPERIMENTAL_MCP_CLI: 'true'
+            }
+        });
+    }
+
+    // 4. Any "other" family (e.g., GPT-OSS) gets its own preset
+    if (other.length > 0) {
+        const oOpus   = pickThinking(other) || other[0];
+        const oSonnet = pickMid(other) || other[0];
+        const oHaiku  = pickFast(other) || other[0];
+        presets.push({
+            name: '🔵 OSS / Other Models',
+            auto: true,
+            config: {
+                ANTHROPIC_AUTH_TOKEN: 'test',
+                ANTHROPIC_BASE_URL: baseUrl,
+                ANTHROPIC_MODEL: oOpus,
+                ANTHROPIC_DEFAULT_OPUS_MODEL: oOpus,
+                ANTHROPIC_DEFAULT_SONNET_MODEL: oSonnet,
+                ANTHROPIC_DEFAULT_HAIKU_MODEL: oHaiku,
+                CLAUDE_CODE_SUBAGENT_MODEL: oSonnet,
+                ENABLE_EXPERIMENTAL_MCP_CLI: 'true'
+            }
+        });
+    }
+
+    return presets.length > 0 ? presets : _FALLBACK_PRESETS;
+}
+
+// ─── Static Fallbacks (Cold Start Only) ───────────────────────────────────────
+// Used ONLY when the live API hasn't been called yet (first boot, no accounts).
+// These are intentionally generic and will be replaced on first successful fetch.
+
+const _FALLBACK_PRESETS = [
     {
-        name: 'Claude Thinking',
+        name: 'Claude Thinking (Fallback)',
+        auto: false,
         config: {
             ANTHROPIC_AUTH_TOKEN: 'test',
-            ANTHROPIC_BASE_URL: 'http://localhost:8080',
+            ANTHROPIC_BASE_URL: 'http://localhost:1987',
             ANTHROPIC_MODEL: 'claude-opus-4-6-thinking',
             ANTHROPIC_DEFAULT_OPUS_MODEL: 'claude-opus-4-6-thinking',
             ANTHROPIC_DEFAULT_SONNET_MODEL: 'claude-sonnet-4-6',
@@ -306,10 +499,11 @@ export const DEFAULT_PRESETS = [
         }
     },
     {
-        name: 'Gemini 1M',
+        name: 'Gemini 1M (Fallback)',
+        auto: false,
         config: {
             ANTHROPIC_AUTH_TOKEN: 'test',
-            ANTHROPIC_BASE_URL: 'http://localhost:8080',
+            ANTHROPIC_BASE_URL: 'http://localhost:1987',
             ANTHROPIC_MODEL: 'gemini-3.1-pro-low',
             ANTHROPIC_DEFAULT_OPUS_MODEL: 'gemini-3.1-pro-low',
             ANTHROPIC_DEFAULT_SONNET_MODEL: 'gemini-3.5-flash-low',
@@ -319,6 +513,18 @@ export const DEFAULT_PRESETS = [
         }
     }
 ];
+
+/** @deprecated Use buildPresets() for dynamic presets. Kept for backward compat. */
+export const DEFAULT_PRESETS = _FALLBACK_PRESETS;
+
+/** @deprecated Use buildFallbackMap() for dynamic fallbacks. Kept for backward compat. */
+export const MODEL_FALLBACK_MAP = {};
+
+// Default test models for each family (used by test suite)
+export const TEST_MODELS = {
+    claude: 'claude-opus-4-6-thinking',
+    gemini: 'gemini-3.5-flash-low'
+};
 
 /**
  * Built-in server configuration presets.
@@ -519,5 +725,8 @@ export default {
     TEST_MODELS,
     DEFAULT_PRESETS,
     DEFAULT_SERVER_PRESETS,
-    ANTIGRAVITY_SYSTEM_INSTRUCTION
+    ANTIGRAVITY_SYSTEM_INSTRUCTION,
+    MODEL_TIERS,
+    buildFallbackMap,
+    buildPresets
 };

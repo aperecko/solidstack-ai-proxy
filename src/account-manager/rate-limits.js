@@ -75,15 +75,49 @@ export function clearExpiredLimits(accounts) {
     let cleared = 0;
 
     for (const account of accounts) {
+        let hasActiveLimits = false;
+
         if (account.modelRateLimits) {
             for (const [modelId, limit] of Object.entries(account.modelRateLimits)) {
-                if (limit.isRateLimited && limit.resetTime <= now) {
-                    limit.isRateLimited = false;
-                    limit.resetTime = null;
-                    cleared++;
-                    logger.success(`[AccountManager] Rate limit expired for: ${account.email} (model: ${modelId})`);
+                if (limit.isRateLimited) {
+                    if (limit.resetTime && limit.resetTime <= now) {
+                        limit.isRateLimited = false;
+                        limit.resetTime = null;
+                        cleared++;
+                        logger.success(`[AccountManager] Rate limit expired for: ${account.email} (model: ${modelId})`);
+                    } else if (limit.resetTime && limit.resetTime > now) {
+                        hasActiveLimits = true;
+                    }
                 }
             }
+        }
+
+        // Also clean up expired quota.models records
+        if (account.quota && account.quota.models) {
+            for (const [modelId, q] of Object.entries(account.quota.models)) {
+                if (q.resetTime) {
+                    const resetMs = new Date(q.resetTime).getTime();
+                    if (!isNaN(resetMs) && resetMs <= now) {
+                        q.resetTime = null;
+                        q.remainingFraction = 1.0;
+                        cleared++;
+                        logger.success(`[AccountManager] Stale quota reset expired for: ${account.email} (model: ${modelId})`);
+                    }
+                }
+            }
+        }
+        
+        // Auto-heal account if no active rate limits remain
+        if (!hasActiveLimits) {
+            if (account.disabledBy429 === true || account.enabled === false) {
+                account.enabled = true;
+                account.disabledBy429 = false;
+                logger.success(`[AccountManager] Auto re-enabled account ${account.email}`);
+            }
+            if (account.consecutiveFailures > 5) {
+                account.consecutiveFailures = 0;
+            }
+            clearAccountCooldown(account);
         }
     }
 
@@ -97,13 +131,25 @@ export function clearExpiredLimits(accounts) {
  */
 export function resetAllRateLimits(accounts) {
     for (const account of accounts) {
+        account.enabled = true;
+        account.disabledBy429 = false;
+        account.consecutiveFailures = 0;
+        clearAccountCooldown(account);
+
         if (account.modelRateLimits) {
             for (const key of Object.keys(account.modelRateLimits)) {
                 account.modelRateLimits[key] = { isRateLimited: false, resetTime: null };
             }
         }
+
+        if (account.quota && account.quota.models) {
+            for (const key of Object.keys(account.quota.models)) {
+                account.quota.models[key].resetTime = null;
+                account.quota.models[key].remainingFraction = 1.0;
+            }
+        }
     }
-    logger.warn('[AccountManager] Reset all rate limits for optimistic retry');
+    logger.warn('[AccountManager] Reset all rate limits, quotas, and failures for optimistic retry');
 }
 
 /**

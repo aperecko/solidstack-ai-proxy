@@ -120,8 +120,21 @@ async function waitForService(timeout = 10000, initialDelay = 1000) {
  * Start the server as a background process (or foreground with --log)
  */
 async function startServer() {
-  // Check for --log flag
   const logMode = args.includes('--log');
+  console.log('');
+  console.log('╭' + '─'.repeat(48) + '╮');
+  console.log('│  ⚠️  DEPRECATION NOTICE                        │');
+  console.log('│  Manual daemon management is deprecated.       │');
+  console.log('│  Please use SolidStack Commander:              │');
+  console.log('│    $ ss service start ai-proxy                 │');
+  console.log('│    $ ss service stop ai-proxy                  │');
+  console.log('╰' + '─'.repeat(48) + '╯');
+  console.log('');
+  
+  if (!logMode) {
+    process.exit(1);
+  }
+
 
   if (isServiceRunning() && !logMode) {
     console.log('');
@@ -225,6 +238,8 @@ async function startServer() {
  * Stop the running server
  */
 function stopServer() {
+  console.log("\n⚠️  Please use: ss service stop ai-proxy\n");
+  process.exit(1);
   if (!isServiceRunning()) {
     console.log('');
     console.log('🌑 Proxy is not running');
@@ -252,6 +267,8 @@ function stopServer() {
  * Restart the server
  */
 async function restartServer() {
+  console.log("\n⚠️  Please use: ss service restart ai-proxy\n");
+  process.exit(1);
   console.log('');
   console.log('♻️  Restarting proxy...');
   console.log('');
@@ -281,6 +298,8 @@ async function restartServer() {
  * Show server status
  */
 function showStatus() {
+  console.log("\n⚠️  Please use: ss service status ai-proxy\n");
+  process.exit(1);
   console.log('');
   console.log('╭' + '─'.repeat(48) + '╮');
   console.log('│  🛸 Antigravity Claude Proxy                   │');

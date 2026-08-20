@@ -17,7 +17,13 @@ document.addEventListener('alpine:init', () => {
         logExport: true,
         healthInspector: true,
         healthInspectorOpen: false,
-        port: 8080, // Display only
+        // Claude CLI Settings
+        claudeCliMode: 'proxy', // proxy, paid
+        claudeConfigPath: '', // Will be populated from server
+        port: 1987, // Display only
+        
+        // Advanced Networking
+        globalQuotaThreshold: 0.15,
 
         init() {
             this.loadSettings();
