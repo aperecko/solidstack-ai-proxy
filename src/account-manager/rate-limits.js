@@ -107,9 +107,13 @@ export function clearExpiredLimits(accounts) {
             }
         }
         
-        // Auto-heal account if no active rate limits remain
+        // Auto-heal account if no active rate limits remain.
+        // Only accounts the SYSTEM disabled (429 auto-disable) are revived;
+        // manual/administrative disables (enabled=false without disabledBy429)
+        // must be respected, otherwise user-toggled accounts get resurrected
+        // on the next selection cycle.
         if (!hasActiveLimits) {
-            if (account.disabledBy429 === true || account.enabled === false) {
+            if (account.disabledBy429 === true) {
                 account.enabled = true;
                 account.disabledBy429 = false;
                 logger.success(`[AccountManager] Auto re-enabled account ${account.email}`);

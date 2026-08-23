@@ -61,17 +61,30 @@ export function sleep(ms) {
  * @returns {boolean} True if it is a network error
  */
 export function isNetworkError(error) {
-    const msg = error.message.toLowerCase();
+    if (!error) return false;
+    const msg = (error.message || '').toLowerCase();
+    const code = (error.code || '').toLowerCase();
+    const causeMsg = (error.cause?.message || '').toLowerCase();
+    const combined = `${msg} ${code} ${causeMsg}`;
+
     return (
-        msg.includes('fetch failed') ||
-        msg.includes('network error') ||
-        msg.includes('econnreset') ||
-        msg.includes('etimedout') ||
-        msg.includes('socket hang up') ||
-        msg.includes('timeout') ||
-        msg.includes('timed out') ||
-        msg.includes('self-signed certificate') ||
-        msg.includes('depth_zero_self_signed_cert')
+        combined.includes('fetch failed') ||
+        combined.includes('network error') ||
+        combined.includes('network') ||
+        combined.includes('econnreset') ||
+        combined.includes('econnrefused') ||
+        combined.includes('ehostunreach') ||
+        combined.includes('enetunreach') ||
+        combined.includes('etimedout') ||
+        combined.includes('timedout') ||
+        combined.includes('timed out') ||
+        combined.includes('timeout') ||
+        combined.includes('socket hang up') ||
+        combined.includes('und_err_connect_timeout') ||
+        combined.includes('und_err_socket') ||
+        combined.includes('self-signed certificate') ||
+        combined.includes('depth_zero_self_signed_cert') ||
+        combined.includes('cert_has_expired')
     );
 }
 

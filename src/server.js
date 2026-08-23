@@ -17,6 +17,7 @@ import { logRoutingTelemetry } from './cloudcode/routing-logger.js';
 import { mountWebUI } from './webui/index.js';
 import { config } from './config.js';
 import { globalThrottle } from './utils/throttle.js';
+import { recordRequest, getQuotaStatus } from './account-manager/quota-store.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -24,7 +25,7 @@ import { forceRefresh } from './auth/token-extractor.js';
 import { resolveTokenToEmail } from './auth/token-resolver.js';
 import { REQUEST_BODY_LIMIT } from './constants.js';
 import { AccountManager } from './account-manager/index.js';
-import { clearThinkingSignatureCache } from './format/signature-cache.js';
+import { clearThinkingSignatureCache, getCachedSignatureFamily } from './format/signature-cache.js';
 import { formatDuration } from './utils/helpers.js';
 import { logger } from './utils/logger.js';
 import usageStats from './modules/usage-stats.js';
@@ -149,10 +150,51 @@ function readRequestBody(req, maxBytes = MAX_INTERCEPT_BODY_BYTES) {
     });
 }
 
+// Cross-family thought guard for raw-forwarded Google-format bodies.
+// The GUI Interceptor forwards IDE bodies untouched (no convertAnthropicToGoogle),
+// so a session whose earlier turns were served by Gemini carries Gemini
+// thoughtSignatures. When such history is replayed against a Claude model,
+// Vertex's Anthropic backend rejects it with 400 "thinking blocks ... cannot
+// be modified". Mirrors the Anthropic-format guard in content-converter.js:
+// for Claude targets, drop thought parts that are unsigned or whose signature
+// family is unknown/non-claude (untrusted). Returns the original text when
+// nothing needs to change.
+function sanitizeThoughtPartsForClaude(modelName, bodyText) {
+    try {
+        if (!modelName || !modelName.toLowerCase().includes('claude')) return bodyText;
+        let body;
+        try { body = JSON.parse(bodyText); } catch { return bodyText; }
+        if (!Array.isArray(body?.contents)) return bodyText;
+
+        let stripped = 0;
+        for (const content of body.contents) {
+            if (!content || content.role !== 'model' || !Array.isArray(content.parts)) continue;
+            const filtered = content.parts.filter(part => {
+                if (!part || part.thought !== true) return true;
+                // Unsigned or untrusted-family thought parts are dropped for Claude
+                const trusted = part.thoughtSignature &&
+                    getCachedSignatureFamily(part.thoughtSignature) === 'claude';
+                if (!trusted) stripped++;
+                return trusted;
+            });
+            if (filtered.length !== content.parts.length) {
+                // Google API requires at least one part per content entry
+                content.parts = filtered.length > 0 ? filtered : [{ text: '.' }];
+            }
+        }
+
+        if (stripped === 0) return bodyText;
+        logger.warn(`[GUI Interceptor] Stripped ${stripped} untrusted thought part(s) for Claude target ${modelName}`);
+        return JSON.stringify(body);
+    } catch (e) {
+        logger.debug(`[GUI Interceptor] Thought sanitization skipped: ${e.message}`);
+        return bodyText;
+    }
+}
+
 // Manual forward for AI requests whose body we buffered. Uses native https so
 // the global DNS patch (src/index.js) still applies, consistent with httpxy.
-function forwardToGoogle(hostName, req, res, bodyText) {
-    const headers = { ...req.headers };
+function forwardToGoogle(hostName, req, res, bodyText) {    const headers = { ...req.headers };
     delete headers['transfer-encoding'];
     delete headers['connection'];
     headers['content-length'] = Buffer.byteLength(bodyText);
@@ -514,6 +556,10 @@ app.use(async (req, res, next) => {
                 if (!isIdentityRequest) {
                     const token = await accountManager.getTokenForAccount(account);
                     req.headers['authorization'] = `Bearer ${token}`;
+                    if (res.locals) {
+                        res.locals.selectedAccount = account.email;
+                        res.locals.model = fallbackModel || requestedModel;
+                    }
                 }
 
                 const label = isIdentityRequest
@@ -523,7 +569,8 @@ app.use(async (req, res, next) => {
 
                 // 7. AI bodies were buffered — forward manually (native https, DNS patched)
                 if (isAIRequest && requestBodyText != null) {
-                    forwardToGoogle(hostName, req, res, requestBodyText);
+                    const sanitizedText = sanitizeThoughtPartsForClaude(fallbackModel || requestedModel, requestBodyText);
+                    forwardToGoogle(hostName, req, res, sanitizedText);
                     return;
                 }
 
@@ -558,6 +605,34 @@ app.use(async (req, res, next) => {
 app.use(cors());
 app.use(express.json({ limit: REQUEST_BODY_LIMIT }));
 app.use(express.urlencoded({ extended: true, limit: REQUEST_BODY_LIMIT }));
+
+// Response interceptor: track per-app & per-account token consumption in quota-store
+app.use((req, res, next) => {
+    const origJson = res.json.bind(res);
+    res.json = (body) => {
+        try {
+            const appName = req.headers['x-solidstack-app']
+                ?? (req.path.includes('/anthropic') ? 'claude' :
+                   (req.path.includes('/openai') || req.path.includes('/v1/chat') || req.path.includes('/v1/responses') ? 'opencode' : 'antigravity'));
+            const accountId = req.headers['x-account-id'] ?? res.locals?.selectedAccount ?? 'unknown';
+            const model = req.body?.model ?? res.locals?.model ?? 'unknown';
+            const tokens = body?.usage?.total_tokens ?? 0;
+            const error = res.statusCode >= 400;
+            if (accountId !== 'unknown') {
+                recordRequest({ app: appName, accountId, model, tokens, error });
+            }
+        } catch (e) {
+            // Non-blocking
+        }
+        return origJson(body);
+    };
+    next();
+});
+
+// Admin quota endpoint
+app.get('/admin/quota', (req, res) => {
+    res.json(getQuotaStatus(req.query.app ?? null));
+});
 
 // API Key authentication middleware for /v1/* endpoints
 app.use('/v1', (req, res, next) => {
@@ -1444,6 +1519,7 @@ app.post('/v1/messages', async (req, res) => {
 
         // Build the request object
         const request = {
+            app: 'antigravity',
             model: modelId,
             messages,
             max_tokens: max_tokens || 4096,

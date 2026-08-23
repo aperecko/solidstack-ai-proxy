@@ -152,6 +152,20 @@ export function isAccountBanned(errorText) {
 }
 
 /**
+ * Detect if 403 error is due to the account not being eligible for a Google
+ * Code Assist service (e.g. "Your account is not eligible for Gemini Code
+ * Assist at this time."). This is an account-level PERMISSION_DENIED — the
+ * pooling/retrying against this account will never succeed.
+ * @param {string} errorText - Error message from API
+ * @returns {boolean} True if account is ineligible for the requested service
+ */
+export function isEligibilityDenied(errorText) {
+    const lower = (errorText || '').toLowerCase();
+    return lower.includes('not eligible for') ||
+        lower.includes('ineligible for');
+}
+
+/**
  * Detect if 429 error is due to model capacity (not user quota).
  * Capacity issues should retry on same account with shorter delay.
  * @param {string} errorText - Error message from API

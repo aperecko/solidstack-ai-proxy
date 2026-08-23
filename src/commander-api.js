@@ -1937,6 +1937,54 @@ Output ONLY the rewritten prompt, wrapped in triple backticks.`;
         });
     });
 
+    // 45b. POST /api/consideration/dismiss — 1-Click remove/dismiss item from consideration triage
+    router.post('/consideration/dismiss', (req, res) => {
+        const { item_id } = req.body || {};
+        if (!item_id) return res.status(400).json({ error: 'item_id is required' });
+
+        const pyScript = `from ss.consider import dismiss_item; import json; print(json.dumps(dismiss_item(${JSON.stringify(item_id)})))`;
+        exec(`python3 -c ${JSON.stringify(pyScript)}`, { cwd: BASE_DIR }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to dismiss item' });
+            }
+        });
+    });
+
+    // 45c. POST /api/consideration/undo — 1-Click undo/revert development action
+    router.post('/consideration/undo', (req, res) => {
+        const { item_id } = req.body || {};
+        if (!item_id) return res.status(400).json({ error: 'item_id is required' });
+
+        const pyScript = `from ss.consider import undo_item; import json; print(json.dumps(undo_item(${JSON.stringify(item_id)})))`;
+        exec(`python3 -c ${JSON.stringify(pyScript)}`, { cwd: BASE_DIR }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to undo item development' });
+            }
+        });
+    });
+
+    // 45d. POST /api/consideration/try-pipeline — 1-Click End-to-End Try Out & Develop Pipeline
+    router.post('/consideration/try-pipeline', (req, res) => {
+        const { item_id } = req.body || {};
+        if (!item_id) return res.status(400).json({ error: 'item_id is required' });
+
+        const pyScript = `from ss.consider import try_and_develop_pipeline; import json; print(json.dumps(try_and_develop_pipeline(${JSON.stringify(item_id)})))`;
+        exec(`python3 -c ${JSON.stringify(pyScript)}`, { cwd: BASE_DIR, timeout: 60000 }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to execute try-out pipeline' });
+            }
+        });
+    });
+
     // 46. GET /api/prompts/experts — Retrieves curated 12 expert self-improvement prompts
     router.get('/prompts/experts', (req, res) => {
         const pyScript = `import yaml, json, pathlib; p = pathlib.Path(${JSON.stringify(BASE_DIR)}) / 'registry' / 'prompts' / 'expert_improvement_prompts.yaml'; print(json.dumps(yaml.safe_load(p.read_text()) if p.exists() else {'experts': []}))`;

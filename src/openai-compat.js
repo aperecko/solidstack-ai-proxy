@@ -308,6 +308,7 @@ export function mountResponsesCompat(app, accountManager, ensureInitialized, fal
             }
 
             const anthropicRequest = {
+                app: 'opencode',
                 model: requestedModel,
                 messages,
                 max_tokens: max_output_tokens,
@@ -513,6 +514,7 @@ export function mountOpenAICompat(app, accountManager, ensureInitialized, fallba
 
             // Build Anthropic-format request
             const anthropicRequest = {
+                app: 'opencode',
                 model: requestedModel,
                 messages: anthropicMessages,
                 max_tokens,

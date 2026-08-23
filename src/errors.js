@@ -184,6 +184,24 @@ export class AccountForbiddenError extends AntigravityError {
 }
 
 /**
+ * Retryable rotate error - thrown when an upstream response matches a retryable
+ * failure (429 rate limit, or 503 MODEL_CAPACITY_EXHAUSTED / error 2010) and the
+ * request should be re-issued against a different account chosen from the
+ * quota-store best-account pool.
+ * @param {string} message - Error message
+ * @param {number} statusCode - Upstream HTTP status code
+ * @param {string|null} targetAccountId - Next account email to try (or null)
+ */
+export class RetryableRotateError extends AntigravityError {
+    constructor(message, statusCode = 503, targetAccountId = null) {
+        super(message, 'RETRYABLE_ROTATE', true, { statusCode, targetAccountId });
+        this.name = 'RetryableRotateError';
+        this.statusCode = statusCode;
+        this.targetAccountId = targetAccountId;
+    }
+}
+
+/**
  * Check if an error is an account forbidden error (403 VALIDATION_REQUIRED / PERMISSION_DENIED)
  * These errors indicate the account itself is blocked and need account rotation, not endpoint rotation.
  * @param {Error} error - Error to check
@@ -195,6 +213,17 @@ export function isAccountForbiddenError(error) {
     // (e.g., errors crossing module boundaries). Only match our own prefixed format.
     const msg = (error.message || '');
     return msg.startsWith('ACCOUNT_FORBIDDEN:');
+}
+
+/**
+ * Check if an error is a retryable-rotation error (429 / 503 capacity exhausted).
+ * These errors signal the caller to re-issue the request against the target account.
+ * @param {Error} error - Error to check
+ * @returns {boolean}
+ */
+export function isRetryableRotateError(error) {
+    return error instanceof RetryableRotateError ||
+        error?.name === 'RetryableRotateError';
 }
 
 /**
@@ -257,6 +286,7 @@ export default {
     RateLimitError,
     AuthError,
     AccountForbiddenError,
+    RetryableRotateError,
     NoAccountsError,
     MaxRetriesError,
     ApiError,
@@ -266,6 +296,7 @@ export default {
     isRateLimitError,
     isAuthError,
     isAccountForbiddenError,
+    isRetryableRotateError,
     isEmptyResponseError,
     isCapacityExhaustedError
 };

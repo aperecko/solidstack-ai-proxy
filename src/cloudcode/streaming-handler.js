@@ -19,7 +19,14 @@ import {
     BACKOFF_BY_ERROR_TYPE,
     isThinkingModel
 } from '../constants.js';
-import { isRateLimitError, isAuthError, isEmptyResponseError, isAccountForbiddenError, AccountForbiddenError } from '../errors.js';
+import { isRateLimitError, isAuthError, isEmptyResponseError, isAccountForbiddenError, isRetryableRotateError, RetryableRotateError, AccountForbiddenError } from '../errors.js';
+import {
+    isShouldRotate,
+    setCooldown,
+    getBestAccount,
+    RETRYABLE_FAILURE_COOLDOWN_MS,
+    MAX_RETRYABLE_ROTATIONS
+} from '../account-manager/quota-store.js';
 import { formatDuration, sleep, isNetworkError, throttledFetch } from '../utils/helpers.js';
 import { logger } from '../utils/logger.js';
 import { parseResetTime } from './rate-limit-parser.js';
@@ -37,6 +44,7 @@ import {
     isValidationRequired,
     extractVerificationUrl,
     isAccountBanned,
+    isEligibilityDenied,
     calculateSmartBackoff
 } from './rate-limit-state.js';
 import crypto from 'crypto';
@@ -113,6 +121,9 @@ export async function* sendMessageStream(anthropicRequest, accountManager, fallb
         const initialAvail = accountManager.getAvailableAccounts(currentModel);
         maxAttempts = Math.min(20, Math.max(MAX_RETRIES, initialAvail.length));
 
+        let rotationTargetEmail = null; // next account chosen from quota-store pool
+        let rotationCount = 0;          // retryable rotations performed in this request
+
         for (let attempt = 0; attempt < maxAttempts; attempt++) {
         // Clear any expired rate limits before picking
         accountManager.clearExpiredLimits();
@@ -163,8 +174,23 @@ export async function* sendMessageStream(anthropicRequest, accountManager, fallb
             throw new Error(`No accounts available for ${currentModel}`);
         }
 
-        // Select account using configured strategy
-        const { account, waitMs } = accountManager.selectAccount(currentModel, { apiProfile: anthropicRequest.apiProfile, taskTier: anthropicRequest.taskTier });
+        // Select account using configured strategy. If a retryable failure
+        // flagged a rotation target from the quota-store pool, honor it first.
+        let account = null;
+        let waitMs = 0;
+        if (rotationTargetEmail) {
+            const targetPool = accountManager.getAvailableAccounts(currentModel) || [];
+            account = targetPool.find(a => a.email === rotationTargetEmail) || null;
+            rotationTargetEmail = null;
+            if (!account) {
+                logger.warn(`[CloudCode] Rotation target no longer available, falling back to strategy`);
+            }
+        }
+        if (!account) {
+            const selected = accountManager.selectAccount(currentModel, { apiProfile: anthropicRequest.apiProfile, taskTier: anthropicRequest.taskTier });
+            account = selected.account;
+            waitMs = selected.waitMs;
+        }
 
         // If strategy returns a wait time without an account, sleep and retry
         if (!account && waitMs > 0) {
@@ -225,6 +251,31 @@ export async function* sendMessageStream(anthropicRequest, accountManager, fallb
                     if (!response.ok) {
                         const errorText = await response.text();
                         logger.warn(`[CloudCode] Stream error at ${endpoint}: ${response.status} - ${errorText}`);
+
+                        // Parse the upstream error body as JSON so we can inspect
+                        // Google's structured retryable failures (MODEL_CAPACITY_EXHAUSTED
+                        // reason / metadata.error_number 2010).
+                        let errorBody = null;
+                        try { errorBody = JSON.parse(errorText); } catch { errorBody = null; }
+
+                        // Retryable failure (429 / 503 MODEL_CAPACITY_EXHAUSTED / err 2010):
+                        // cooldown the account for this model in the quota-store pool,
+                        // then rotate to the next best account. Bounded to
+                        // MAX_RETRYABLE_ROTATIONS before propagating the error.
+                        if (isShouldRotate(response.status, errorBody)) {
+                            const rotateApp = anthropicRequest?.app || 'antigravity';
+                            setCooldown(rotateApp, account.email, currentModel, RETRYABLE_FAILURE_COOLDOWN_MS);
+                            accountManager.markRateLimited(account.email, RETRYABLE_FAILURE_COOLDOWN_MS, currentModel, false);
+                            const nextAccountId = getBestAccount(rotateApp, currentModel);
+                            if (rotationCount < MAX_RETRYABLE_ROTATIONS && nextAccountId && nextAccountId !== account.email) {
+                                rotationCount++;
+                                logger.info(`[CloudCode] Retryable ${response.status} failure on ${account.email}, rotating to ${nextAccountId} (${rotationCount}/${MAX_RETRYABLE_ROTATIONS})`);
+                                throw new RetryableRotateError(`RETRYABLE_ROTATE (${response.status}): ${errorText.substring(0, 200)}`, response.status, nextAccountId);
+                            }
+                            logger.warn(`[CloudCode] Retryable ${response.status} failure on ${account.email}${nextAccountId ? ` (candidate ${nextAccountId})` : ''}, max rotations reached; falling through to native handling`);
+                            // Fall through — the existing 429 / 503-capacity blocks below
+                            // still apply (progressive backoff, short rate-limit waits...).
+                        }
 
                         if (response.status === 401) {
                             // Check for permanent auth failures
@@ -361,6 +412,16 @@ export async function* sendMessageStream(anthropicRequest, accountManager, fallb
                             throw new AccountForbiddenError(errorText, account.email);
                         }
 
+                        // 403 PERMISSION_DENIED — account is not eligible for the
+                        // requested Code Assist service (e.g. "Your account is not
+                        // eligible for Gemini Code Assist"). Account-level issue;
+                        // rotating to another endpoint/account won't help this one.
+                        if (response.status === 403 && isEligibilityDenied(errorText)) {
+                            logger.warn(`[CloudCode] 403 not eligible for Gemini Code Assist for ${account.email}, marking invalid and rotating account...`);
+                            accountManager.markInvalid(account.email, 'Account not eligible for Gemini Code Assist');
+                            throw new AccountForbiddenError(errorText, account.email);
+                        }
+
                         lastError = new Error(`API error ${response.status}: ${errorText}`);
 
                         // Try next endpoint for 403/404/5xx errors (matches opencode-antigravity-auth behavior)
@@ -415,6 +476,22 @@ export async function* sendMessageStream(anthropicRequest, accountManager, fallb
                             if (!currentResponse.ok) {
                                 const retryErrorText = await currentResponse.text();
 
+                                // Retryable failure (429 / 503 MODEL_CAPACITY_EXHAUSTED / err 2010)
+                                // during the empty-response refetch — rotate accounts.
+                                let retryErrorBody = null;
+                                try { retryErrorBody = JSON.parse(retryErrorText); } catch { retryErrorBody = null; }
+                                if (isShouldRotate(currentResponse.status, retryErrorBody)) {
+                                    const rotateApp = anthropicRequest?.app || 'antigravity';
+                                    setCooldown(rotateApp, account.email, currentModel, RETRYABLE_FAILURE_COOLDOWN_MS);
+                                    accountManager.markRateLimited(account.email, RETRYABLE_FAILURE_COOLDOWN_MS, currentModel, false);
+                                    const nextAccountId = getBestAccount(rotateApp, currentModel);
+                                    if (rotationCount < MAX_RETRYABLE_ROTATIONS && nextAccountId && nextAccountId !== account.email) {
+                                        rotationCount++;
+                                        logger.info(`[CloudCode] Retryable ${currentResponse.status} failure on ${account.email} during empty-response retry, rotating to ${nextAccountId} (${rotationCount}/${MAX_RETRYABLE_ROTATIONS})`);
+                                        throw new RetryableRotateError(`RETRYABLE_ROTATE (${currentResponse.status}) during empty-response retry: ${retryErrorText.substring(0, 200)}`, currentResponse.status, nextAccountId);
+                                    }
+                                }
+
                                 // Rate limit error - mark account and throw to trigger account switch
                                 if (currentResponse.status === 429) {
                                     const resetMs = parseResetTime(currentResponse, retryErrorText);
@@ -460,6 +537,10 @@ export async function* sendMessageStream(anthropicRequest, accountManager, fallb
                     if (isEmptyResponseError(endpointError)) {
                         throw endpointError;
                     }
+                    // Retryable failure rotation target - re-throw to rotate account
+                    if (isRetryableRotateError(endpointError)) {
+                        throw endpointError;
+                    }
                     // 403 account-level errors - re-throw to trigger account rotation
                     if (isAccountForbiddenError(endpointError)) {
                         throw endpointError;
@@ -485,6 +566,14 @@ export async function* sendMessageStream(anthropicRequest, accountManager, fallb
             }
 
         } catch (error) {
+            if (isRetryableRotateError(error)) {
+                // Retryable failure (429 / 503 capacity): cooldown already set via
+                // quota-store + accountManager; re-issue against the chosen target.
+                accountManager.notifyFailure(account, currentModel);
+                logger.info(`[CloudCode] Account ${account.email} retryable failure (${error.statusCode})${error.targetAccountId ? `, rotating to ${error.targetAccountId}` : ''}`);
+                rotationTargetEmail = error.targetAccountId || null;
+                continue;
+            }
             if (isRateLimitError(error)) {
                 // Rate limited - already marked, notify strategy and continue to next account
                 accountManager.notifyRateLimit(account, currentModel);
