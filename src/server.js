@@ -7,10 +7,15 @@
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
+import fs from 'fs';
+import os from 'os';
+import crypto from 'crypto';
 import https from 'https';
+import { Transform } from 'stream';
 import { fileURLToPath } from 'url';
 import { createProxyMiddleware } from 'http-proxy-middleware';
 import { sendMessage, sendMessageStream, listModels, fetchAvailableModels, getModelQuotas, getSubscriptionTier, isValidModel } from './cloudcode/index.js';
+import { parseResetTime } from './cloudcode/rate-limit-parser.js';
 import { buildFallbackMap, buildPresets } from './constants.js';
 import { initFallbackMap, getFallbackChain } from './fallback-config.js';
 import { logRoutingTelemetry } from './cloudcode/routing-logger.js';
@@ -18,6 +23,7 @@ import { mountWebUI } from './webui/index.js';
 import { config } from './config.js';
 import { globalThrottle } from './utils/throttle.js';
 import { recordRequest, getQuotaStatus } from './account-manager/quota-store.js';
+import { isAuthError, isRateLimitError, isCapacityExhaustedError, isAccountForbiddenError } from './errors.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -38,6 +44,7 @@ import {
     finalizeStreamingLog,
     createConversationRouter
 } from './conversation-logger.js';
+import { startInFlight, endInFlight, recordTokenUsage } from './cloudcode/routing-logger.js';
 
 // Parse fallback flag directly from command line args to avoid circular dependency
 const args = process.argv.slice(2);
@@ -53,7 +60,130 @@ for (let i = 0; i < args.length; i++) {
     }
 }
 
+// Tracks active mid-session model handovers per conversation to avoid duplicate banners on tool loops
+// conversationId -> { fallbackSessionId, fallbackModel, notified: boolean, lastHandoverTime: number }
+const activeSessionHandovers = new Map();
+
+function extractConversationId(requestBodyObj) {
+    if (!requestBodyObj) return null;
+    const reqId = requestBodyObj.requestId || '';
+    const m = reqId.match(/agent\/([a-f0-9-]+)\//i);
+    return m ? m[1] : null;
+}
+
+function getOrCreateHandoverAdvisory(conversationId, requestBodyObj, fallbackModel) {
+    const sessionsDir = path.join(os.homedir(), '.config', 'antigravity-proxy', 'saved-sessions');
+    
+    if (conversationId && activeSessionHandovers.has(conversationId)) {
+        const existing = activeSessionHandovers.get(conversationId);
+        // Already notified in this conversation — suppress repeated banners on tool calls
+        if (existing.notified) {
+            return {
+                fallbackSessionId: existing.fallbackSessionId,
+                injectedPrefixText: null
+            };
+        }
+        existing.notified = true;
+        return {
+            fallbackSessionId: existing.fallbackSessionId,
+            injectedPrefixText: `⚠️ **Capacity Advisory:** Your direct capacity for the requested model is temporarily depleted. To prevent interrupting your workflow, this response is provided by the fallback model (\`${fallbackModel}\`).\n\n💾 **Save Reference:** \`SESSION_${existing.fallbackSessionId}\` (You can use this reference to resume your original model when capacity is replenished).\n\n---\n\n`
+        };
+    }
+
+    // First time handing over for this conversation: create snapshot
+    const fallbackSessionId = crypto.randomBytes(4).toString('hex').toUpperCase();
+    try {
+        fs.mkdirSync(sessionsDir, { recursive: true });
+        fs.writeFileSync(
+            path.join(sessionsDir, `SESSION_${fallbackSessionId}.json`),
+            JSON.stringify(requestBodyObj, null, 2)
+        );
+    } catch (e) {
+        logger.error(`[GUI Interceptor] Failed to save session reference: ${e.message}`);
+    }
+
+    if (conversationId) {
+        activeSessionHandovers.set(conversationId, {
+            fallbackSessionId,
+            fallbackModel,
+            notified: true,
+            lastHandoverTime: Date.now()
+        });
+    }
+
+    return {
+        fallbackSessionId,
+        injectedPrefixText: `⚠️ **Capacity Advisory:** Your direct capacity for the requested model is temporarily depleted. To prevent interrupting your workflow, this response is provided by the fallback model (\`${fallbackModel}\`).\n\n💾 **Save Reference:** \`SESSION_${fallbackSessionId}\` (You can use this reference to resume your original model when capacity is replenished).\n\n---\n\n`
+    };
+}
+
 const app = express();
+
+// ─── Error classification helpers ─────────────────────────────────────────────
+
+/**
+ * Classify an error into { errorType, statusCode, errorMessage } using Anthropic-
+ * style error types. Handles both structured errors from ./errors.js and legacy
+ * string-marker errors (e.g. `QUOTA_EXHAUSTED:`, `CAPACITY_EXHAUSTED:`,
+ * `AUTH_INVALID_PERMANENT:`, `invalid_request_error:`).
+ * @param {Error} error
+ * @returns {{errorType: string, statusCode: number, errorMessage: string}}
+ */
+function parseError(error) {
+    const raw = error?.message || String(error || '');
+    const lower = raw.toLowerCase();
+
+    // Structured error classes first.
+    if (isAuthError(error) || isAccountForbiddenError(error)) {
+        return { errorType: 'authentication_error', statusCode: 401, errorMessage: raw };
+    }
+    if (isRateLimitError(error)) {
+        return { errorType: 'rate_limit_error', statusCode: 429, errorMessage: raw };
+    }
+    if (isCapacityExhaustedError(error)) {
+        return { errorType: 'rate_limit_error', statusCode: 429, errorMessage: raw };
+    }
+    if (error?.statusCode) {
+        const sc = Number(error.statusCode);
+        if (sc >= 400 && sc < 600) {
+            const type = sc === 401 || sc === 403 ? 'authentication_error'
+                : sc === 429 ? 'rate_limit_error'
+                : sc === 400 ? 'invalid_request_error'
+                : 'api_error';
+            return { errorType: type, statusCode: sc, errorMessage: raw };
+        }
+    }
+
+    // Legacy string markers.
+    if (lower.includes('invalid_grant') || lower.includes('token refresh failed')
+        || lower.includes('auth_invalid') || lower.includes('account_banned')
+        || lower.includes('auth_invalid_permanent')) {
+        return { errorType: 'authentication_error', statusCode: 401, errorMessage: raw };
+    }
+    if (lower.includes('quota_exhausted') || lower.includes('capacity_exhausted')
+        || lower.includes('rate limit') || lower.includes('resource_exhausted')
+        || lower.includes('rate_limited')) {
+        return { errorType: 'rate_limit_error', statusCode: 429, errorMessage: raw };
+    }
+    if (lower.includes('no accounts available') || lower.includes('max retries exceeded')) {
+        return { errorType: 'api_error', statusCode: 503, errorMessage: raw };
+    }
+    if (lower.includes('invalid_request_error')) {
+        return { errorType: 'invalid_request_error', statusCode: 400, errorMessage: raw };
+    }
+    if (lower.startsWith('api error ')) {
+        const m = /api error (\d{3})/.exec(lower);
+        const sc = m ? Number(m[1]) : 500;
+        return {
+            errorType: sc >= 500 ? 'api_error' : (sc === 401 || sc === 403 ? 'authentication_error' : 'api_error'),
+            statusCode: sc,
+            errorMessage: raw,
+        };
+    }
+
+    return { errorType: 'api_error', statusCode: 500, errorMessage: raw };
+}
+
 
 // ─── Pre-create stable Google API proxy middleware instances ──────────────────
 // http-proxy-middleware must be instantiated once at startup, not per-request.
@@ -192,9 +322,41 @@ function sanitizeThoughtPartsForClaude(modelName, bodyText) {
     }
 }
 
+function injectPromptAdvisory(bodyText, advisoryText) {
+    if (!advisoryText || !bodyText) return bodyText;
+    try {
+        const bodyObj = JSON.parse(bodyText);
+        const contents = bodyObj.request?.contents || bodyObj.contents;
+        if (Array.isArray(contents) && contents.length > 0) {
+            const lastContent = contents[contents.length - 1];
+            if (Array.isArray(lastContent.parts) && lastContent.parts.length > 0) {
+                lastContent.parts[lastContent.parts.length - 1].text += `\n\n[SYSTEM ADVISORY: You are running as a fallback model because the user's direct capacity for their requested model was exhausted. A save reference has been created. You MUST begin your response EXACTLY with the following text and nothing else before it:\n\n${advisoryText}\n\nAfter outputting that exactly, answer the user's prompt above normally.]`;
+                return JSON.stringify(bodyObj);
+            }
+        }
+    } catch (e) {}
+    return bodyText;
+}
+
 // Manual forward for AI requests whose body we buffered. Uses native https so
 // the global DNS patch (src/index.js) still applies, consistent with httpxy.
-function forwardToGoogle(hostName, req, res, bodyText) {    const headers = { ...req.headers };
+// Keep a per-request cumulative set of accounts already tried/failed so retries
+// rotate onwards to fresh accounts instead of bouncing between exhausted ones.
+// The GUI Interceptor's CAPACITY_EXHAUSTED accounts are NOT marked rate-limited
+// (deliberately, to avoid IDE lock-out), so the hybrid strategy would otherwise
+// keep re-selecting them. Accumulating into options.excludeAccounts (mutated and
+// passed by reference through forwardToGoogle recursion) makes the exclusion
+// persist across all retries of a single request.
+function accumulateExcluded(options, email) {
+    if (!options.excludeAccounts) options.excludeAccounts = [];
+    if (email && !options.excludeAccounts.includes(email)) {
+        options.excludeAccounts.push(email);
+    }
+    return options.excludeAccounts;
+}
+
+function forwardToGoogle(hostName, req, res, bodyText, account = null, model = null, retryCount = 0, options = {}) {
+    const headers = { ...req.headers };
     delete headers['transfer-encoding'];
     delete headers['connection'];
     headers['content-length'] = Buffer.byteLength(bodyText);
@@ -207,11 +369,218 @@ function forwardToGoogle(hostName, req, res, bodyText) {    const headers = { ..
         path: req.url || req.originalUrl || '/',
         headers,
     }, (proxyRes) => {
-        res.writeHead(proxyRes.statusCode, sanitizeResponseHeaders(proxyRes.headers));
-        proxyRes.pipe(res);
+        const statusCode = proxyRes.statusCode;
+
+        if (statusCode === 200) {
+            if (account && model) {
+                accountManager.notifySuccess(account, model);
+            }
+            res.writeHead(200, sanitizeResponseHeaders(proxyRes.headers));
+            
+            let firstChunkProcessed = false;
+            const injectTransform = new Transform({
+                transform(chunk, encoding, callback) {
+                    if (!firstChunkProcessed && proxyRes.headers['content-type']?.includes('text/event-stream')) {
+                        console.log('--- FIRST CHUNK FROM GOOGLE ---');
+                        console.log(chunk.toString());
+                        console.log('-------------------------------');
+                        firstChunkProcessed = true;
+                        if (options.injectedPrefixText) {
+                            const injectedJson = JSON.stringify({
+                                response: {
+                                    candidates: [{
+                                        content: {
+                                            role: "model",
+                                            parts: [{ text: options.injectedPrefixText }]
+                                        }
+                                    }]
+                                }
+                            });
+                            this.push(`data: ${injectedJson}\r\n\r\n`);
+                        }
+                    }
+                    this.push(chunk);
+                    callback();
+                }
+            });
+            proxyRes.pipe(injectTransform).pipe(res);
+            proxyRes.on('error', (err) => {
+                logger.error(`[GUI Interceptor] Response stream error from ${hostName}: ${err.message}`);
+                res.destroy();
+            });
+            return;
+        }
+
+        // Non-200 response (429, 401, 403, 5xx): buffer and inspect for retry / rotation
+        const errorChunks = [];
+        proxyRes.on('data', (c) => errorChunks.push(c));
         proxyRes.on('error', (err) => {
-            logger.error(`[GUI Interceptor] Response stream error from ${hostName}: ${err.message}`);
-            res.destroy();
+            logger.error(`[GUI Interceptor] Error stream from ${hostName}: ${err.message}`);
+            if (!res.headersSent) res.status(502).json({ error: `Bad Gateway (${hostName})` });
+        });
+        proxyRes.on('end', async () => {
+            const rawError = Buffer.concat(errorChunks);
+            const errorText = rawError.toString('utf8');
+
+            if (statusCode === 429 && account && model) {
+                // Check if this is a CAPACITY_EXHAUSTED (503) error rather than a true rate limit
+                const isCapacityExhausted = errorText.toLowerCase().includes('capacity_exhausted') ||
+                                           errorText.toLowerCase().includes('resource_exhausted') ||
+                                           errorText.toLowerCase().includes('quota_exceeded') ||
+                                           errorText.toLowerCase().includes('insufficient quota');
+                if (isCapacityExhausted) {
+                    logger.warn(`[GUI Interceptor] ⚠️ Account ${account.email} CAPACITY_EXHAUSTED on ${model} — skipping rate-limit marking, will retry with next account.`);
+                    // Do NOT mark rate-limited (avoids IDE model lock-out UX), but DO
+                    // record a persistent health failure so the account is de-prioritized
+                    // on FUTURE requests too — not just excluded within this retry loop.
+                    // Without this, a poisoned account (e.g. exhausted on most models)
+                    // keeps winning selection on every new request via its tier/bonus
+                    // scoring while its quota data sits older than the 5min trust window.
+                    accountManager.notifyFailure(account, model);
+                } else {
+                    const resetMs = parseResetTime(proxyRes, errorText) || (10 * 1000);
+                    accountManager.markRateLimited(account.email, resetMs, model);
+                    logger.warn(`[GUI Interceptor] ⚠️ Account ${account.email} 429 rate-limited / quota exhausted on ${model} (cooldown: ${Math.round(resetMs/1000)}s).`);
+                }
+
+                // Auto-retry with next available account from the pool.
+                // Accumulate the failed account into the shared exclusion set so
+                // it is never re-selected on subsequent retries of this request.
+                accumulateExcluded(options, account.email);
+                if (retryCount < 3) {
+                    const nextSel = accountManager.selectAccount(model, {
+                        ...options,
+                        excludeAccounts: options.excludeAccounts,
+                        incomingTokenEmail: options.incomingTokenEmail
+                    });
+                    if (nextSel.account && nextSel.account.email !== account.email) {
+                        try {
+                            const nextToken = await accountManager.getTokenForAccount(nextSel.account);
+                            req.headers['authorization'] = `Bearer ${nextToken}`;
+                            logger.info(`[GUI Interceptor] 🔄 Auto-rotating ${model} to next pooled account: ${nextSel.account.email} (retry ${retryCount + 1}/3)`);
+                            return forwardToGoogle(hostName, req, res, bodyText, nextSel.account, model, retryCount + 1, options);
+                        } catch (e) {
+                            logger.error(`[GUI Interceptor] Failed to get token for next account ${nextSel.account.email}: ${e.message}`);
+                        }
+                    }
+                }
+            } else if ((statusCode === 401 || statusCode === 403) && account) {
+                logger.warn(`[GUI Interceptor] ⚠️ Account ${account.email} error ${statusCode} on ${model || 'request'}: ${errorText.slice(0, 200)}`);
+                if (errorText.toLowerCase().includes('not eligible') || errorText.toLowerCase().includes('violation of terms')) {
+                    accountManager.markInvalid(account.email, errorText);
+                } else {
+                    accountManager.notifyFailure(account, model);
+                }
+
+                // Auto-retry with next available account
+                accumulateExcluded(options, account.email);
+                if (retryCount < 3 && model) {
+                    const nextSel = accountManager.selectAccount(model, {
+                        ...options,
+                        excludeAccounts: options.excludeAccounts,
+                        incomingTokenEmail: options.incomingTokenEmail
+                    });
+                    if (nextSel.account && nextSel.account.email !== account.email) {
+                        try {
+                            const nextToken = await accountManager.getTokenForAccount(nextSel.account);
+                            req.headers['authorization'] = `Bearer ${nextToken}`;
+                            logger.info(`[GUI Interceptor] 🔄 Auto-rotating ${model} after ${statusCode} to: ${nextSel.account.email}`);
+                            return forwardToGoogle(hostName, req, res, bodyText, nextSel.account, model, retryCount + 1, options);
+                        } catch (e) {
+                            logger.error(`[GUI Interceptor] Failed to get token for next account ${nextSel.account.email}: ${e.message}`);
+                        }
+                    }
+                }
+            } else if (account && model) {
+                accountManager.notifyFailure(account, model);
+            }
+
+            // Fallback: output the original error to client
+            if (!res.headersSent) {
+                // If we ran out of retries for the CURRENT model (or the pool is empty),
+                // try to CASCADE to a fallback model before giving up completely.
+                if (retryCount < 3 && model && options.isMidSession) {
+                    let fallbackAccount = null;
+                    let fallbackModel = null;
+                    for (const fb of getFallbackChain(model)) {
+                        const fbResult = accountManager.selectAccount(fb, {
+                            ...options,
+                            incomingTokenEmail: options.incomingTokenEmail
+                        });
+                        if (fbResult.account) {
+                            fallbackAccount = fbResult.account;
+                            fallbackModel = fb;
+                            break;
+                        }
+                    }
+                    if (fallbackAccount) {
+                        try {
+                            const nextToken = await accountManager.getTokenForAccount(fallbackAccount);
+                            req.headers['authorization'] = `Bearer ${nextToken}`;
+                            logger.warn(`[GUI Interceptor] ⚠️ Pool for ${model} exhausted during retry. Cascading to fallback model: ${fallbackModel} via ${fallbackAccount.email}`);
+                            
+                            // Generate save reference and write payload to disk if not already done
+                            if (!options.injectedPrefixText && options.requestBodyObj) {
+                                const convId = extractConversationId(options.requestBodyObj);
+                                const handover = getOrCreateHandoverAdvisory(convId, options.requestBodyObj, fallbackModel);
+                                options.fallbackSessionId = handover.fallbackSessionId;
+                                if (handover.injectedPrefixText) {
+                                    options.injectedPrefixText = handover.injectedPrefixText;
+                                }
+                            }
+                            
+                            // Rewrite request body if needed for new model
+                            let newBodyText = bodyText;
+                            try {
+                                if (bodyText) {
+                                    const bodyObj = JSON.parse(bodyText);
+                                    if (bodyObj.model) bodyObj.model = fallbackModel;
+                                    newBodyText = JSON.stringify(bodyObj);
+                                }
+                            } catch (e) {}
+                            req.headers['content-length'] = Buffer.byteLength(newBodyText);
+                            return forwardToGoogle(hostName, req, res, newBodyText, fallbackAccount, fallbackModel, retryCount + 1, options);
+                        } catch (e) {
+                            logger.error(`[GUI Interceptor] Failed to get token for fallback account ${fallbackAccount.email}: ${e.message}`);
+                        }
+                    }
+                }
+
+                // If we get here, all retries and fallbacks have failed.
+                // The IDE permanently locks the model out of the UI if it sees a raw
+                // 429 / quota 403, so we return 502. BUT the body must be truthful:
+                // say the real cause (upstream rate limit / quota), not fake a
+                // generic bad gateway (M5).
+                let finalStatusCode = statusCode;
+                let finalBody = rawError;
+                
+                if (statusCode === 429 || (statusCode === 403 && errorText.toLowerCase().includes('quota'))) {
+                    finalStatusCode = 502;
+                    const upstreamDetail = errorText.slice(0, 500);
+                    try {
+                        const errObj = JSON.parse(errorText);
+                        if (errObj.error) {
+                            errObj.error.code = 502;
+                            errObj.error.status = 'BAD_GATEWAY';
+                            errObj.error.message = `SolidStack Proxy: upstream rate limit or quota hit for this model. Cause (truncated): ${upstreamDetail}`;
+                        }
+                        finalBody = Buffer.from(JSON.stringify(errObj));
+                    } catch (e) {
+                        finalBody = Buffer.from(JSON.stringify({
+                            error: {
+                                code: 502,
+                                status: 'BAD_GATEWAY',
+                                message: `SolidStack Proxy: upstream rate limit or quota hit for this model. Cause (truncated): ${upstreamDetail}`
+                            }
+                        }));
+                    }
+                    logger.warn(`[GUI Interceptor] Upstream rate-limit/quota for status ${statusCode}; returned truthfully-labeled 502 to IDE.`);
+                }
+                
+                const outHeaders = sanitizeResponseHeaders(proxyRes.headers, finalBody.length);
+                res.writeHead(finalStatusCode, outHeaders);
+                res.end(finalBody);
+            }
         });
     });
 
@@ -236,34 +605,204 @@ function forwardToGoogle(hostName, req, res, bodyText) {    const headers = { ..
 }
 
 // Synthetic healthy response for /v1internal:retrieveUserQuotaSummary. Mirrors the
-// real shape (groups → buckets) with every bucket at full availability and a future
-// reset, so AG's "model usage" panel never shows account-specific exhaustion.
-function handleQuotaSummarySynthesis(req, res) {
+// real shape (groups → buckets) with every bucket at pooled availability, so AG's
+// "model usage" panel displays the live aggregate capacity of the pool.
+// Synthetic healthy response for /v1internal:retrieveUserQuotaSummary. Mirrors the
+// real shape (groups → buckets) with every bucket at pooled availability, so AG's
+// "model usage" panel displays the live aggregate capacity of the pool dynamically.
+function getPooledModelQuotas() {
+    const pooled = {
+        gemini: { max: 0, sum: 0, count: 0 },
+        claude: { max: 0, sum: 0, count: 0 },
+        models: {},
+        totalAccounts: 0,
+        proAccounts: 0,
+        geminiAccounts: 0,
+        readyGeminiCount: 0,
+        readyClaudeCount: 0
+    };
+    try {
+        const allAccts = accountManager.getAllAccounts().filter(a => !a.isInvalid && a.enabled !== false);
+        pooled.totalAccounts = allAccts.length;
+
+        const availGemini = accountManager.getAvailableAccounts ? accountManager.getAvailableAccounts('gemini-2.5-pro') : allAccts;
+        const availClaude = accountManager.getAvailableAccounts ? accountManager.getAvailableAccounts('claude-sonnet-4-6') : [];
+        
+        pooled.readyGeminiCount = availGemini.length;
+        pooled.readyClaudeCount = availClaude.length;
+
+        for (const a of allAccts) {
+            const quotas = a._cachedFormattedQuotas || a.quota?.models;
+            let hasGemini = false;
+            let hasClaude = false;
+            let acctGeminiMax = 0;
+            let acctClaudeMax = 0;
+
+            const tier = (a.subscription?.tier || a.tier || '').toLowerCase();
+            const isPro = tier === 'ultra' || tier === 'pro' || tier === 'plus';
+
+            if (isPro) pooled.proAccounts++;
+
+            if (quotas) {
+                for (const [mId, q] of Object.entries(quotas)) {
+                    if (q.remainingFraction == null) continue;
+                    if (!pooled.models[mId]) pooled.models[mId] = { max: 0, sum: 0, count: 0 };
+                    pooled.models[mId].sum += q.remainingFraction;
+                    pooled.models[mId].count++;
+                    pooled.models[mId].max = Math.max(pooled.models[mId].max, q.remainingFraction);
+
+                    if (mId.startsWith('gemini')) {
+                        hasGemini = true;
+                        acctGeminiMax = Math.max(acctGeminiMax, q.remainingFraction);
+                    } else if (mId.startsWith('claude') || mId.startsWith('gpt')) {
+                        hasClaude = true;
+                        acctClaudeMax = Math.max(acctClaudeMax, q.remainingFraction);
+                    }
+                }
+            } else {
+                hasGemini = true;
+                acctGeminiMax = 1.0;
+                if (isPro) {
+                    hasClaude = true;
+                    acctClaudeMax = 1.0;
+                }
+            }
+
+            if (hasGemini) {
+                pooled.geminiAccounts++;
+                pooled.gemini.sum += acctGeminiMax;
+                pooled.gemini.count++;
+                pooled.gemini.max = Math.max(pooled.gemini.max, acctGeminiMax);
+            }
+            if (hasClaude || isPro) {
+                pooled.claude.sum += acctClaudeMax;
+                pooled.claude.count++;
+                pooled.claude.max = Math.max(pooled.claude.max, acctClaudeMax);
+            }
+
+        }
+    } catch (e) {
+        logger.error('[GUI Interceptor] Error computing pooled quotas: ' + e.message);
+    }
+    return pooled;
+}
+
+// Synthetic response for /v1internal:retrieveUserQuotaSummary. Dynamically renders
+// metrics, capacities, safe pacing, and live sync timestamps scaled to the fleet size (N).
+async function handleQuotaSummarySynthesis(req, res) {
     const now = Date.now();
     const toIso = (ms) => new Date(ms).toISOString();
     const resetWeekly = toIso(now + 7 * 24 * 3600 * 1000);
     const reset5h = toIso(now + 5 * 3600 * 1000);
-    const bucketDesc = 'Managed by the SolidStack proxy: quota is aggregated across all pooled accounts, so usage is not tied to a single account.';
+    const timeStr = new Date(now).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', second: '2-digit', hour12: true });
+
+    let incomingTokenEmail = null;
+    const incomingAuth = req.headers['authorization'] || '';
+    if (incomingAuth.startsWith('Bearer ')) {
+        const incomingToken = incomingAuth.slice(7).trim();
+        if (incomingToken) {
+            try {
+                incomingTokenEmail = await resolveTokenToEmail(incomingToken, accountManager);
+            } catch (e) {}
+        }
+    }
+    const nativeEmail = incomingTokenEmail || accountManager.getNativeIdeAccount?.()?.email || 'Native Account';
+
+    // ── Native account protection classification ─────────────────────────────
+    // adamperecko@gmail.com carries an extra -800 distribution penalty on top of
+    // the standard -5000 IDE native penalty → effective score floor of -5800.
+    // Any other IDE-detected account receives the standard -5000 penalty only.
+    const isDoubleShielded = nativeEmail === 'adamperecko@gmail.com';
+    const nativeProtectionLabel = isDoubleShielded
+        ? '🔒🔒 Double-Shielded (Daily Driver + IDE)'
+        : '🔒 IDE-Shielded (Last Resort Only)';
+    const nativePenaltyLabel = isDoubleShielded
+        ? 'Score floor: −5800 (−5000 IDE + −800 Daily Driver)'
+        : 'Score floor: −5000 IDE penalty';
+
+    const pooled = getPooledModelQuotas();
+    const totalAccounts = pooled.totalAccounts || 1;
+    const proAccounts = pooled.proAccounts || 0;
+    const readyGemini = pooled.readyGeminiCount;
+    const readyClaude = pooled.readyClaudeCount;
+
+    // Fractions — Gemini weekly tracks the native account's own quota headroom
+    // (always shown as 1.0 since native is shielded from swarm depletion).
+    // Gemini 5h shows the live fraction of swarm accounts currently ready.
+    const geminiWeeklyFraction = 1.0; // native account is explicitly preserved
+    const gemini5hFraction = pooled.geminiAccounts > 0
+        ? Number((readyGemini / pooled.geminiAccounts).toFixed(4))
+        : 1.0;
+    const readyGeminiPct = Math.round(gemini5hFraction * 100);
+
+    // Claude fractions: weekly = ready workers / total Pro workers (capacity headroom)
+    //                  5h    = same window, used for velocity pacing display
+    const claudeFraction = proAccounts > 0
+        ? (readyClaude > 0 ? Number((readyClaude / proAccounts).toFixed(4)) : 0.0)
+        : 0.0;
+    const claude5hFraction = claudeFraction;
+    const readyClaudePct = Math.round(claudeFraction * 100);
+
+    // Dynamic throughput estimates (conservative: 550 reqs/Pro/week, 55 req/5h burst)
+    const weeklyPoolReqs = proAccounts * 550;
+    const surge5hPool = readyClaude * 55;
+    const safePacePerHour = readyClaude > 0 ? readyClaude * 11 : 0;
+    const geminiFleetPct = Math.round((readyGemini / Math.max(totalAccounts, 1)) * 100);
+
     const payload = {
         groups: [
             {
+                groupType: 'GROUP_GEMINI',
+                displayName: `🟢 Gemini Pool — ${readyGemini}/${totalAccounts} Ready (${geminiFleetPct}%) • ${timeStr}`,
                 buckets: [
-                    { bucketId: 'gemini-weekly', displayName: 'Weekly Limit', window: 'weekly', resetTime: resetWeekly, description: bucketDesc, remainingFraction: 1.0 },
-                    { bucketId: 'gemini-5h', displayName: 'Five Hour Limit', window: '5h', resetTime: reset5h, description: bucketDesc, remainingFraction: 1.0 },
+                    {
+                        bucketId: 'gemini-weekly',
+                        displayName: `Native Account — ${nativeProtectionLabel}`,
+                        window: 'weekly',
+                        resetTime: resetWeekly,
+                        description: `${nativeEmail} • ${nativePenaltyLabel} • Routing to swarm first`,
+                        remainingFraction: geminiWeeklyFraction
+                    },
+                    {
+                        bucketId: 'gemini-5h',
+                        displayName: `Swarm Readiness — ${readyGeminiPct}% of Fleet Available`,
+                        window: '5h',
+                        resetTime: reset5h,
+                        description: `${readyGemini} of ${totalAccounts} accounts ready for Gemini Flash & Pro`,
+                        remainingFraction: gemini5hFraction
+                    }
                 ],
-                displayName: 'Gemini Models',
-                description: 'Models within this group: Gemini Flash, Gemini Pro',
+                description: `Gemini Flash & Pro pooled across ${totalAccounts} accounts. Native IDE account is shielded from swarm depletion.`
             },
             {
+                groupType: 'GROUP_CLAUDE_GPT',
+                displayName: `🟣 Claude & 3P Pool — ${readyClaude}/${proAccounts} Pro Ready (${readyClaudePct}%) • ${timeStr}`,
                 buckets: [
-                    { bucketId: '3p-weekly', displayName: 'Weekly Limit', window: 'weekly', resetTime: resetWeekly, description: bucketDesc, remainingFraction: 1.0 },
-                    { bucketId: '3p-5h', displayName: 'Five Hour Limit', window: '5h', resetTime: reset5h, description: bucketDesc, remainingFraction: 1.0 },
+                    {
+                        bucketId: '3p-weekly',
+                        displayName: `Pro Worker Capacity — ${readyClaude} of ${proAccounts} Active`,
+                        window: 'weekly',
+                        resetTime: resetWeekly,
+                        description: `~${weeklyPoolReqs.toLocaleString()} req/week pool across ${proAccounts} Pro accounts`,
+                        remainingFraction: claudeFraction
+                    },
+                    {
+                        bucketId: '3p-5h',
+                        displayName: readyClaude > 0
+                            ? `5h Velocity — ≤${safePacePerHour} req/hr safe pace`
+                            : `5h Velocity — ⚠️ All Pro workers cooling down`,
+                        window: '5h',
+                        resetTime: reset5h,
+                        description: readyClaude > 0
+                            ? `~${surge5hPool} burst capacity available across ${readyClaude} ready Pro workers`
+                            : `All Pro accounts cooling down • Gemini cascade active`,
+                        remainingFraction: claude5hFraction
+                    }
                 ],
-                displayName: 'Claude and GPT models',
-                description: 'Models within this group: Claude Opus, Claude Sonnet, GPT-OSS',
-            },
+                description: `Claude Sonnet & Opus pooled across ${proAccounts} Pro accounts. Auto-cascades to Gemini Pro when Pro workers are exhausted.`
+            }
         ],
-        description: 'Within each group, models share a weekly limit and a 5-hour limit. Quota is consumed proportionally to the cost of the tokens. Managed by the SolidStack proxy.',
+        description: `Quota dynamically pooled across ${totalAccounts} swarm accounts (${proAccounts} Pro). Native IDE account shielded with ${nativePenaltyLabel}.`
     };
     res.setHeader('Content-Type', 'application/json');
     return res.status(200).json(payload);
@@ -284,6 +823,7 @@ function sanitizeResponseHeaders(headers, outLength) {
 }
 
 // Manual forward for fetchAvailableModels: extract the response, resolve every
+// model's quota against the pool, and ensure the complete model catalog is exposed.
 function forwardAndNeutralizeQuota(hostName, req, res, bodyText) {
     const headers = { ...req.headers };
     delete headers['transfer-encoding'];
@@ -312,36 +852,42 @@ function forwardAndNeutralizeQuota(hostName, req, res, bodyText) {
             try {
                 const data = JSON.parse(raw.toString('utf8'));
                 if (data && data.models) {
+                    // Calculate pooled quota average across all valid accounts
+                    const pooledQuotas = {};
+                    try {
+                        const allAccts = accountManager.getAllAccounts().filter(a => !a.isInvalid && a.enabled !== false);
+                        for (const a of allAccts) {
+                            const quotas = a._cachedFormattedQuotas || a.quota?.models;
+                            if (quotas) {
+                                for (const [cmId, q] of Object.entries(quotas)) {
+                                    if (q.remainingFraction == null) continue;
+                                    if (!pooledQuotas[cmId]) pooledQuotas[cmId] = { max: 0, sum: 0, count: 0 };
+                                    pooledQuotas[cmId].sum += q.remainingFraction;
+                                    pooledQuotas[cmId].count++;
+                                    pooledQuotas[cmId].max = Math.max(pooledQuotas[cmId].max, q.remainingFraction);
+                                }
+                            }
+                        }
+                    } catch (e) {
+                        logger.error('[GUI Interceptor] Error computing pooled quotas: ' + e.message);
+                    }
+
                     for (const [mId, modelData] of Object.entries(data.models)) {
                         if (modelData) {
                             if (!modelData.quotaInfo || typeof modelData.quotaInfo !== 'object') {
                                 modelData.quotaInfo = { remainingFraction: 1.0 };
-                            } else {
-                                modelData.quotaInfo.remainingFraction = 1.0;
-                                delete modelData.quotaInfo.resetTime;
                             }
+                            
+                            let pooledFraction = 1.0;
+                            if (pooledQuotas[mId] && pooledQuotas[mId].count > 0) {
+                                pooledFraction = pooledQuotas[mId].max > 0 ? pooledQuotas[mId].max : (pooledQuotas[mId].sum / pooledQuotas[mId].count);
+                            }
+                            
+                            modelData.quotaInfo.remainingFraction = pooledFraction;
+                            delete modelData.quotaInfo.resetTime;
                         }
                     }
-                    // Ensure full Pro & Claude model suite is always present in IDE model list
-                    const REQUIRED_MODELS = [
-                        'claude-opus-4-6-thinking',
-                        'claude-sonnet-4-6',
-                        'gemini-3.7-flash-high',
-                        'gemini-3.7-flash-low',
-                        'gemini-3.1-pro-high',
-                        'gemini-3.1-pro-low',
-                        'gemini-2.5-pro',
-                        'gemini-2.5-flash',
-                        'gemini-pro-agent'
-                    ];
-                    for (const reqModel of REQUIRED_MODELS) {
-                        if (!data.models[reqModel]) {
-                            data.models[reqModel] = {
-                                displayName: reqModel,
-                                quotaInfo: { remainingFraction: 1.0 }
-                            };
-                        }
-                    }
+
                     out = Buffer.from(JSON.stringify(data));
                     neutralized = true;
                 }
@@ -352,7 +898,7 @@ function forwardAndNeutralizeQuota(hostName, req, res, bodyText) {
             if (!res.headersSent) res.writeHead(proxyRes.statusCode, outHeaders);
             res.end(out);
             if (neutralized) {
-                logger.info(`[GUI Interceptor] 🧪 fetchAvailableModels quotaInfo neutralized & full model suite guaranteed (${proxyRes.statusCode})`);
+                logger.info(`[GUI Interceptor] 🧪 fetchAvailableModels quotaInfo pooled & full model suite guaranteed (${proxyRes.statusCode})`);
             }
         });
     });
@@ -476,6 +1022,17 @@ app.use(async (req, res, next) => {
                 }
             }
 
+            // Apply model aliases (e.g., claude-3-5-sonnet-latest -> claude-sonnet-4-6)
+            // BEFORE we check account quotas or fallbacks!
+            if (requestedModel) {
+                const modelMapping = config.modelMapping || {};
+                if (modelMapping[requestedModel] && modelMapping[requestedModel].mapping) {
+                    const mappedModel = modelMapping[requestedModel].mapping;
+                    logger.info(`[GUI Interceptor] Mapping requested model ${requestedModel} -> ${mappedModel}`);
+                    requestedModel = mappedModel;
+                }
+            }
+
             // 2. Select the healthiest account from the load balancer (model-aware)
             let { account } = accountManager.selectAccount(requestedModel, {
                 apiProfile: req?.apiProfile,
@@ -486,17 +1043,43 @@ app.use(async (req, res, next) => {
             //    available pool quota, transparently rewrite to a healthy fallback
             //    model (Opus → Sonnet → Gemini Pro → Flash). See implementation_plan.md.
             let fallbackModel = null;
+            let fallbackSessionId = null;
+            let isMidSession = false;
+
+            if (requestBodyObj) {
+                let payloadToCheck = requestBodyObj.request || requestBodyObj;
+                if (Array.isArray(payloadToCheck.contents)) {
+                    isMidSession = payloadToCheck.contents.length > 1;
+                    logger.info(`[GUI Interceptor] Mid-session detection: contents.length=${payloadToCheck.contents.length} -> isMidSession=${isMidSession}`);
+                } else if (Array.isArray(payloadToCheck.instances)) {
+                    isMidSession = payloadToCheck.instances.length > 1;
+                    logger.info(`[GUI Interceptor] Mid-session detection: instances.length=${payloadToCheck.instances.length} -> isMidSession=${isMidSession}`);
+                } else if (payloadToCheck.messages && Array.isArray(payloadToCheck.messages)) {
+                    isMidSession = payloadToCheck.messages.length > 1;
+                }
+            }
+
+            let handoverAdvisoryText = null;
             if (!account && isAIRequest && requestedModel) {
-                for (const fb of getFallbackChain(requestedModel)) {
-                    const fbResult = accountManager.selectAccount(fb, {
-                        apiProfile: req?.apiProfile,
-                        incomingTokenEmail,
-                    });
-                    if (fbResult.account) {
-                        account = fbResult.account;
-                        fallbackModel = fb;
-                        break;
+                if (isMidSession) {
+                    for (const fb of getFallbackChain(requestedModel)) {
+                        const fbResult = accountManager.selectAccount(fb, {
+                            apiProfile: req?.apiProfile,
+                            incomingTokenEmail,
+                        });
+                        if (fbResult.account) {
+                            account = fbResult.account;
+                            fallbackModel = fb;
+                            
+                            const convId = extractConversationId(requestBodyObj);
+                            const handover = getOrCreateHandoverAdvisory(convId, requestBodyObj, fallbackModel);
+                            fallbackSessionId = handover.fallbackSessionId;
+                            handoverAdvisoryText = handover.injectedPrefixText;
+                            break;
+                        }
                     }
+                } else {
+                    logger.warn(`[GUI Interceptor] Refusing fallback for new session on ${requestedModel} (Out of Capacity)`);
                 }
             }
 
@@ -570,7 +1153,11 @@ app.use(async (req, res, next) => {
                 // 7. AI bodies were buffered — forward manually (native https, DNS patched)
                 if (isAIRequest && requestBodyText != null) {
                     const sanitizedText = sanitizeThoughtPartsForClaude(fallbackModel || requestedModel, requestBodyText);
-                    forwardToGoogle(hostName, req, res, sanitizedText);
+                    let optionsToPass = { incomingTokenEmail, isMidSession, requestBodyObj };
+                    if (handoverAdvisoryText) {
+                        optionsToPass.injectedPrefixText = handoverAdvisoryText;
+                    }
+                    forwardToGoogle(hostName, req, res, sanitizedText, account, fallbackModel || requestedModel, 0, optionsToPass);
                     return;
                 }
 
@@ -603,6 +1190,12 @@ app.use(async (req, res, next) => {
 
 // Middleware
 app.use(cors());
+app.use((req, res, next) => {
+    if (req.path.includes('/v1internal:') || req.path.includes('/v1/chat')) {
+        console.log(`[REQ] ${req.method} ${req.path} Headers:`, JSON.stringify(req.headers));
+    }
+    next();
+});
 app.use(express.json({ limit: REQUEST_BODY_LIMIT }));
 app.use(express.urlencoded({ extended: true, limit: REQUEST_BODY_LIMIT }));
 
@@ -766,6 +1359,49 @@ setInterval(() => {
     }
 }, 5 * 60 * 1000);
 
+// Periodic background quota refresh (every 2 minutes) — keeps account.quota.models
+// in sync with live Google API data so getAvailableAccounts() and the UI dashboard
+// never fall behind due to stale accounts.json values.
+async function refreshAllQuotas() {
+    if (!isInitialized) return;
+    try {
+        const allAccts = accountManager.getAllAccounts();
+        const active = allAccts.filter(a => !a.isInvalid && a.enabled !== false);
+        await Promise.allSettled(active.map(async (account) => {
+            try {
+                const token = await accountManager.getTokenForAccount(account);
+                const projectId = account.subscription?.projectId || null;
+                const quotas = await getModelQuotas(token, projectId);
+                const formattedQuotas = {};
+                for (const [modelId, info] of Object.entries(quotas)) {
+                    formattedQuotas[modelId] = {
+                        remaining: info.remainingFraction !== null ? `${Math.round(info.remainingFraction * 100)}%` : 'N/A',
+                        remainingFraction: info.remainingFraction,
+                        resetTime: info.resetTime || null
+                    };
+                }
+                account._cachedFormattedQuotas = formattedQuotas;
+                account._lastQuotaFetchTime = Date.now();
+                if (!account.quota) account.quota = {};
+                if (!account.quota.models) account.quota.models = {};
+                for (const [modelId, info] of Object.entries(formattedQuotas)) {
+                    account.quota.models[modelId] = {
+                        remainingFraction: info.remainingFraction,
+                        resetTime: info.resetTime
+                    };
+                }
+            } catch (e) {
+                // Per-account failure is non-fatal
+            }
+        }));
+    } catch (e) {
+        logger.warn(`[Server] Background quota refresh error: ${e.message}`);
+    }
+}
+setInterval(() => {
+    refreshAllQuotas().catch(() => {});
+}, 2 * 60 * 1000);
+
 /**
  * API: Get dynamically generated presets
  * Returns auto-generated presets based on live model data
@@ -816,59 +1452,44 @@ app.use('/api', createSearchRouter());
 // Mount WebUI (optional web interface for account management)
 mountWebUI(app, __dirname, accountManager);
 
-// Mount OpenAI-compatible endpoint (replaces standalone ARC Gateway)
+// Mount OpenAI and Responses API Wire Protocol Bridges
 mountOpenAICompat(app, accountManager, ensureInitialized, FALLBACK_ENABLED);
-
-// Mount OpenAI Responses-API bridge (Routes OpenAI Codex CLI through the pool)
 mountResponsesCompat(app, accountManager, ensureInitialized, FALLBACK_ENABLED);
 
-/**
- * Parse error message to extract error type, status code, and user-friendly message
- */
-function parseError(error) {
-    let errorType = 'api_error';
-    let statusCode = 500;
-    let errorMessage = error.message;
 
-    if (error.message.includes('401') || error.message.includes('UNAUTHENTICATED')) {
-        errorType = 'authentication_error';
-        statusCode = 401;
-        errorMessage = 'Authentication failed. Make sure Antigravity is running with a valid token.';
-    } else if (error.message.includes('429') || error.message.includes('RESOURCE_EXHAUSTED') || error.message.includes('QUOTA_EXHAUSTED')) {
-        errorType = 'invalid_request_error';  // Use invalid_request_error to force client to purge/stop
-        statusCode = 400;  // Use 400 to ensure client does not retry (429 and 529 trigger retries)
-
-        // Try to extract the quota reset time from the error
-        const resetMatch = error.message.match(/quota will reset after ([\dh\dm\ds]+)/i);
-        // Try to extract model from our error format "Rate limited on <model>" or JSON format
-        const modelMatch = error.message.match(/Rate limited on ([^.]+)\./) || error.message.match(/"model":\s*"([^"]+)"/);
-        const model = modelMatch ? modelMatch[1] : 'the model';
-
-        if (resetMatch) {
-            errorMessage = `RESOURCE_EXHAUSTED: You have exhausted your capacity on ${model}. Quota will reset after ${resetMatch[1]}.`;
-        } else {
-            errorMessage = `RESOURCE_EXHAUSTED: You have exhausted your capacity on ${model}. Please wait for your quota to reset.`;
+// --- Savings Dashboard ---
+app.get('/api/savings-history', async (req, res) => {
+    try {
+        const fs = await import('fs');
+        const dbPath = '/Users/test/Projects/solidstack/registry/metrics/savings.db';
+        if (!fs.existsSync(dbPath)) {
+            return res.json({ dates: [], tokens: [], savings: [], models: [] });
         }
-    } else if (error.message.includes('invalid_request_error') || error.message.includes('INVALID_ARGUMENT')) {
-        errorType = 'invalid_request_error';
-        statusCode = 400;
-        const msgMatch = error.message.match(/"message":"([^"]+)"/);
-        if (msgMatch) errorMessage = msgMatch[1];
-    } else if (error.message.includes('All endpoints failed')) {
-        errorType = 'api_error';
-        statusCode = 503;
-        errorMessage = 'Unable to connect to Claude API. Check that Antigravity is running.';
-    } else if (error.message.includes('PERMISSION_DENIED')) {
-        errorType = 'permission_error';
-        statusCode = 403;
-        errorMessage = errorMessage;
+        
+        const Database = (await import('better-sqlite3')).default;
+        const db = new Database(dbPath, { readonly: true });
+        
+        const daily = db.prepare(`SELECT substr(timestamp, 1, 10) as date, SUM(tokens_in + tokens_out) as tokens, SUM(retail_value_saved) as saved FROM savings GROUP BY date ORDER BY date ASC LIMIT 30`).all();
+        const models = db.prepare(`SELECT model, SUM(tokens_in + tokens_out) as tokens FROM savings GROUP BY model ORDER BY tokens DESC`).all();
+        
+        db.close();
+        
+        res.json({
+            dates: daily.map(r => r.date),
+            tokens: daily.map(r => r.tokens),
+            savings: daily.map(r => r.saved),
+            models: models
+        });
+    } catch (error) {
+        logger.error('Failed to load savings history', error);
+        res.status(500).json({ error: error.message });
     }
+});
 
-    return { errorType, statusCode, errorMessage };
-}
-
-// Request logging middleware
-
+app.get('/savings', (req, res) => {
+    // Deprecated standalone HTML page. Redirecting to unified React dashboard.
+    res.redirect('/dashboard');
+});
 
 app.use((req, res, next) => {
     const start = Date.now();
@@ -938,6 +1559,16 @@ app.get('/api/metrics/routing', async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 });
+
+// Fast liveness probe for watchdogs & load balancers (always non-blocking)
+app.get('/ping', (req, res) => {
+    res.json({
+        status: 'ok',
+        uptime: process.uptime(),
+        timestamp: new Date().toISOString()
+    });
+});
+
 app.get('/health', async (req, res) => {
     try {
         await ensureInitialized();
@@ -947,13 +1578,24 @@ app.get('/health', async (req, res) => {
         const status = accountManager.getStatus();
         const allAccounts = accountManager.getAllAccounts();
 
-        // Fetch quotas for each account in parallel to get detailed model info
+        // Fetch quotas for each account in parallel with per-account timeout protection
         const accountDetails = await Promise.allSettled(
             allAccounts.map(async (account) => {
+                if (account.enabled === false) {
+                    return {
+                        email: account.email,
+                        lastUsed: account.lastUsed ? new Date(account.lastUsed).toISOString() : null,
+                        modelRateLimits: account.modelRateLimits || {},
+                        rateLimitCooldownRemaining: 0,
+                        status: 'disabled',
+                        error: account.invalidReason || 'Account disabled in configuration',
+                        models: {}
+                    };
+                }
+
                 // Check model-specific rate limits
                 const activeModelLimits = Object.entries(account.modelRateLimits || {})
                     .filter(([_, limit]) => limit.isRateLimited && limit.resetTime > Date.now());
-                const isRateLimited = activeModelLimits.length > 0;
                 const soonestReset = activeModelLimits.length > 0
                     ? Math.min(...activeModelLimits.map(([_, l]) => l.resetTime))
                     : null;
@@ -983,25 +1625,54 @@ app.get('/health', async (req, res) => {
                     let formattedQuotas = account._cachedFormattedQuotas;
 
                     if (!formattedQuotas || cacheAge > 60000 || req.query.fresh === 'true') {
-                        const token = await accountManager.getTokenForAccount(account);
-                        const projectId = account.subscription?.projectId || null;
-                        const quotas = await getModelQuotas(token, projectId);
+                        // Protect against hanging Google API requests with 2500ms timeout
+                        const fetchPromise = (async () => {
+                            const token = await accountManager.getTokenForAccount(account);
+                            const projectId = account.subscription?.projectId || null;
+                            return await getModelQuotas(token, projectId);
+                        })();
 
-                        formattedQuotas = {};
-                        for (const [modelId, info] of Object.entries(quotas)) {
-                            formattedQuotas[modelId] = {
-                                remaining: info.remainingFraction !== null ? `${Math.round(info.remainingFraction * 100)}%` : 'N/A',
-                                remainingFraction: info.remainingFraction,
-                                resetTime: info.resetTime || null
-                            };
+                        const timeoutPromise = new Promise((_, reject) => 
+                            setTimeout(() => reject(new Error('Quota probe timeout (2.5s)')), 2500)
+                        );
+
+                        try {
+                            const quotas = await Promise.race([fetchPromise, timeoutPromise]);
+                            formattedQuotas = {};
+                            for (const [modelId, info] of Object.entries(quotas)) {
+                                formattedQuotas[modelId] = {
+                                    remaining: info.remainingFraction !== null ? `${Math.round(info.remainingFraction * 100)}%` : 'N/A',
+                                    remainingFraction: info.remainingFraction,
+                                    resetTime: info.resetTime || null
+                                };
+                            }
+                            account._cachedFormattedQuotas = formattedQuotas;
+                            account._lastQuotaFetchTime = now;
+                            // Sync fresh quota data to account.quota.models so
+                            // getAvailableAccounts() and getPoolModelQuotas() use
+                            // the latest values (not stale accounts.json data).
+                            if (!account.quota) account.quota = {};
+                            if (!account.quota.models) account.quota.models = {};
+                            for (const [modelId, info] of Object.entries(formattedQuotas)) {
+                                account.quota.models[modelId] = {
+                                    remainingFraction: info.remainingFraction,
+                                    resetTime: info.resetTime
+                                };
+                            }
+                        } catch (timeoutOrError) {
+                            if (!formattedQuotas) {
+                                formattedQuotas = { 'gemini-2.5-flash': { remaining: 'Available', remainingFraction: 1.0 } };
+                            }
                         }
-                        account._cachedFormattedQuotas = formattedQuotas;
-                        account._lastQuotaFetchTime = now;
                     }
+
+                    // An account is only fully rate-limited if all models with quota are rate-limited
+                    const isAllRateLimited = accountManager.isAllRateLimited ? accountManager.isAllRateLimited() : false;
+                    const accountStatus = isAllRateLimited ? 'rate-limited' : (activeModelLimits.length > 0 ? 'partial' : 'ok');
 
                     return {
                         ...baseInfo,
-                        status: isRateLimited ? 'rate-limited' : 'ok',
+                        status: accountStatus,
                         models: formattedQuotas
                     };
                 } catch (error) {
@@ -1110,21 +1781,42 @@ app.get('/account-limits', async (req, res) => {
                     };
                 }
 
+                // 5-minute smart quota cache to prevent API call limit exhaustion and ensure instant UI load
+                const QUOTA_CACHE_TTL = 5 * 60 * 1000;
+                const hasCachedQuota = account.quota?.models &&
+                    Object.keys(account.quota.models).length > 0 &&
+                    account.quota.lastChecked &&
+                    (Date.now() - account.quota.lastChecked < QUOTA_CACHE_TTL);
+
+                if (hasCachedQuota && req.query.force !== 'true') {
+                    return {
+                        email: account.email,
+                        status: 'ok',
+                        subscription: account.subscription || { tier: 'unknown', projectId: null },
+                        models: account.quota.models
+                    };
+                }
+
                 try {
                     const token = await accountManager.getTokenForAccount(account);
+                    const projectId = account.subscription?.projectId || 'aicode-consumers';
 
-                    // Fetch subscription tier first to get project ID
-                    const subscription = await getSubscriptionTier(token);
+                    // Fetch fresh quotas using cached project ID
+                    let quotas = {};
+                    try {
+                        quotas = await getModelQuotas(token, projectId, account.subscription?.tier || account.tier);
+                    } catch (qErr) {
+                        logger.warn(`[Server] Quota fetch error for ${account.email}: ${qErr.message}`);
+                        // Fall back to previously cached models if available
+                        quotas = account.quota?.models || {};
+                    }
 
-                    // Then fetch quotas with project ID for accurate quota info
-                    const quotas = await getModelQuotas(token, subscription.projectId);
+                    // If quotas returned empty, preserve previous cache if exists
+                    if (Object.keys(quotas).length === 0 && account.quota?.models && Object.keys(account.quota.models).length > 0) {
+                        quotas = account.quota.models;
+                    }
 
-                    // Update account object with fresh data
-                    account.subscription = {
-                        tier: subscription.tier,
-                        projectId: subscription.projectId,
-                        detectedAt: Date.now()
-                    };
+                    // Update account object with quota data
                     account.quota = {
                         models: quotas,
                         lastChecked: Date.now()
@@ -1138,7 +1830,7 @@ app.get('/account-limits', async (req, res) => {
                     return {
                         email: account.email,
                         status: 'ok',
-                        subscription: account.subscription,
+                        subscription: account.subscription || { tier: 'unknown', projectId: null },
                         models: quotas
                     };
                 } catch (error) {
@@ -1153,12 +1845,14 @@ app.get('/account-limits', async (req, res) => {
                             models: {}
                         };
                     }
+                    // Fall back gracefully to cached quota rather than erroring
+                    const fallbackModels = account.quota?.models || {};
                     return {
                         email: account.email,
-                        status: 'error',
+                        status: Object.keys(fallbackModels).length > 0 ? 'ok' : 'error',
                         error: error.message,
                         subscription: account.subscription || { tier: 'unknown', projectId: null },
-                        models: {}
+                        models: fallbackModels
                     };
                 }
             })
@@ -1273,13 +1967,17 @@ app.get('/account-limits', async (req, res) => {
             // Data rows
             for (const modelId of sortedModels) {
                 let row = modelId.padEnd(modelColWidth);
+                const isClaude = modelId.toLowerCase().includes('claude');
                 for (const acc of accountLimits) {
                     const quota = acc.models?.[modelId];
+                    const isFree = (acc.subscription?.tier || 'free').toLowerCase() === 'free';
                     let cell;
                     if (acc.status !== 'ok' && acc.status !== 'rate-limited') {
                         cell = `[${acc.status}]`;
                     } else if (!quota) {
                         cell = '-';
+                    } else if (isClaude && isFree) {
+                        cell = '0% (N/A free)';
                     } else if (quota.remainingFraction === 0 || quota.remainingFraction === null) {
                         // Show reset time for exhausted models
                         if (quota.resetTime) {
@@ -1322,6 +2020,8 @@ app.get('/account-limits', async (req, res) => {
             accounts: accountLimits.map(acc => {
                 // Merge quota data with account metadata
                 const metadata = accountMetadataMap.get(acc.email) || {};
+                const tier = (acc.subscription?.tier || metadata.subscription?.tier || metadata.tier || 'free').toLowerCase();
+                const isFree = tier === 'free' || acc.email.includes('virtual-gemini-key');
                 return {
                     email: acc.email,
                     status: acc.status,
@@ -1343,9 +2043,17 @@ app.get('/account-limits', async (req, res) => {
                     // Quota limits
                     limits: Object.fromEntries(
                         sortedModels.map(modelId => {
+                            const isClaude = modelId.toLowerCase().includes('claude');
                             const quota = acc.models?.[modelId];
                             if (!quota) {
                                 return [modelId, null];
+                            }
+                            if (isClaude && isFree) {
+                                return [modelId, {
+                                    remaining: '0% (N/A)',
+                                    remainingFraction: 0,
+                                    resetTime: null
+                                }];
                             }
                             return [modelId, {
                                 remaining: quota.remainingFraction !== null
@@ -1404,7 +2112,11 @@ app.post('/refresh-token', async (req, res) => {
 app.get('/v1/models', async (req, res) => {
     try {
         await ensureInitialized();
-        const { account } = accountManager.selectAccount(null, { apiProfile: req?.apiProfile });
+        // Query models using a Pro account if available so Claude & full model suite are returned
+        const accounts = accountManager.getAllAccounts();
+        const proAccount = accounts.find(a => (a.subscription?.tier === 'pro' || a.email.includes('gmail')) && a.enabled !== false && !a.isInvalid);
+        const { account } = proAccount ? { account: proAccount } : accountManager.selectAccount(null, { apiProfile: req?.apiProfile });
+        
         if (!account) {
             return res.status(503).json({
                 type: 'error',
@@ -1415,7 +2127,7 @@ app.get('/v1/models', async (req, res) => {
             });
         }
         const token = await accountManager.getTokenForAccount(account);
-        const models = await listModels(token);
+        const models = await listModels(token, account.subscription?.projectId);
         res.json(models);
     } catch (error) {
         logger.error('[API] Error listing models:', error);
@@ -1536,6 +2248,8 @@ app.post('/v1/messages', async (req, res) => {
         };
 
         logger.info(`[API] Request for model: ${request.model}, stream: ${!!stream}`);
+        const inFlightId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+        startInFlight(inFlightId, { model: request.model, isLocal: request.model.includes('local') || request.model.includes('ollama') || request.model.includes('turbo') });
 
         // Debug: Log message structure to diagnose tool_use/tool_result ordering
         if (logger.isDebugEnabled) {
@@ -1582,15 +2296,22 @@ app.post('/v1/messages', async (req, res) => {
                 // Continue with the rest of the stream
                 for await (const event of generator) {
                     accumulateStreamEvent(streamConvId, event);
+                    if (event.type === 'message_start' && event.message?.usage) {
+                        recordTokenUsage({ ...event.message.usage, model: request.model });
+                    } else if (event.type === 'message_delta' && event.usage) {
+                        recordTokenUsage({ ...event.usage, model: request.model });
+                    }
                     res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
                     if (res.flush) res.flush();
                 }
                 
                 res.end();
                 finalizeStreamingLog(streamConvId);
+                endInFlight(inFlightId, { status: 'completed' });
 
             } catch (error) {
                 finalizeStreamingLog(streamConvId, error);
+                endInFlight(inFlightId, { status: 'error', error: error.message });
                 // If we haven't sent headers yet, we can send a proper error status
                 if (!res.headersSent) {
                     logger.error('[API] Initial stream error:', error);
@@ -1619,9 +2340,18 @@ app.post('/v1/messages', async (req, res) => {
 
         } else {
             // Handle non-streaming response
-            const response = await sendMessage(request, accountManager, FALLBACK_ENABLED);
-            logConversation(request, response, '', '', req);
-            res.json(response);
+            try {
+                const response = await sendMessage(request, accountManager, FALLBACK_ENABLED);
+                if (response?.usage) {
+                    recordTokenUsage({ ...response.usage, model: request.model });
+                }
+                logConversation(request, response, '', '', req);
+                endInFlight(inFlightId, { status: 'completed' });
+                res.json(response);
+            } catch (err) {
+                endInFlight(inFlightId, { status: 'error', error: err.message });
+                throw err;
+            }
         }
 
     } catch (error) {
@@ -1685,6 +2415,15 @@ const ssmcpProxy = createProxyMiddleware({
     }
 });
 
+const restreamRequestBody = (proxyReq, req, res) => {
+    if (req.body && Object.keys(req.body).length > 0) {
+        const bodyData = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
+        proxyReq.setHeader('Content-Type', 'application/json');
+        proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));
+        proxyReq.write(bodyData);
+    }
+};
+
 const daemonProxy = createProxyMiddleware({
     target: 'http://127.0.0.1:18791',
     changeOrigin: true,
@@ -1692,6 +2431,7 @@ const daemonProxy = createProxyMiddleware({
         '^/daemon-api': '/api'
     },
     on: {
+        proxyReq: restreamRequestBody,
         error: (err, req, res) => {
             logger.error(`[Daemon Proxy] Error: ${err.message}`);
             if (!res.headersSent) {
@@ -1708,6 +2448,10 @@ const mcpHttpProxy = createProxyMiddleware({
         '^/mcp-api': ''
     },
     on: {
+        proxyReq: (proxyReq, req, res) => {
+            console.log("[MCP] Headers from client:", req.headers);
+            restreamRequestBody(proxyReq, req, res);
+        },
         error: (err, req, res) => {
             logger.error(`[MCP Proxy] Error: ${err.message}`);
             if (!res.headersSent) {
@@ -1725,6 +2469,14 @@ const dashboardProxy = createProxyMiddleware({
         '^/dashboard': '/'
     },
     on: {
+        proxyReq: restreamRequestBody,
+        proxyRes: (proxyRes, req, res) => {
+            if (req.path === '/api/stream' || proxyRes.headers['content-type'] === 'text/event-stream') {
+                proxyRes.headers['Cache-Control'] = 'no-cache';
+                proxyRes.headers['X-Accel-Buffering'] = 'no';
+                proxyRes.headers['Connection'] = 'keep-alive';
+            }
+        },
         error: (err, req, res) => {
             logger.error(`[Dashboard Proxy] Error: ${err.message}`);
             if (!res.headersSent) {
