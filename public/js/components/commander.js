@@ -46,12 +46,19 @@ window.Components.processes = () => ({
 
 window.Components.infrastructure = () => ({
     vms: [],
+    serviceMobility: null,
     async fetchVms() {
         try {
-            const res = await fetch('/api/infrastructure/vms');
-            if (res.ok) {
-                const data = await res.json();
+            const [vmsRes, mobilityRes] = await Promise.all([
+                fetch('/api/infrastructure/vms').catch(() => null),
+                fetch('/api/service-mobility').catch(() => null)
+            ]);
+            if (vmsRes && vmsRes.ok) {
+                const data = await vmsRes.json();
                 this.vms = data;
+            }
+            if (mobilityRes && mobilityRes.ok) {
+                this.serviceMobility = await mobilityRes.json();
             }
         } catch (e) {
             console.error('Fetch failed', e);
