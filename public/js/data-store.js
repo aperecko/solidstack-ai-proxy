@@ -139,6 +139,29 @@ document.addEventListener('alpine:init', () => {
                 // Store usage history if included (for dashboard)
                 if (data.history) {
                     this.usageHistory = data.history;
+                    
+                    // Apply the "Used Models Only" principle across the whole dashboard
+                    const usedModels = new Set([
+                        'claude-sonnet-4-6',     // Always keep core primary model
+                        'gemini-2.5-flash-lite', // Always keep core primary model
+                        'gemini-2.5-pro'         // Always keep core primary model
+                    ]);
+                    
+                    Object.values(this.usageHistory).forEach(hourData => {
+                        Object.entries(hourData).forEach(([family, stats]) => {
+                            if (family !== 'total' && family !== '_total' && typeof stats === 'object') {
+                                Object.entries(stats).forEach(([model, count]) => {
+                                    if (model !== '_subtotal' && count > 0) {
+                                        usedModels.add(model);
+                                    }
+                                });
+                            }
+                        });
+                    });
+                    
+                    if (this.models && this.models.length > 0) {
+                        this.models = this.models.filter(m => usedModels.has(m));
+                    }
                 }
 
                 this.saveToCache(); // Save fresh data
