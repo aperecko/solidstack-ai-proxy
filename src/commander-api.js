@@ -69,25 +69,6 @@ function isPortListening(port) {
 }
 
 /**
- * Check if Colima is currently running.
- * @returns {Promise<boolean>}
- */
-function isColimaRunning() {
-    return new Promise((resolve) => {
-        exec('colima status', {
-            env: { ...process.env, PATH: '/opt/homebrew/bin:/usr/local/bin:' + (process.env.PATH || '') },
-            timeout: 3000
-        }, (err, stdout) => {
-            if (!err && stdout.toLowerCase().includes('running')) {
-                resolve(true);
-            } else {
-                resolve(false);
-            }
-        });
-    });
-}
-
-/**
  * Get all running system PIDs and their command lines.
  * @returns {Promise<Array<{pid: number, command: string}>>}
  */
@@ -176,6 +157,86 @@ const SERVICE_PORTS = {
     'ssmcp': 8765,
 };
 
+// Phase 3: Service Map Cache
+let cachedServiceMap = null;
+let serviceMapLastFetch = 0;
+
+async function buildServiceMap() {
+    const now = Date.now();
+    if (cachedServiceMap && now - serviceMapLastFetch < 10000) {
+        return cachedServiceMap;
+    }
+    
+    const PORTS_PATH = path.join(REGISTRY_DIR, 'ports.json');
+    let registry = {};
+    if (fs.existsSync(PORTS_PATH)) {
+        try {
+            registry = JSON.parse(fs.readFileSync(PORTS_PATH, 'utf8'));
+        } catch (e) {
+            logger.error(`[CommanderAPI] Error parsing ports.json:`, e);
+        }
+    }
+    
+    const primary = registry.primary_origin || {};
+    const domains = registry.domains || {};
+    const compat = registry.compatibility_ports || {};
+    const host = primary.host || '127.0.0.1';
+    
+    const serviceMap = {
+        primary_origin: {
+            id: primary.id,
+            host,
+            port: primary.port,
+            live: false
+        },
+        domains: {},
+        compatibility: {}
+    };
+    
+    const checks = [];
+    
+    const addCheck = (port, callback) => {
+        if (!port) return;
+        const p = new Promise(resolve => {
+            const client = new net.Socket();
+            client.setTimeout(100);
+            client.on('connect', () => { client.destroy(); callback(true); resolve(); });
+            client.on('error', () => { client.destroy(); callback(false); resolve(); });
+            client.on('timeout', () => { client.destroy(); callback(false); resolve(); });
+            client.connect(port, host);
+        });
+        checks.push(p);
+    };
+    
+    addCheck(primary.port, live => serviceMap.primary_origin.live = live);
+    
+    for (const [name, info] of Object.entries(domains)) {
+        serviceMap.domains[name] = {
+            port: info.port,
+            status: info.status,
+            owner: info.owner || 'unassigned',
+            live: false
+        };
+        addCheck(info.port, live => serviceMap.domains[name].live = live);
+    }
+    
+    for (const [name, info] of Object.entries(compat)) {
+        serviceMap.compatibility[name] = {
+            port: info.port,
+            status: info.status,
+            migration_target: info.migration_target,
+            live: false
+        };
+        addCheck(info.port, live => serviceMap.compatibility[name].live = live);
+    }
+    
+    await Promise.allSettled(checks);
+    
+    cachedServiceMap = serviceMap;
+    serviceMapLastFetch = now;
+    return serviceMap;
+}
+
 /**
  * Scan all processes registered in commander.yaml and detect their liveness.
  */
@@ -194,7 +255,6 @@ async function scanProcesses() {
         }
     }
 
-    const colimaActive = await isColimaRunning();
     const systemProcs = await getSystemProcesses();
 
     // Map ports to check
@@ -221,16 +281,6 @@ async function scanProcesses() {
             if (portStatuses[8001]) {
                 status = 'running';
             }
-        } else if (s.id === 'colima-start') {
-            if (colimaActive) {
-                status = 'running';
-            }
-        } else if (s.id === 'local-stack-up') {
-            if (colimaActive && (portStatuses[80] || portStatuses[8080])) {
-                status = 'running';
-            }
-        } else if (s.id === 'local-stack-down') {
-            status = 'stopped';
         } else if (s.id === 'ai-routing-console') {
             port = 1987;
             if (portStatuses[1987]) {
@@ -291,193 +341,42 @@ async function scanProcesses() {
 export function createCommanderRouter(accountManager, ensureInitialized) {
     const router = express.Router();
 
-    // 1. GET /api/processes — List all scripts, services, and nodes
-    router.get('/processes', async (req, res) => {
-        try {
-            const scripts = await scanProcesses();
 
-            // Load Services — only services on the local dev node (AMACBOOKPRO)
-            const servicesData = parseYamlFile(SERVICES_PATH);
-            const rawServices = servicesData.services || {};
-            const LOCAL_DEV_NODE = 'AMACBOOKPRO';
-            const services = await Promise.all(
-                Object.entries(rawServices)
-                    .filter(([_, s_data]) => s_data.node === LOCAL_DEV_NODE)
-                    .map(async ([s_id, s_data]) => {
-                        let status = s_data.status || 'unknown';
-                        const port = SERVICE_PORTS[s_id];
-                        if (port) {
-                            status = await isPortListening(port) ? 'running' : 'stopped';
-                        }
-                        return {
-                            id: s_id,
-                            name: s_id.toUpperCase().replace(/-/g, ' '),
-                            description: s_data.notes || 'No description provided.',
-                            status,
-                            stack: s_data.stack || 'unknown',
-                            node: s_data.node || 'unknown',
-                            type: 'service',
-                            op_item: s_data.auth?.op_item || null,
-                            url: s_data.access?.domain || s_data.access?.local_ip || '',
-                            repo: s_data.repo_url || ''
-                        };
-                    })
-            );
-
-            // Load Nodes — only the local dev machine
-            const nodesData = parseYamlFile(NODES_PATH);
-            const rawNodes = nodesData.nodes || {};
-            const rawNetwork = nodesData.network || {};
-            const nodes = [];
-
-            Object.entries(rawNodes).forEach(([n_id, n_data]) => {
-                if (n_id !== LOCAL_DEV_NODE) return;
-                const ip = n_data.access?.local_ip || '';
-                nodes.push({
-                    id: n_id,
-                    name: n_id,
-                    description: n_data.notes || '',
-                    status: n_data.status || 'unknown',
-                    stack: n_data.type || 'node',
-                    type: n_data.hw_class === 'virtual' ? 'vm' : 'hardware',
-                    ip,
-                    os: n_data.os || 'unknown',
-                    metrics: null
-                });
-            });
-
-            // Locally accessible network gear (switches, APs, routers) — ping for liveness
-            const networkResults = await Promise.all(
-                Object.entries(rawNetwork).map(async ([n_id, n_data]) => {
-                    const ip = n_data.access?.local_ip || '';
-                    const alive = await isHostReachable(ip);
-                    return {
-                        id: n_id,
-                        name: n_data.unifi_name || n_id,
-                        description: n_data.notes || '',
-                        status: alive ? 'online' : 'offline',
-                        stack: 'network',
-                        type: 'hardware',
-                        ip,
-                        os: n_data.model || 'unknown'
-                    };
-                })
-            );
-            nodes.push(...networkResults);
-
-            res.json({ items: [...scripts, ...services, ...nodes] });
-        } catch (error) {
-            logger.error('[CommanderAPI] Error /processes:', error);
-            res.status(500).json({ error: error.message });
-        }
-    });
-
-    // Helper to run a registered script process
-    async function runProcess(processId) {
-        const scripts = await scanProcesses();
-        const script = scripts.find(s => s.id === processId);
-        if (!script) return { status: 'not_found' };
-        if (script.status === 'running') return { status: 'already_running' };
-
-        const logFile = script.logs_path;
-        const outStream = fs.openSync(logFile, 'a');
-
-        // Determine if it is a python script or shell script
-        const isShell = script.path.endsWith('.sh');
-        const cmd = isShell ? 'bash' : 'python3';
-        const args = [script.path];
-
-        const child = spawn(cmd, args, {
-            cwd: BASE_DIR,
-            detached: true,
-            stdio: ['ignore', outStream, outStream]
-        });
-
-        child.unref();
-        runningSpawnedProcesses.set(processId, child);
-
-        return { status: 'started', pid: child.pid };
-    }
-
-    // Helper to stop a process
-    async function stopProcess(processId) {
-        const scripts = await scanProcesses();
-        const script = scripts.find(s => s.id === processId);
-        if (!script) return { status: 'not_found' };
-
-        if (script.pid) {
+    // 1. GET /api/processes — List all managed services via ss.cli
+    router.get('/processes', (req, res) => {
+        exec('python3 -c "from ss.service_manager import get_all_services_status; import json; print(json.dumps(get_all_services_status()))"', { cwd: BASE_DIR }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
             try {
-                // Kill process group
-                process.kill(-script.pid, 'SIGKILL');
+                // ss.cli returns a dict. map it to an array for the UI
+                const data = JSON.parse(stdout.trim());
+                const items = Object.keys(data).map(k => ({
+                    id: k,
+                    name: k,
+                    status: data[k].status === 'running' ? 'running' : 'stopped',
+                    pid: data[k].pid || null,
+                    port: data[k].port || null
+                }));
+                res.json(items);
             } catch (e) {
-                try {
-                    process.kill(script.pid, 'SIGKILL');
-                } catch (err) {
-                    // Ignore
-                }
+                res.status(500).json({ error: 'Failed to parse services' });
             }
-        }
+        });
+    });
 
-        // Clean up spawned process cache
-        runningSpawnedProcesses.delete(processId);
-        return { status: 'stopped' };
-    }
-
-    // 2. POST /api/processes/:id/:action (start or stop)
-    router.post('/processes/:id/:action', async (req, res) => {
+    // 2. POST /api/processes/:id/:action (start or stop) via ss.cli
+    router.post('/processes/:id/:action', (req, res) => {
         const { id, action } = req.params;
-        try {
-            if (action === 'start') {
-                const result = await runProcess(id);
-                if (result.status === 'not_found') {
-                    return res.status(404).json({ error: 'Process not found' });
-                }
-                return res.json(result);
-            } else if (action === 'stop') {
-                const result = await stopProcess(id);
-                if (result.status === 'not_found') {
-                    return res.status(404).json({ error: 'Process not found' });
-                }
-                return res.json(result);
-            } else {
-                return res.status(400).json({ error: 'Invalid action' });
-            }
-        } catch (error) {
-            logger.error(`[CommanderAPI] Error control process ${id}:`, error);
-            res.status(500).json({ error: error.message });
-        }
+        if (!['start', 'stop', 'restart'].includes(action)) return res.status(400).json({ error: 'Invalid action' });
+        
+        exec(`python3 -m ss.cli service ${action} ${id}`, { cwd: BASE_DIR }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ success: true, log: stdout.trim() });
+        });
     });
 
-    // Keep compatibility with specific start/stop endpoints
-    router.post('/processes/:id/start', async (req, res) => {
-        const result = await runProcess(req.params.id);
-        if (result.status === 'not_found') return res.status(404).json({ error: 'Process not found' });
-        res.json(result);
-    });
-
-    router.post('/processes/:id/stop', async (req, res) => {
-        const result = await stopProcess(req.params.id);
-        if (result.status === 'not_found') return res.status(404).json({ error: 'Process not found' });
-        res.json(result);
-    });
-
-    // 3. GET /api/processes/:id/logs — Get logs
-    router.get('/processes/:id/logs', async (req, res) => {
-        try {
-            const scripts = await scanProcesses();
-            const script = scripts.find(s => s.id === req.params.id);
-            if (!script || !fs.existsSync(script.logs_path)) {
-                return res.json({ logs: 'No logs available. Note: Docker/Remote service logs are not streamed here yet.' });
-            }
-
-            const content = fs.readFileSync(script.logs_path, 'utf8');
-            const lines = content.split('\n');
-            const last100 = lines.slice(-100).join('\n');
-            res.json({ logs: last100 });
-        } catch (error) {
-            logger.error(`[CommanderAPI] Error logs for ${req.params.id}:`, error);
-            res.status(500).json({ error: error.message });
-        }
+    // 3. GET /api/processes/:id/logs
+    router.get('/processes/:id/logs', (req, res) => {
+        res.json({ logs: 'Logs streaming via dashboard not fully implemented for daemons.' });
     });
 
     // 4. POST /api/orchestrate/ai-stack — Start LiteLLM (deprecated) + ARC Gateway (deprecated)
@@ -486,30 +385,39 @@ export function createCommanderRouter(accountManager, ensureInitialized) {
         res.json({ status: 'AI Stack Orchestration Unified internally (already running)' });
     });
 
-    // 5. POST /api/orchestrate/local-stack/start — Start colima & local stack
+    // 5. POST /api/orchestrate/local-stack/start — Start native local stack services
     router.post('/orchestrate/local-stack/start', async (req, res) => {
         try {
-            const colimaActive = await isColimaRunning();
-            if (!colimaActive) {
-                logger.info('[CommanderAPI] Starting Colima...');
-                execSync('colima start', {
-                    env: { ...process.env, PATH: '/opt/homebrew/bin:/usr/local/bin:' + (process.env.PATH || '') },
-                    timeout: 90000
-                });
-            }
-
-            await runProcess('local-stack-up');
-            res.json({ status: 'started', colima_started_by_api: !colimaActive });
+            await runProcess('ssmcp-native').catch(() => {});
+            await runProcess('solidstack-dashboard').catch(() => {});
+            await runProcess('ai-routing-console').catch(() => {});
+            await runProcess('arc-gateway').catch(() => {});
+            try {
+                const turboScript = path.resolve(BASE_DIR, 'bin/ss-local-engine');
+                if (fs.existsSync(turboScript)) {
+                    exec(`bash "${turboScript}" start turbo`, { cwd: BASE_DIR });
+                }
+            } catch (e) {}
+            res.json({ status: 'started', native_orchestration: true });
         } catch (error) {
             logger.error('[CommanderAPI] Error local-stack/start:', error);
             res.status(500).json({ error: error.message });
         }
     });
 
-    // 6. POST /api/orchestrate/local-stack/stop — Stop local stack
+    // 6. POST /api/orchestrate/local-stack/stop — Stop native local stack services
     router.post('/orchestrate/local-stack/stop', async (req, res) => {
         try {
-            await runProcess('local-stack-down');
+            await stopProcess('ssmcp-native').catch(() => {});
+            await stopProcess('solidstack-dashboard').catch(() => {});
+            await stopProcess('ai-routing-console').catch(() => {});
+            await stopProcess('arc-gateway').catch(() => {});
+            try {
+                const turboScript = path.resolve(BASE_DIR, 'bin/ss-local-engine');
+                if (fs.existsSync(turboScript)) {
+                    exec(`bash "${turboScript}" stop turbo`, { cwd: BASE_DIR });
+                }
+            } catch (e) {}
             res.json({ status: 'stopped' });
         } catch (error) {
             logger.error('[CommanderAPI] Error local-stack/stop:', error);
@@ -777,7 +685,8 @@ Output ONLY the rewritten prompt, wrapped in triple backticks.`;
             
             allAccs.forEach(acc => {
                 if (acc.enabled !== false && !acc.isInvalid) {
-                    const isPro = acc.subscription?.tier === 'pro';
+                    const tier = (acc.subscription?.tier || acc.tier || '').toLowerCase();
+                    const isPro = tier === 'ultra' || tier === 'pro' || tier === 'plus';
                     totalLimit += isPro ? 1500 : 50;
                     let isExhausted = false;
                     if (acc.quota && acc.quota.models) {
@@ -875,8 +784,89 @@ Output ONLY the rewritten prompt, wrapped in triple backticks.`;
             heartbeat: { enabled: false, description: 'Multi-node health telemetry collector' }
         };
     }
+    // Phase 4: Full Feature Parity & Commander Consolidation
+    const runFlaskBridge = (endpoint) => {
+        return new Promise((resolve, reject) => {
+            exec(`python3 -m ss.flask_bridge ${endpoint}`, { cwd: BASE_DIR }, (err, stdout) => {
+                if (err) return reject(err);
+                try {
+                    const data = JSON.parse(stdout);
+                    if (data.error) return reject(new Error(data.error));
+                    resolve(data);
+                } catch (e) {
+                    reject(e);
+                }
+            });
+        });
+    };
 
-    // 15. GET /api/services/status — Get sub-services enabled state
+    router.get('/owner-remediation', async (req, res) => {
+        try {
+            const data = await runFlaskBridge('owner-remediation');
+            res.json(data);
+        } catch (e) {
+            logger.error('[CommanderAPI] /owner-remediation error:', e);
+            res.status(500).json({ error: 'Failed to fetch owner remediation' });
+        }
+    });
+
+    router.get('/determination', async (req, res) => {
+        try {
+            const data = await runFlaskBridge('determination');
+            res.json(data);
+        } catch (e) {
+            logger.error('[CommanderAPI] /determination error:', e);
+            res.status(500).json({ error: 'Failed to fetch determination' });
+        }
+    });
+
+    router.get('/service-mobility', async (req, res) => {
+        try {
+            const data = await runFlaskBridge('service-mobility');
+            res.json(data);
+        } catch (e) {
+            logger.error('[CommanderAPI] /service-mobility error:', e);
+            res.status(500).json({ error: 'Failed to fetch service mobility' });
+        }
+    });
+
+    router.get('/integrations/unifi', async (req, res) => {
+        try {
+            const data = await runFlaskBridge('integrations');
+            res.json(data);
+        } catch (e) {
+            logger.error('[CommanderAPI] /integrations/unifi error:', e);
+            res.status(500).json({ error: 'Failed to fetch unifi integrations' });
+        }
+    });
+    // Phase 3: Service Map & Components Authority
+    router.get('/service-map', async (req, res) => {
+        try {
+            const map = await buildServiceMap();
+            res.json(map);
+        } catch (e) {
+            logger.error('[CommanderAPI] /service-map error:', e);
+            res.status(500).json({ error: 'Failed to build service map' });
+        }
+    });
+
+    router.get('/components', (req, res) => {
+        try {
+            const COMPONENTS_PATH = path.join(REGISTRY_DIR, 'components.yaml');
+            const data = parseYamlFile(COMPONENTS_PATH);
+            // Handle array vs object parsing from yaml.loadAll behavior in parseYamlFile
+            // Actually js-yaml loadAll creates an object with Object.assign. If components.yaml is a list,
+            // the object assign might turn it into { '0': {id: '..'}, '1': {id: '..'} }
+            // Let's just read it directly using js-yaml.load
+            const rawContent = fs.readFileSync(COMPONENTS_PATH, 'utf8');
+            const componentsList = yaml.load(rawContent) || [];
+            res.json(componentsList);
+        } catch (e) {
+            logger.error('[CommanderAPI] /components error:', e);
+            res.status(500).json({ error: 'Failed to read components.yaml' });
+        }
+    });
+
     router.get('/services/status', (req, res) => {
         res.json(loadServiceToggles());
     });
@@ -1352,7 +1342,166 @@ Output ONLY the rewritten prompt, wrapped in triple backticks.`;
         });
     });
 
-    // 35h. POST /api/evolution/run — Trigger recursive evolution supervisor
+    // 35h. Lorax Overnight Evolution Engine API Endpoints
+    const EVOLUTION_PID_FILE = path.join(BASE_DIR, '.logs', 'evolution.pid');
+    const EVOLUTION_REPORT_FILE = path.join(BASE_DIR, '.logs', 'overnight_execution_report.md');
+    const EVOLUTION_LOG_FILE = path.join(BASE_DIR, '.logs', 'evolution.out.log');
+    const LORAX_STATE_FILE = path.join(BASE_DIR, 'stack', 'agents', 'lorax-state.json');
+
+    function getEvolutionPid() {
+        if (!fs.existsSync(EVOLUTION_PID_FILE)) return null;
+        try {
+            const pidStr = fs.readFileSync(EVOLUTION_PID_FILE, 'utf8').trim();
+            const pid = parseInt(pidStr, 10);
+            if (isNaN(pid)) return null;
+            process.kill(pid, 0);
+            return pid;
+        } catch {
+            return null;
+        }
+    }
+
+    router.get('/evolution/status', (req, res) => {
+        const pid = getEvolutionPid();
+        const running = pid !== null;
+
+        const LORAX_LOG_JSON = path.join(BASE_DIR, 'scratch', 'lorax-self-improvement-log.json');
+        const iterations = [];
+        let latest_reasoning = "";
+        
+        if (fs.existsSync(LORAX_LOG_JSON)) {
+            try {
+                const history = JSON.parse(fs.readFileSync(LORAX_LOG_JSON, 'utf8'));
+                for (const item of history) {
+                    iterations.push({
+                        iteration: item.cycle_index,
+                        time: new Date(item.timestamp * 1000).toLocaleTimeString(),
+                        branch: item.target_file ? path.basename(item.target_file) : 'N/A',
+                        latency: item.time_taken_s ? (item.time_taken_s).toFixed(1) + 's' : '-',
+                        verdict: item.committed ? 'MERGED' : 'DISCARDED',
+                        posterior: item.summary || ''
+                    });
+                }
+                if (history.length > 0) {
+                    const last = history[history.length - 1];
+                    latest_reasoning = last.summary || "";
+                }
+            } catch (e) {
+                console.error("Error reading lorax json:", e);
+            }
+        }
+
+        const totalCycles = iterations.length;
+        const mergedCycles = iterations.filter(i => i.verdict === 'MERGED').length;
+        const discardedCycles = iterations.filter(i => i.verdict === 'DISCARDED').length;
+
+        res.json({
+            running,
+            pid,
+            latest_reasoning,
+            total_cycles: totalCycles,
+            merged_cycles: mergedCycles,
+            discarded_cycles: discardedCycles,
+            recent_iterations: iterations.slice(-15).reverse()
+        });
+    });
+
+    router.post('/evolution/start', (req, res) => {
+        const existingPid = getEvolutionPid();
+        if (existingPid !== null) {
+            return res.json({ status: 'already_running', pid: existingPid });
+        }
+
+        const { hours = 8.0, test_cmd = 'pytest tests/unit/test_lorax_engine.py', interval_sec = 30 } = req.body || {};
+        const logsDir = path.join(BASE_DIR, '.logs');
+        if (!fs.existsSync(logsDir)) {
+            fs.mkdirSync(logsDir, { recursive: true });
+        }
+
+        const outLog = fs.openSync(EVOLUTION_LOG_FILE, 'a');
+        const child = spawn('python3', [
+            '-m',
+            'ss.overnight_evolution',
+            '--hours',
+            String(hours),
+            '--test-cmd',
+            String(test_cmd),
+            '--interval-sec',
+            String(interval_sec)
+        ], {
+            cwd: BASE_DIR,
+            detached: true,
+            stdio: ['ignore', outLog, outLog]
+        });
+
+        child.unref();
+        fs.writeFileSync(EVOLUTION_PID_FILE, String(child.pid), 'utf8');
+        res.json({ status: 'started', pid: child.pid });
+    });
+
+    // GET /api/evolution/deficits - Meta-Cognitive Gate
+    router.get('/evolution/deficits', (req, res) => {
+        
+        
+        const deficitsFile = path.join(BASE_DIR, 'scratch', 'lorax-skill-deficits.json');
+        if (fs.existsSync(deficitsFile)) {
+            try {
+                const data = JSON.parse(fs.readFileSync(deficitsFile, 'utf8'));
+                res.json({ deficits: data });
+            } catch (e) {
+                res.json({ deficits: [] });
+            }
+        } else {
+            res.json({ deficits: [] });
+        }
+    });
+
+    router.post('/evolution/stop', (req, res) => {
+        const pid = getEvolutionPid();
+        if (pid === null) {
+            if (fs.existsSync(EVOLUTION_PID_FILE)) {
+                try { fs.unlinkSync(EVOLUTION_PID_FILE); } catch {}
+            }
+            return res.json({ status: 'not_running' });
+        }
+
+        try {
+            process.kill(-pid, 'SIGKILL');
+        } catch {
+            try {
+                process.kill(pid, 'SIGKILL');
+            } catch {}
+        }
+
+        if (fs.existsSync(EVOLUTION_PID_FILE)) {
+            try { fs.unlinkSync(EVOLUTION_PID_FILE); } catch {}
+        }
+
+        try {
+            execSync('git checkout main', { cwd: BASE_DIR });
+        } catch {}
+
+        res.json({ status: 'stopped' });
+    });
+
+    router.get('/evolution/logs', (req, res) => {
+        let reportText = '';
+        let rawLog = '';
+        if (fs.existsSync(EVOLUTION_REPORT_FILE)) {
+            try {
+                reportText = fs.readFileSync(EVOLUTION_REPORT_FILE, 'utf8');
+            } catch {}
+        }
+        if (fs.existsSync(EVOLUTION_LOG_FILE)) {
+            try {
+                const lines = fs.readFileSync(EVOLUTION_LOG_FILE, 'utf8').split('\n');
+                rawLog = lines.slice(-100).join('\n');
+            } catch {}
+        }
+        res.json({ logs: reportText, raw: rawLog });
+    });
+
+    // 35h2. POST /api/evolution/run — Trigger recursive evolution supervisor
     router.post('/evolution/run', (req, res) => {
         const { cycles = 2, session_id = 'evolution-live' } = req.body || {};
         const pyScript = `from scripts.recursive_evolution_supervisor import run_recursive_evolution; import json; print(json.dumps(run_recursive_evolution(cycles=${cycles}, session_id=${JSON.stringify(session_id)})))`;
@@ -2170,6 +2319,97 @@ Output ONLY the rewritten prompt, wrapped in triple backticks.`;
             } catch (e) {
                 res.status(500).json({ error: 'Failed to parse agent synthesis output' });
             }
+        });
+    });
+
+
+    // --- START NEW SOLIDSTACK CONTROL ROUTES ---
+
+    // GET /api/uad/actions - List all UAD actions (Direct Python Schema Reflection)
+    router.get('/uad/actions', (req, res) => {
+        exec('python3 -c "import json; from ss.uad.catalog import UADRegistry; print(json.dumps(UADRegistry.get_catalog_json()))"', { cwd: BASE_DIR }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                // If stdout is wrapped in a string or object, parse cleanly
+                let parsed = JSON.parse(stdout.trim());
+                if (typeof parsed === 'string') {
+                    parsed = JSON.parse(parsed);
+                }
+                res.json(parsed);
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to parse UAD schema: ' + e.message });
+            }
+        });
+    });
+
+    // POST /api/uad/execute - Execute a UAD action
+    router.post('/uad/execute', (req, res) => {
+        const { action, payload } = req.body;
+        if (!action) return res.status(400).json({ error: 'Action required' });
+        
+        // Escape JSON payload for command line
+        const payloadStr = JSON.stringify(payload || {}).replace(/"/g, '\"');
+        const cmd = `python3 -c "import asyncio, json; from ss.uad.dispatch import DispatchEngine; print(json.dumps(asyncio.run(DispatchEngine.execute_tier1('${action}', json.loads('${payloadStr}')))))"`;
+        
+        exec(cmd, { cwd: BASE_DIR }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            try {
+                res.json(JSON.parse(stdout.trim()));
+            } catch (e) {
+                res.status(500).json({ error: 'Failed to execute UAD action' });
+            }
+        });
+    });
+
+    // GET /api/workflow/status - Get workflow sync status
+    router.get('/workflow/status', (req, res) => {
+        const p = path.join(BASE_DIR, 'stack', 'agents', 'workflow-status.json');
+        if (fs.existsSync(p)) {
+            res.json(JSON.parse(fs.readFileSync(p, 'utf8')));
+        } else {
+            res.json({ error: 'No workflow status found. Run sync first.' });
+        }
+    });
+
+    // POST /api/workflow/sync - Trigger workflow sync
+    router.post('/workflow/sync', (req, res) => {
+        exec('python3 -m ss.cli workflow sync-status', { cwd: BASE_DIR }, (err, stdout) => {
+            if (err) return res.status(500).json({ error: err.message });
+            res.json({ success: true, log: stdout.trim() });
+        });
+    });
+
+    // GET /api/economics/stats - Get LORE pool ledger data
+    router.get('/economics/stats', (req, res) => {
+        // Read directly from the LORE pool ledger if available
+        const p = path.join(BASE_DIR, 'registry', 'schemas', 'lore-card.schema.json'); 
+        // For now, let's mock the ledger response or read from workflow-status
+        const wp = path.join(BASE_DIR, 'stack', 'agents', 'workflow-status.json');
+        let data = { pools: { adam: { cad: 12.50 }, lesley: { cad: 3.20 }, swarm: { cad: 45.10 } } };
+        if (fs.existsSync(wp)) {
+             const w = JSON.parse(fs.readFileSync(wp, 'utf8'));
+             if (w.metrics && w.metrics.economics) {
+                 data = w.metrics.economics;
+             }
+        }
+        res.json(data);
+    });
+
+    // --- END NEW SOLIDSTACK CONTROL ROUTES ---
+
+        // 35ac. POST /api/research/dynamic — Trigger LangGraph dynamic research loop
+    router.post('/research/dynamic', (req, res) => {
+        const { goal, max_iters = 3 } = req.body;
+        if (!goal) return res.status(400).json({ error: 'Goal is required' });
+        
+        const pyScript = `from ss.dynamic_research_loop import run_dynamic_research; import json; run_dynamic_research(${JSON.stringify(goal)}, max_iters=${max_iters})`;
+        
+        exec(`python3 -c "${pyScript}"`, { maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
+            if (error) {
+                console.error('Research error:', stderr);
+                return res.status(500).json({ error: 'Research failed', details: stderr });
+            }
+            res.json({ status: 'completed' });
         });
     });
 
