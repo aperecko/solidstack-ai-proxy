@@ -2,12 +2,19 @@ window.Components = window.Components || {};
 
 window.Components.processes = () => ({
     list: [],
+    serviceMap: null,
     async fetchProcesses() {
         try {
-            const res = await fetch('/api/processes');
-            if (res.ok) {
-                const data = await res.json();
+            const [procRes, mapRes] = await Promise.all([
+                fetch('/api/processes'),
+                fetch('/api/service-map')
+            ]);
+            if (procRes.ok) {
+                const data = await procRes.json();
                 this.list = data.items || data;
+            }
+            if (mapRes.ok) {
+                this.serviceMap = await mapRes.json();
             }
         } catch (e) {
             console.error('Fetch failed', e);
@@ -27,9 +34,13 @@ window.Components.processes = () => ({
     viewLogs(proc) {
         window.location.hash = `#logs?process=${proc.id}`;
     },
+    pollTimer: null,
     init() {
         this.fetchProcesses();
-        setInterval(() => this.fetchProcesses(), 5000);
+        this.pollTimer = setInterval(() => this.fetchProcesses(), 5000);
+    },
+    destroy() {
+        if (this.pollTimer) clearInterval(this.pollTimer);
     }
 });
 
@@ -46,8 +57,12 @@ window.Components.infrastructure = () => ({
             console.error('Fetch failed', e);
         }
     },
+    pollTimer: null,
     init() {
         this.fetchVms();
-        setInterval(() => this.fetchVms(), 5000);
+        this.pollTimer = setInterval(() => this.fetchVms(), 5000);
+    },
+    destroy() {
+        if (this.pollTimer) clearInterval(this.pollTimer);
     }
 });
