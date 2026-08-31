@@ -111,7 +111,7 @@ export class BaseStrategy {
         // over healthy paid accounts on every new request.
         if (modelId) {
             const q = account.quota?.models?.[modelId];
-            if (q && typeof q.remainingFraction === 'number' && q.remainingFraction <= 0.05 && q.resetTime) {
+            if (q && typeof q.remainingFraction === 'number' && q.remainingFraction <= 0.02 && q.resetTime) {
                 const resetMs = new Date(q.resetTime).getTime();
                 if (!isNaN(resetMs) && resetMs > Date.now()) {
                     return false;

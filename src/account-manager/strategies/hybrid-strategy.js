@@ -414,9 +414,9 @@ export class HybridStrategy extends BaseStrategy {
             if (familyFraction !== null) {
                 if (familyFraction > 0.1) {
                     tierComponent = 200;
-                } else if (familyFraction > 0.05) {
+                } else if (familyFraction > 0.02) {
                     // Low quota: scale down preference to start offloading early
-                    tierComponent = 200 * ((familyFraction - 0.05) / 0.05);
+                    tierComponent = 200 * ((familyFraction - 0.02) / 0.08);
                 } else {
                     // Exhausted: check recovery time to ramp up score as reset approaches
                     const models = account.quota?.models || {};
@@ -444,7 +444,7 @@ export class HybridStrategy extends BaseStrategy {
         } else if (tier === 'plus') {
             const familyFraction = getFamilyQuotaFraction(account, modelId);
             if (familyFraction !== null) {
-                tierComponent = familyFraction > 0.1 ? 100 : (familyFraction > 0.05 ? 100 * ((familyFraction - 0.05) / 0.05) : 0);
+                tierComponent = familyFraction > 0.1 ? 100 : (familyFraction > 0.02 ? 100 * ((familyFraction - 0.02) / 0.08) : 0);
             } else {
                 tierComponent = 100;
             }
@@ -482,11 +482,11 @@ export class HybridStrategy extends BaseStrategy {
         }
         
         // 2. US Account Superpowers
-        // assistaius@gmail.com has US-region capabilities. Apply a mild penalty (-50) 
-        // to preserve its quota, making it a secondary fallback behind standard Canadian 
-        // Pro accounts, ensuring it's available when region-specific superpowers are needed.
+        // assistaius@gmail.com has US-region capabilities. Apply a micro-penalty (-2)
+        // to slightly defer to Canadian Pro accounts while still allowing healthy
+        // round-robin load balancing when traffic is high.
         if (email === 'assistaius@gmail.com') {
-            distributionScore -= 50; 
+            distributionScore -= 2; 
         }
         
         // 3. High Priority Swarm Targets
