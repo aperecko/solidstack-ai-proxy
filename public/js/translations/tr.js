@@ -199,6 +199,10 @@ window.translations.tr = {
     claudeEmpty: "Claude Boş",
     geminiActive: "Gemini Aktif",
     geminiEmpty: "Gemini Boş",
+    claudePool: "Claude Pool",
+    geminiPool: "Gemini Pool",
+    claudePoolTooltip: "Bu havuzdaki hesaplar arasında en yüksek kalan Claude kotası",
+    geminiPoolTooltip: "Bu havuzdaki hesaplar arasında en yüksek kalan Gemini kotası",
     synced: "EŞİTLENDİ",
     syncing: "EŞİTLENİYOR...",
     // Time range labels

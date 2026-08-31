@@ -537,6 +537,25 @@ window.DashboardCharts.updateTrendChart = function (component) {
           mode: "index",
           intersect: false,
         },
+        onClick: (_event, elements) => {
+          const hit = elements?.[0];
+          if (!hit) return;
+          const dataset = newChart.data.datasets[hit.datasetIndex];
+          const label = dataset?.label;
+          if (!label) return;
+          if (component.displayMode === 'family') {
+            component.displayMode = 'model';
+            component.selectedFamilies = [label.toLowerCase()];
+            component.selectedModels = {};
+            component.selectedModels[label.toLowerCase()] = [...(component.modelTree[label.toLowerCase()] || [])];
+          } else {
+            component.$store.global.activeTab = 'models';
+            component.$store.data.filters.search = label;
+            component.$store.data.computeQuotaRows();
+          }
+          window.DashboardFilters.savePreferences(component);
+          component.updateTrendChart();
+        },
         plugins: {
           legend: { display: false },
           tooltip: {

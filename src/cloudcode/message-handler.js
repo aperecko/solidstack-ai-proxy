@@ -27,11 +27,12 @@ import {
     RETRYABLE_FAILURE_COOLDOWN_MS,
     MAX_RETRYABLE_ROTATIONS
 } from '../account-manager/quota-store.js';
+import { quotaRefreshSoon } from '../utils/quota-refresh.js';
 import { formatDuration, sleep, isNetworkError, throttledFetch } from '../utils/helpers.js';
 import { logger } from '../utils/logger.js';
 import { parseResetTime } from './rate-limit-parser.js';
 import { sendGeminiDirect } from './gemini-direct.js';
-import { isLocalEngineAvailable, sendLocalEngineRequest } from './local-engine-fallback.js';
+import { isLocalEngineAvailable, sendLocalEngineRequest, isLocalModel } from './local-engine-fallback.js';
 import { classifyRequest } from '../routing/classifier.js';
 import { buildCloudCodeRequest, buildHeaders } from './request-builder.js';
 import { parseThinkingSSEResponse } from './sse-parser.js';
@@ -65,6 +66,12 @@ import {
 export async function sendMessage(anthropicRequest, accountManager, fallbackEnabled = false) {
     let currentModel = anthropicRequest.model;
     const isThinking = isThinkingModel(currentModel);
+
+    // Direct routing for explicit local model selection (e.g. gemma-4-26b-a4b-it)
+    if (isLocalModel(currentModel)) {
+        logger.info(`[CloudCode] Explicit local model selected: ${currentModel}. Routing to local engine...`);
+        return await sendLocalEngineRequest(anthropicRequest, currentModel);
+    }
 
     // Phase 1: Turbo Fieldfare Prompt Classifier
     const isLocalEligible = !isThinking;
@@ -182,6 +189,7 @@ export async function sendMessage(anthropicRequest, accountManager, fallbackEnab
                 continue outerLoop;
             }
 
+            quotaRefreshSoon();
             throw new Error(`No accounts available for ${currentModel}`);
         }
 
@@ -279,6 +287,7 @@ export async function sendMessage(anthropicRequest, accountManager, fallbackEnab
                             const rotateApp = anthropicRequest?.app || 'antigravity';
                             setCooldown(rotateApp, account.email, currentModel, RETRYABLE_FAILURE_COOLDOWN_MS);
                             accountManager.markRateLimited(account.email, RETRYABLE_FAILURE_COOLDOWN_MS, currentModel, false);
+                            quotaRefreshSoon();
                             const nextAccountId = getBestAccount(rotateApp, currentModel);
                             if (rotationCount < MAX_RETRYABLE_ROTATIONS && nextAccountId && nextAccountId !== account.email) {
                                 rotationCount++;
@@ -346,6 +355,7 @@ export async function sendMessage(anthropicRequest, accountManager, fallbackEnab
                                 const smartBackoffMs = calculateSmartBackoff(errorText, resetMs, consecutiveFailures);
                                 logger.info(`[CloudCode] Skipping retry due to recent rate limit on ${account.email} (attempt ${backoff.attempt}), switching account...`);
                                 accountManager.markRateLimited(account.email, smartBackoffMs, currentModel);
+                                quotaRefreshSoon();
                                 throw new Error(`RATE_LIMITED_DEDUP: ${errorText}`);
                             }
 
@@ -360,6 +370,7 @@ export async function sendMessage(anthropicRequest, accountManager, fallbackEnab
                                 // markRateLimited already increments consecutiveFailures internally
                                 // This prevents concurrent retry storms and ensures progressive backoff escalation
                                 accountManager.markRateLimited(account.email, waitMs, currentModel);
+                                quotaRefreshSoon();
                                 logger.info(`[CloudCode] First rate limit on ${account.email}, quick retry after ${formatDuration(waitMs)}...`);
                                 await sleep(waitMs);
                                 // Don't increment endpointIndex - retry same endpoint

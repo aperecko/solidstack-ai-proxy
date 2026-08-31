@@ -37,6 +37,7 @@ import { BaseStrategy } from './base-strategy.js';
 import { HealthTracker, TokenBucketTracker, QuotaTracker } from './trackers/index.js';
 import { logger } from '../../utils/logger.js';
 import { config } from '../../config.js';
+import { DRAIN_ETA_EXCLUSION_MS, DRAIN_ETA_WARNING_MS } from '../../constants.js';
 
 // Default weights for scoring
 const DEFAULT_WEIGHTS = {
@@ -147,7 +148,7 @@ export class HybridStrategy extends BaseStrategy {
 
         if (candidates.length === 0) {
             // Diagnose why no candidates are available and compute wait time
-            const { reason, waitMs } = this.#diagnoseNoCandidates(accounts, modelId);
+            const { reason, waitMs } = this.#diagnoseNoCandidates(accounts, modelId, options);
             logger.warn(`[HybridStrategy] No candidates available: ${reason}`);
             return { account: null, index: 0, waitMs };
         }
@@ -253,6 +254,11 @@ export class HybridStrategy extends BaseStrategy {
         const candidates = accounts
             .map((account, index) => ({ account, index }))
             .filter(({ account }) => {
+                // Exclude accounts specifically marked to be skipped (e.g., during retry loops)
+                if (options.excludeAccounts && options.excludeAccounts.includes(account.email)) {
+                    return false;
+                }
+
                 // Task tier check (pro-only vs swarm-only)
                 if (!this.#matchesTaskTier(account, options)) return false;
 
@@ -282,6 +288,19 @@ export class HybridStrategy extends BaseStrategy {
                 if (this.#quotaTracker.isQuotaCritical(account, modelId, effectiveThreshold)) {
                     logger.debug(`[HybridStrategy] Excluding ${account.email}: quota critically low for ${modelId} (threshold: ${effectiveThreshold ?? 'default'})`);
                     return false;
+                }
+
+                // Drain rate pre-emption: exclude accounts projected to deplete
+                // within DRAIN_ETA_EXCLUSION_MS based on current request velocity.
+                // This pivots traffic BEFORE the account hits a 429, avoiding the
+                // reactive detection gap where stale quota data masks depletion.
+                const drainRate = options.drainRates?.[account.email];
+                if (drainRate?.etaMs !== null && drainRate?.etaMs !== undefined) {
+                    const exclusionMs = config?.drainEtaExclusionMs ?? DRAIN_ETA_EXCLUSION_MS;
+                    if (drainRate.etaMs <= exclusionMs) {
+                        logger.debug(`[HybridStrategy] Excluding ${account.email}: drain ETA ${drainRate.etaMs}ms < ${exclusionMs}ms exclusion threshold`);
+                        return false;
+                    }
                 }
 
                 return true;
@@ -349,8 +368,8 @@ export class HybridStrategy extends BaseStrategy {
     #matchesTaskTier(account, options = {}) {
         if (!options.taskTier) return true;
         const tier = account.subscription?.tier || 'free';
-        if (options.taskTier === 'pro-only' && tier !== 'pro') return false;
-        if (options.taskTier === 'swarm-only' && tier === 'pro') return false;
+        if (options.taskTier === 'pro-only' && tier !== 'pro' && tier !== 'ultra') return false;
+        if (options.taskTier === 'swarm-only' && (tier === 'pro' || tier === 'ultra')) return false;
         return true;
     }
 
@@ -382,23 +401,21 @@ export class HybridStrategy extends BaseStrategy {
         const lruSeconds = timeSinceLastUse / 1000;
         const lruComponent = lruSeconds * this.#weights.lru; // 0-3600 * 0.1 = 0-360 max
 
-        // ── Tier component (Dynamic Pro/Free balancing) ────────────────────────
-        // We prefer Pro accounts first because they refresh quickly (every 5 hours).
-        // However, we scale the preference dynamically based on usage and recovery time:
-        // 1. If Pro has >10% quota: full preference (+200)
-        // 2. If Pro has 5%-10% quota: scale preference down linearly
-        // 3. If Pro is exhausted (<5%): preference drops to 0, but ramps back up to
-        //    +100 as it gets within 15 minutes of its 5-hour reset time.
+        // ── Tier component (Dynamic Ultra/Pro/Plus/Free balancing) ───────────────
+        // Ultra (+250) > Pro (+200) > Plus (+100) > Free (0)
+        // Plus doubles capacity over Free and is prioritized for Gemini models.
         const tier = account.subscription?.tier || 'free';
         let tierComponent = 0;
 
-        if (tier === 'pro') {
+        if (tier === 'ultra') {
+            tierComponent = 250;
+        } else if (tier === 'pro') {
             const familyFraction = getFamilyQuotaFraction(account, modelId);
             if (familyFraction !== null) {
                 if (familyFraction > 0.1) {
                     tierComponent = 200;
                 } else if (familyFraction > 0.05) {
-                    // Low quota: scale down preference to start offloading to Free tier early
+                    // Low quota: scale down preference to start offloading early
                     tierComponent = 200 * ((familyFraction - 0.05) / 0.05);
                 } else {
                     // Exhausted: check recovery time to ramp up score as reset approaches
@@ -424,6 +441,13 @@ export class HybridStrategy extends BaseStrategy {
             } else {
                 tierComponent = 200; // No quota data yet: default to Pro preference
             }
+        } else if (tier === 'plus') {
+            const familyFraction = getFamilyQuotaFraction(account, modelId);
+            if (familyFraction !== null) {
+                tierComponent = familyFraction > 0.1 ? 100 : (familyFraction > 0.05 ? 100 * ((familyFraction - 0.05) / 0.05) : 0);
+            } else {
+                tierComponent = 100;
+            }
         }
 
         // ── Model-family quota bonus ─────────────────────────────────────────────
@@ -446,7 +470,49 @@ export class HybridStrategy extends BaseStrategy {
             logger.debug(`[HybridStrategy] Native account penalty: ${nativePenalty} for ${email}`);
         }
 
-        return healthComponent + tokenComponent + quotaComponent + lruComponent + tierComponent + familyQuotaBonus + nativePenalty;
+        // ── Custom Distribution Strategy ─────────────────────────────────────────
+        let distributionScore = 0;
+        
+        // 1. Daily Driver Protection
+        // adamperecko@gmail.com is the user's primary interactive account (Gemini web chat).
+        // Apply a massive penalty (-800) so it's strictly OFF-LIMITS for general background
+        // swarm usage, reserving it only for last-resort or explicit native bypass.
+        if (email === 'adamperecko@gmail.com') {
+            distributionScore -= 800;
+        }
+        
+        // 2. US Account Superpowers
+        // assistaius@gmail.com has US-region capabilities. Apply a mild penalty (-50) 
+        // to preserve its quota, making it a secondary fallback behind standard Canadian 
+        // Pro accounts, ensuring it's available when region-specific superpowers are needed.
+        if (email === 'assistaius@gmail.com') {
+            distributionScore -= 50; 
+        }
+        
+        // 3. High Priority Swarm Targets
+        // reseller.mysolidstate.ca accounts are Workspace accounts, less restricted.
+        // Give them a slight bump (+25) so they are favored among peers.
+        if (email.endsWith('@reseller.mysolidstate.ca')) {
+            distributionScore += 25;
+        }
+
+        // ── Drain rate penalty ──────────────────────────────────────────────────
+        // Accounts approaching depletion receive a progressive scoring penalty.
+        // At ETA = 0 (depleted): -100 points
+        // At ETA = DRAIN_ETA_WARNING_MS (5 min): 0 points
+        // At ETA > DRAIN_ETA_WARNING_MS: no penalty
+        // This naturally shifts traffic to fresher accounts before 429s occur.
+        let drainPenalty = 0;
+        const drainRate = options.drainRates?.[email];
+        if (drainRate?.etaMs !== null && drainRate?.etaMs !== undefined) {
+            const warningMs = config?.drainEtaWarningMs ?? DRAIN_ETA_WARNING_MS;
+            if (drainRate.etaMs < warningMs) {
+                drainPenalty = -100 * (1 - drainRate.etaMs / warningMs);
+                logger.debug(`[HybridStrategy] Drain penalty for ${email}: ${drainPenalty.toFixed(1)} (ETA: ${drainRate.etaMs}ms)`);
+            }
+        }
+
+        return healthComponent + tokenComponent + quotaComponent + lruComponent + tierComponent + familyQuotaBonus + nativePenalty + distributionScore + drainPenalty;
     }
 
     /**
@@ -474,17 +540,28 @@ export class HybridStrategy extends BaseStrategy {
     }
 
     /**
+     * Get drain rate metrics for all accounts (for testing/debugging).
+     * Returns the drain rates passed in via options during the last selectAccount() call.
+     * @param {Object} options - The options object from the last selectAccount() call
+     * @returns {Object} Map of email → drain rate metrics
+     */
+    getDrainMetrics(options) {
+        return options?.drainRates ?? {};
+    }
+
+    /**
      * Diagnose why no candidates are available and compute wait time
      * @private
      * @param {Array} accounts - Array of account objects
      * @param {string} modelId - The model ID
      * @returns {{reason: string, waitMs: number}} Diagnosis result
      */
-    #diagnoseNoCandidates(accounts, modelId) {
+    #diagnoseNoCandidates(accounts, modelId, options = {}) {
         let unusableCount = 0;
         let unhealthyCount = 0;
         let noTokensCount = 0;
         let criticalQuotaCount = 0;
+        let drainExcludedCount = 0;
         const accountsWithoutTokens = [];
 
         for (const account of accounts) {
@@ -508,6 +585,15 @@ export class HybridStrategy extends BaseStrategy {
                 criticalQuotaCount++;
                 continue;
             }
+            // Check drain rate exclusion
+            const drainRate = options.drainRates?.[account.email];
+            if (drainRate?.etaMs !== null && drainRate?.etaMs !== undefined) {
+                const exclusionMs = config?.drainEtaExclusionMs ?? DRAIN_ETA_EXCLUSION_MS;
+                if (drainRate.etaMs <= exclusionMs) {
+                    drainExcludedCount++;
+                    continue;
+                }
+            }
         }
 
         // If all accounts are blocked by token bucket, calculate wait time
@@ -523,6 +609,7 @@ export class HybridStrategy extends BaseStrategy {
         if (unhealthyCount > 0) parts.push(`${unhealthyCount} unhealthy`);
         if (noTokensCount > 0) parts.push(`${noTokensCount} no tokens`);
         if (criticalQuotaCount > 0) parts.push(`${criticalQuotaCount} critical quota`);
+        if (drainExcludedCount > 0) parts.push(`${drainExcludedCount} drain-imminent`);
 
         const reason = parts.length > 0 ? parts.join(', ') : 'unknown';
         return { reason, waitMs: 0 };

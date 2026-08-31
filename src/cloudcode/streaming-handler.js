@@ -35,7 +35,7 @@ import { streamSSEResponse } from './sse-streamer.js';
 import { getFallbackChain } from '../fallback-config.js';
 import { logRoutingTelemetry } from './routing-logger.js';
 import { sendGeminiDirectStream } from './gemini-direct.js';
-import { isLocalEngineAvailable, sendLocalEngineStream } from './local-engine-fallback.js';
+import { isLocalEngineAvailable, sendLocalEngineStream, isLocalModel } from './local-engine-fallback.js';
 import {
     getRateLimitBackoff,
     clearRateLimitState,
@@ -65,6 +65,13 @@ import crypto from 'crypto';
 export async function* sendMessageStream(anthropicRequest, accountManager, fallbackEnabled = false) {
     let currentModel = anthropicRequest.model;
     const isThinking = isThinkingModel(currentModel);
+
+    // Direct routing for explicit local model selection (e.g. gemma-4-26b-a4b-it)
+    if (isLocalModel(currentModel)) {
+        logger.info(`[CloudCode] Explicit local model selected: ${currentModel}. Streaming from local engine...`);
+        yield* sendLocalEngineStream(anthropicRequest, currentModel);
+        return;
+    }
 
     // O10: MoE gating to local engine (only eligible for lightweight tasks)
     const isLocalEligible = !isThinking && (currentModel.includes('flash-low') || anthropicRequest.taskTier === 'background');

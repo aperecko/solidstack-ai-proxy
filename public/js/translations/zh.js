@@ -217,6 +217,10 @@ window.translations.zh = {
     claudeEmpty: "Claude 耗尽",
     geminiActive: "Gemini 活跃",
     geminiEmpty: "Gemini 耗尽",
+    claudePool: "Claude Pool",
+    geminiPool: "Gemini Pool",
+    claudePoolTooltip: "此池中各账户的最高 Claude 剩余配额",
+    geminiPoolTooltip: "此池中各账户的最高 Gemini 剩余配额",
     synced: "已同步",
     syncing: "正在同步...",
     // 时间范围标签

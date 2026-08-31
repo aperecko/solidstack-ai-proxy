@@ -9,7 +9,7 @@
             <div class="flex items-center h-6 px-3 rounded-full bg-space-800/80 border border-space-border/50 shadow-sm backdrop-blur-sm">
                 <span class="text-[10px] font-mono text-gray-400 uppercase tracking-wider"
                       x-text="$store.global.t('modelsPageDesc')">
-                    Real-time quota and status for all available models.
+                    Antigravity model access and account-reported quota; catalog-only models are hidden.
                 </span>
             </div>
         </div>
@@ -85,6 +85,7 @@
                         : 'text-gray-400 hover:text-white hover:bg-space-700 hover:border-space-border'"
                     @click="$store.data.filters.family = 'gemini'; $store.data.computeQuotaRows()"
                     x-text="$store.global.t('geminiCaps')">GEMINI</button>
+                <span class="px-3 py-2 text-[10px] font-mono text-gray-500">Catalog-only OpenAI/GPT aliases are excluded from account quota views.</span>
             </div>
 
             <!-- Show Hidden Toggle -->
@@ -337,7 +338,7 @@
                                                                  : 'bg-purple-950/40 border-purple-500/40 text-purple-300')">
                                                         <span class="w-1.5 h-1.5 rounded-full"
                                                               :class="b.pct === 0 ? 'bg-red-500 animate-pulse' : (b.type === 'apikey' ? 'bg-emerald-400' : 'bg-purple-400')"></span>
-                                                        <span x-text="b.count > 1 ? `${b.count} accs (${b.pct}%)` : `${Redact.shortLabel(b.accounts[0])} (${b.pct}%)`"></span>
+                                                        <span x-text="`${b.groupName} (${b.pct}%)`"></span>
                                                     </div>
                                                 </div>
                                             </template>
@@ -562,22 +563,6 @@
                     <span class="text-xs font-mono text-gray-500" x-text="'Active Pool Size: ' + $store.data.accounts.length + ' accounts'"></span>
                 </div>
 
-                <!-- Visualization Area -->
-                <div class="relative h-64 border border-space-border/40 bg-space-950/90 rounded-xl overflow-hidden p-2">
-                    <!-- Grid background -->
-                    <div class="absolute inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.01)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.01)_1px,transparent_1px)] bg-[size:14px_24px]"></div>
-
-                    <!-- Subway Map SVG Layout -->
-                    <svg viewBox="0 0 800 240" class="w-full h-full overflow-visible select-none z-10 relative">
-                        <!-- Definitions for glowing shadows -->
-                        <defs>
-                            <filter id="glow-purple" x="-20%" y="-20%" width="140%" height="140%">
-                                <feGaussianBlur stdDeviation="6" result="blur" />
-                                <feComposite in="SourceGraphic" in2="blur" operator="over" />
-                            </filter>
-                            <filter id="glow-green" x="-20%" y="-20%" width="140%" height="140%">
-                                <feGaussianBlur stdDeviation="6" result="blur" />
-                                <feComposite in="SourceGraphic" in2="blur" operator="over" />
                 <!-- Visualization Area (Side-by-Side Flex Layout) -->
                 <div class="flex flex-col lg:flex-row gap-6 items-stretch flex-1">
                     <!-- Left: SVG Subway Map -->

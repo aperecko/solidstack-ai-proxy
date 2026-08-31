@@ -38,12 +38,14 @@ export function buildEligibilityMap() {
     for (const acct of (Array.isArray(accounts) ? accounts : [])) {
       const id = acct.email ?? acct.id ?? acct.accountId;
       if (!id) continue;
+      const tier = acct.subscription?.tier ?? acct.tier ?? 'free';
       const data = {
         isInvalid:    acct.isInvalid    ?? false,
         disabled:     (acct.disabled ?? (acct.enabled === false)) ?? false,
         coolingUntil: acct.coolingUntil ?? null,
         lastError:    acct.lastError ?? acct.invalidReason ?? null,
         eligibility:  acct.eligibility  ?? null,  // e.g. 'code_assist_eligible'
+        tier:         String(tier).toLowerCase(),
       };
       map[`${appName}::${id}`] = data;
       if (appName !== 'antigravity' && !map[`antigravity::${id}`]) {
@@ -55,13 +57,14 @@ export function buildEligibilityMap() {
 }
 
 // Derive a single status string from merged state
-export function deriveStatus(eligMap, app, accountId, rec) {
+export function deriveStatus(eligMap, app, accountId, rec, model = null) {
   const e = eligMap[`${app}::${accountId}`];
   if (!e) return 'unknown';               // not in accounts.json at all
   if (e.isInvalid)  return 'invalid';     // 403 / auth failure flagged
   if (e.disabled)   return 'disabled';    // manually turned off
   if ((e.coolingUntil && Date.now() < e.coolingUntil) || (rec?.cooldownUntil && Date.now() < rec.cooldownUntil)) return 'cooling';
   if (e.eligibility && e.eligibility !== 'code_assist_eligible') return 'ineligible';
+  if (model && model.toLowerCase().includes('claude') && e.tier === 'free') return 'ineligible';
   if (rec && rec.errors > 0 && rec.reqs <= rec.errors) return 'erroring'; // all requests errored
   return 'ok';
 }
@@ -122,6 +125,61 @@ function save() {
   } catch (e) {
     // Non-blocking log
   }
+}
+
+// Rolling window for drain rate velocity calculation (5 minutes)
+const DRAIN_VELOCITY_WINDOW_MS = 5 * 60 * 1000;
+
+/**
+ * Compute drain rate metrics for an account+model.
+ * Uses the request history maintained by recordRequest() to calculate
+ * requests-per-minute, window consumption ratio, remaining quota, and
+ * projected time-to-depletion (ETA).
+ *
+ * @param {string} app - Provider/app scope (antigravity, opencode, claude, chatgpt)
+ * @param {string} accountId - Account identifier (email)
+ * @param {string} model - Model name
+ * @returns {{rpm: number, windowRatio: number, remaining: number|null, etaMs: number|null, historyLen: number}}
+ */
+export function getDrainRate(app, accountId, model) {
+  const s = load();
+  const key = `${app}::${accountId}`;
+  const rec = s.accounts[key]?.models?.[model];
+  if (!rec) {
+    return { rpm: 0, windowRatio: 0, remaining: null, etaMs: null, historyLen: 0 };
+  }
+
+  const now = Date.now();
+
+  // Requests in the last 5 minutes (short-term velocity)
+  const recentHistory = rec.history?.filter(h => now - h.ts < DRAIN_VELOCITY_WINDOW_MS) ?? [];
+  const rpm = recentHistory.length > 0 ? recentHistory.length / (DRAIN_VELOCITY_WINDOW_MS / 60_000) : 0;
+
+  // Full-window consumption ratio
+  const limit = KNOWN_LIMITS[app]?.[model]?.rpd
+    ?? KNOWN_LIMITS[app]?.[model]?.per_window
+    ?? KNOWN_LIMITS[app]?.[model]?.rpm
+    ?? null;
+  const windowRatio = limit ? rec.reqs / limit : 0;
+
+  // Remaining quota in the current window
+  const remaining = limit ? Math.max(0, limit - rec.reqs) : null;
+
+  // Projected time-to-depletion based on current velocity
+  let etaMs = null;
+  if (rpm > 0 && remaining !== null && remaining > 0) {
+    etaMs = (remaining / rpm) * 60_000; // minutes → ms
+  } else if (remaining === 0) {
+    etaMs = 0;
+  }
+
+  return {
+    rpm: Math.round(rpm * 100) / 100,
+    windowRatio: Math.round(windowRatio * 1000) / 1000,
+    remaining,
+    etaMs: etaMs !== null ? Math.round(etaMs) : null,
+    historyLen: recentHistory.length,
+  };
 }
 
 function getRec(app, accountId, model) {
@@ -225,7 +283,7 @@ export function getQuotaStatus(filterApp = null) {
       const L = KNOWN_LIMITS[a.app]?.[model];
       const winMs = RESET_WINDOWS[a.app] ?? 3_600_000;
       const limit = L?.rpd ?? L?.per_window ?? L?.rpm ?? null;
-      const status = deriveStatus(eligMap, a.app, a.accountId, rec);  // ← merged
+      const status = deriveStatus(eligMap, a.app, a.accountId, rec, model);  // ← merged
       const eInfo  = eligMap[`${a.app}::${a.accountId}`] ?? {};
       const cooldownUntilVal = eInfo.coolingUntil ?? (rec.cooldownUntil && rec.cooldownUntil > Date.now() ? rec.cooldownUntil : null);
 
@@ -256,21 +314,35 @@ export function getQuotaStatus(filterApp = null) {
 export function getBestAccount(app, model) {
   const s = load();
   const eligMap = buildEligibilityMap();
+  const now = Date.now();
 
   const cands = Object.values(s.accounts)
     .filter(a => a.app === app && a.enabled)
     .map(a => {
-      const rec   = a.models[model] ?? { reqs: 0, errors: 0 };
-      const status = deriveStatus(eligMap, app, a.accountId, rec);
+      const rec   = a.models[model] ?? { reqs: 0, errors: 0, history: [] };
+      const status = deriveStatus(eligMap, app, a.accountId, rec, model);
+      const limit = KNOWN_LIMITS[app]?.[model]?.rpd ?? KNOWN_LIMITS[app]?.[model]?.per_window ?? Infinity;
+
+      // Compute velocity from recent history (5-min rolling window)
+      const recentHistory = rec.history?.filter(h => now - h.ts < DRAIN_VELOCITY_WINDOW_MS) ?? [];
+      const rpm = recentHistory.length > 0 ? recentHistory.length / (DRAIN_VELOCITY_WINDOW_MS / 60_000) : 0;
+
       return {
         accountId: a.accountId,
         reqs:      rec.reqs,
-        limit:     KNOWN_LIMITS[app]?.[model]?.rpd ?? KNOWN_LIMITS[app]?.[model]?.per_window ?? Infinity,
+        limit,
         status,
+        rpm:       Math.round(rpm * 100) / 100,
       };
     })
-    .filter(c => c.status === 'ok' && c.reqs < c.limit)  // ← only ok + under limit
-    .sort((a, b) => a.reqs - b.reqs);
+    .filter(c => c.status === 'ok' && c.reqs < c.limit)
+    // Velocity-aware sort: lower usage AND lower velocity = better
+    // rpm * 0.1 scales velocity into the same magnitude as reqs/limit ratio
+    .sort((a, b) => {
+      const aLoad = (a.reqs / a.limit) + (a.rpm * 0.1);
+      const bLoad = (b.reqs / b.limit) + (b.rpm * 0.1);
+      return aLoad - bLoad;
+    });
 
   return cands[0]?.accountId ?? null;
 }

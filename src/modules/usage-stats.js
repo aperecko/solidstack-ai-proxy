@@ -148,9 +148,9 @@ function setupMiddleware(app) {
         prune();
     }, 60 * 1000);
 
-    // Save on exit
-    process.on('SIGINT', () => { save(); process.exit(); });
-    process.on('SIGTERM', () => { save(); process.exit(); });
+    // Save on exit (don't call process.exit — let the main graceful shutdown handler drain first)
+    process.on('SIGINT', () => { save(); });
+    process.on('SIGTERM', () => { save(); });
 
     // Request interceptor
     // Track both Anthropic (/v1/messages) and OpenAI compatible (/v1/chat/completions) endpoints

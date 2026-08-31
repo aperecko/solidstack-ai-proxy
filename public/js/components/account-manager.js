@@ -13,8 +13,12 @@ window.Components.accountManager = () => ({
     reloading: false,
     selectedAccountEmail: '',
     selectedAccountLimits: {},
+    selectedAccount: null,
+    quotaModalShowDetails: false,
     currentPage: 1,
     pageSize: 50,
+    sortCol: 'email',
+    sortAsc: true,
 
     // Health Inspector (Developer Mode)
     healthData: {},
@@ -23,6 +27,63 @@ window.Components.accountManager = () => ({
     init() {
         if (Alpine.store('data').devMode && Alpine.store('settings').healthInspectorOpen) {
             this.fetchHealthData();
+        }
+    },
+
+    setSort(col) {
+        if (this.sortCol === col) {
+            this.sortAsc = !this.sortAsc;
+        } else {
+            this.sortCol = col;
+            // Default descending for metrics/numbers, ascending for text
+            this.sortAsc = !['quota', 'health', 'enabled'].includes(col);
+        }
+    },
+
+    compareAccounts(a, b) {
+        const dir = this.sortAsc ? 1 : -1;
+        
+        switch (this.sortCol) {
+            case 'enabled': {
+                const aVal = a.enabled !== false ? 1 : 0;
+                const bVal = b.enabled !== false ? 1 : 0;
+                if (aVal !== bVal) return (aVal - bVal) * dir;
+                return a.email.localeCompare(b.email);
+            }
+            case 'source': {
+                const aVal = a.source || 'oauth';
+                const bVal = b.source || 'oauth';
+                if (aVal !== bVal) return aVal.localeCompare(bVal) * dir;
+                return a.email.localeCompare(b.email);
+            }
+            case 'tier': {
+                const TIER_RANK = { ultra: 5, pro: 4, plus: 3, apikey: 2, free: 1, unknown: 0 };
+                const aTier = a.type === 'apikey' ? 'apikey' : (a.subscription?.tier || a.tier || 'free').toLowerCase();
+                const bTier = b.type === 'apikey' ? 'apikey' : (b.subscription?.tier || b.tier || 'free').toLowerCase();
+                const aRank = TIER_RANK[aTier] ?? 0;
+                const bRank = TIER_RANK[bTier] ?? 0;
+                if (aRank !== bRank) return (aRank - bRank) * dir;
+                return a.email.localeCompare(b.email);
+            }
+            case 'quota': {
+                const aQ = this.getAccountGroupedQuotas(a);
+                const bQ = this.getAccountGroupedQuotas(b);
+                const aVal = Math.max(aQ.claude?.percent ?? -1, aQ.gemini?.percent ?? -1);
+                const bVal = Math.max(bQ.claude?.percent ?? -1, bQ.gemini?.percent ?? -1);
+                if (aVal !== bVal) return (aVal - bVal) * dir;
+                return a.email.localeCompare(b.email);
+            }
+            case 'health': {
+                const HEALTH_RANK = { ok: 3, limited: 2, invalid: 1, banned: 0 };
+                const aVal = HEALTH_RANK[a.status] ?? (a.isInvalid ? 1 : 3);
+                const bVal = HEALTH_RANK[b.status] ?? (b.isInvalid ? 1 : 3);
+                if (aVal !== bVal) return (aVal - bVal) * dir;
+                return a.email.localeCompare(b.email);
+            }
+            case 'email':
+            default: {
+                return a.email.localeCompare(b.email) * dir;
+            }
         }
     },
 
@@ -48,21 +109,141 @@ window.Components.accountManager = () => ({
             });
         }
         
-        if (!this.searchQuery || this.searchQuery.trim() === '') {
-            return accounts;
+        let result = accounts;
+        
+        if (this.searchQuery && this.searchQuery.trim() !== '') {
+            const query = this.searchQuery.toLowerCase().trim();
+            result = accounts.filter(acc => {
+                return acc.email.toLowerCase().includes(query) ||
+                       (acc.projectId && acc.projectId.toLowerCase().includes(query)) ||
+                       (acc.source && acc.source.toLowerCase().includes(query));
+            });
         }
-
-        const query = this.searchQuery.toLowerCase().trim();
-        return accounts.filter(acc => {
-            return acc.email.toLowerCase().includes(query) ||
-                   (acc.projectId && acc.projectId.toLowerCase().includes(query)) ||
-                   (acc.source && acc.source.toLowerCase().includes(query));
-        });
+        
+        return result.sort((a, b) => this.compareAccounts(a, b));
     },
     
     get pagedAccounts() {
         const start = (this.currentPage - 1) * this.pageSize;
         return this.filteredAccounts.slice(start, start + this.pageSize);
+    },
+    
+    poolExpanded: {},
+    
+    get pagedAccountPools() {
+        const pageAccs = this.pagedAccounts;
+        
+        const FAMILY_MAP = {
+          'aptsoultuions@gmail.com': 'Adam\'s Family (Pro)',
+          'apps000123000@gmail.com': 'Adam\'s Family (Pro)',
+          'chrisjeomara@gmail.com': 'Adam\'s Family (Pro)',
+          'adamperecko@gmail.com': 'Adam\'s Family (Pro)',
+          'assistaius@gmail.com': 'Lesley\'s Family (Pro) [US]',
+          'adamtechnicalsolutions@gmail.com': 'Lesley\'s Family (Pro) [US]',
+          'falconeerkennels@gmail.com': 'Lesley\'s Family (Pro) [US]',
+          'adampps@gmail.com': 'Kristen\'s Family (Plus) [US]',
+          'haliburtonarcher@gmail.com': 'Standby Family'
+        };
+
+        const poolsMap = {};
+        for (const acc of pageAccs) {
+            let poolName = 'Individual Accounts';
+            if (acc.email.endsWith('@adamassist.com')) {
+                poolName = 'AdamAssist Swarm';
+            } else if (acc.email.endsWith('@reseller.mysolidstate.ca')) {
+                poolName = 'Reseller Swarm';
+            } else if (FAMILY_MAP[acc.email]) {
+                poolName = FAMILY_MAP[acc.email];
+            }
+            
+            const needsFixing = acc.isInvalid || (acc.status && acc.status !== 'active' && acc.status !== 'ready' && acc.status !== 'ok');
+
+            if (!poolsMap[poolName]) {
+                poolsMap[poolName] = { 
+                    name: poolName, 
+                    accounts: [], 
+                    maxClaudePercent: null,
+                    maxGeminiPercent: null,
+                    hasIssues: false
+                };
+            }
+
+            if (needsFixing) {
+                poolsMap[poolName].hasIssues = true;
+            }
+
+            poolsMap[poolName].accounts.push(acc);
+            
+            const limits = acc.limits || {};
+
+            // Calculate max Claude quota for this pool ONLY on eligible Claude accounts (Pro, Ultra, Plus)
+            const tier = (acc.subscription?.tier || acc.tier || 'free').toLowerCase();
+            const isEligibleClaude = ['pro', 'ultra', 'plus'].includes(tier) && acc.type !== 'apikey' && !acc.email.includes('virtual-gemini-key') && !acc.isInvalid;
+
+            if (isEligibleClaude) {
+                let maxClaude = -1;
+                for (const [id, l] of Object.entries(limits)) {
+                    if (id.includes('claude') && l && l.remainingFraction !== undefined && l.remainingFraction !== null) {
+                         const pct = Math.round(l.remainingFraction * 100);
+                         if (pct > maxClaude) maxClaude = pct;
+                    }
+                }
+                if (maxClaude > -1) {
+                    if (poolsMap[poolName].maxClaudePercent === null || maxClaude > poolsMap[poolName].maxClaudePercent) {
+                        poolsMap[poolName].maxClaudePercent = maxClaude;
+                    }
+                }
+            }
+
+            // Calculate max Gemini quota for this pool
+            let maxGemini = -1;
+            for (const [id, l] of Object.entries(limits)) {
+                if (id.includes('gemini') && l && l.remainingFraction !== undefined && l.remainingFraction !== null) {
+                     const pct = Math.round(l.remainingFraction * 100);
+                     if (pct > maxGemini) maxGemini = pct;
+                }
+            }
+            if (maxGemini > -1) {
+                if (poolsMap[poolName].maxGeminiPercent === null || maxGemini > poolsMap[poolName].maxGeminiPercent) {
+                    poolsMap[poolName].maxGeminiPercent = maxGemini;
+                }
+            }
+        }
+        
+        return Object.values(poolsMap).map(pool => {
+            pool.accounts.sort((a, b) => this.compareAccounts(a, b));
+            return pool;
+        }).sort((a, b) => {
+            if (this.sortCol === 'health') {
+                if (a.hasIssues && !b.hasIssues) return this.sortAsc ? 1 : -1;
+                if (!a.hasIssues && b.hasIssues) return this.sortAsc ? -1 : 1;
+            } else if (this.sortCol === 'quota') {
+                const aMax = Math.max(a.maxClaudePercent ?? -1, a.maxGeminiPercent ?? -1);
+                const bMax = Math.max(b.maxClaudePercent ?? -1, b.maxGeminiPercent ?? -1);
+                if (aMax !== bMax) return (aMax - bMax) * (this.sortAsc ? 1 : -1);
+            }
+            if (a.name === 'Individual Accounts') return 1;
+            if (b.name === 'Individual Accounts') return -1;
+            const aIsFamily = a.name.includes('Family');
+            const bIsFamily = b.name.includes('Family');
+            if (aIsFamily && !bIsFamily) return -1;
+            if (!aIsFamily && bIsFamily) return 1;
+            return a.name.localeCompare(b.name);
+        });
+    },
+    
+    togglePool(poolName) {
+        try {
+            console.log("togglePool called for:", poolName);
+            const pool = this.pagedAccountPools.find(p => p.name === poolName);
+            const currentState = this.poolExpanded[poolName] !== undefined ? this.poolExpanded[poolName] : (pool ? pool.hasIssues : false);
+            console.log("Current state:", currentState, "Setting to:", !currentState);
+            
+            // Reassign to ensure Alpine reactivity
+            this.poolExpanded = { ...this.poolExpanded, [poolName]: !currentState };
+        } catch (e) {
+            console.error("Error in togglePool:", e);
+        }
     },
     
     get totalPages() {
@@ -150,22 +331,32 @@ window.Components.accountManager = () => ({
     async fixAccount(email) {
         const store = Alpine.store('global');
         const dataStore = Alpine.store('data');
-        // If the account has a verification URL (403 VALIDATION_REQUIRED), open it directly
+
+        // Auto-fetch credentials so password is on clipboard
+        fetch(`/api/swarm/credentials/${encodeURIComponent(email)}`)
+            .then(r => r.json())
+            .then(data => {
+                if (data.status === 'ok' && data.password) {
+                    navigator.clipboard.writeText(data.password);
+                }
+            })
+            .catch(() => {});
+
+        // If the account has a verification URL (403 VALIDATION_REQUIRED), open in clean window
         const account = (dataStore.accounts || []).find(a => a.email === email);
         if (account?.verifyUrl) {
-            window.open(account.verifyUrl, '_blank');
-            store.showToast(store.t('verifyThenRefresh') || 'After completing verification, click the ↻ Refresh button to re-enable this account', 'info', 10000);
+            await fetch('/api/swarm/launch-clean-window', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email, url: account.verifyUrl })
+            });
+            store.showToast('Opened clean verification session. After verifying, click ↻ Refresh', 'info', 10000);
             return;
         }
-        // Otherwise fall back to OAuth re-auth
-        store.showToast(store.t('reauthenticating', { email: Redact.email(email) }), 'info');
+
+        // Otherwise launch clean OAuth window
+        store.showToast(store.t('reauthenticating', { email: Redact.email(email) }) || `Re-authenticating ${email}...`, 'info');
         const password = store.webuiPassword;
-        
-        // Open window synchronously to avoid popup blockers
-        const oauthWindow = window.open('', 'google_oauth', 'width=600,height=700,scrollbars=yes');
-        if (oauthWindow) {
-            oauthWindow.document.write('<div style="font-family:sans-serif;padding:20px;">Loading authorization page...</div>');
-        }
 
         try {
             const urlPath = `/api/auth/url?email=${encodeURIComponent(email)}`;
@@ -173,13 +364,14 @@ window.Components.accountManager = () => ({
             if (newPassword) store.webuiPassword = newPassword;
 
             const data = await response.json();
-            if (data.status === 'ok') {
-                if (oauthWindow) {
-                    oauthWindow.location.href = data.url;
-                } else {
-                    window.open(data.url, 'google_oauth', 'width=600,height=700,scrollbars=yes');
-                }
-                
+            if (data.status === 'ok' && data.url) {
+                // Launch clean window via backend (zero toomanysessions error)
+                await fetch('/api/swarm/launch-clean-window', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, url: data.url })
+                });
+
                 let pollCount = 0;
                 const maxPolls = 60; // 2 minutes
                 let cancelled = false;
@@ -192,7 +384,6 @@ window.Components.accountManager = () => ({
                         cancelled = true;
                         clearInterval(pollInterval);
                         store.oauthProgress.active = false;
-                        if (oauthWindow && !oauthWindow.closed) oauthWindow.close();
                     }
                 };
 
@@ -205,13 +396,6 @@ window.Components.accountManager = () => ({
                     pollCount++;
                     store.oauthProgress.current = pollCount;
 
-                    if (oauthWindow && oauthWindow.closed && !cancelled) {
-                        clearInterval(pollInterval);
-                        store.oauthProgress.active = false;
-                        store.showToast(store.t('oauthWindowClosed') || 'OAuth window closed', 'warning');
-                        return;
-                    }
-
                     await dataStore.fetchData();
                     const updatedAcc = (dataStore.accounts || []).find(a => a.email === email);
 
@@ -220,21 +404,17 @@ window.Components.accountManager = () => ({
                         clearInterval(pollInterval);
                         store.oauthProgress.active = false;
                         store.showToast(store.t('accountReauthSuccess') || 'Account re-authenticated successfully', 'success');
-                        if (oauthWindow && !oauthWindow.closed) oauthWindow.close();
                     }
 
                     if (pollCount >= maxPolls) {
                         clearInterval(pollInterval);
                         store.oauthProgress.active = false;
-                        store.showToast(store.t('oauthTimeout') || 'OAuth timed out', 'warning');
                     }
-                }, 5000); // Poll every 5 seconds instead of 2 to reduce load
+                }, 3000);
             } else {
-                if (oauthWindow) oauthWindow.close();
                 store.showToast(data.error || store.t('authUrlFailed'), 'error');
             }
         } catch (e) {
-            if (oauthWindow) oauthWindow.close();
             store.showToast(store.t('authUrlFailed') + ': ' + e.message, 'error');
         }
     },
@@ -281,8 +461,9 @@ window.Components.accountManager = () => ({
 
             const data = await response.json();
             if (data.status === 'ok') {
+                localStorage.removeItem('ag_data_cache');
                 store.showToast(store.t('accountsReloaded'), 'success');
-                Alpine.store('data').fetchData();
+                await Alpine.store('data').fetchData();
             } else {
                 throw new Error(data.error || store.t('reloadFailed'));
             }
@@ -290,9 +471,103 @@ window.Components.accountManager = () => ({
     },
 
     openQuotaModal(account) {
+        this.selectedAccount = account;
         this.selectedAccountEmail = account.email;
         this.selectedAccountLimits = account.limits || {};
+        this.quotaModalShowDetails = false;
         document.getElementById('quota_modal').showModal();
+    },
+
+    /**
+     * Get grouped pool-level quotas for an individual account
+     * Matches the Claude Pool and Gemini Pool indications from the group level
+     * @param {Object} account
+     * @returns {Object} { claude: { percent, resetTime, models } | null, gemini: { percent, resetTime, models } | null, otherFamilies, totalModels }
+     */
+    getAccountGroupedQuotas(account) {
+        if (!account) return { claude: null, gemini: null, otherFamilies: [], totalModels: 0 };
+
+        const limits = account.limits || {};
+        const tier = (account.subscription?.tier || account.tier || 'free').toLowerCase();
+        const isEligibleClaude = ['pro', 'ultra', 'plus'].includes(tier) && account.type !== 'apikey' && !account.email.includes('virtual-gemini-key') && !account.isInvalid;
+
+        let maxClaude = -1;
+        let claudeReset = null;
+        const claudeModels = [];
+
+        let maxGemini = -1;
+        let geminiReset = null;
+        const geminiModels = [];
+
+        const otherMap = {};
+
+        for (const [id, l] of Object.entries(limits)) {
+            if (!l || l.remainingFraction === null || l.remainingFraction === undefined) continue;
+            const pct = Math.round(l.remainingFraction * 100);
+            const lower = id.toLowerCase();
+
+            if (lower.includes('claude')) {
+                if (isEligibleClaude) {
+                    if (pct > maxClaude) {
+                        maxClaude = pct;
+                    }
+                    if (l.resetTime && (!claudeReset || new Date(l.resetTime) < new Date(claudeReset))) {
+                        claudeReset = l.resetTime;
+                    }
+                    claudeModels.push({ modelId: id, pct, resetTime: l.resetTime, limit: l });
+                }
+            } else if (lower.includes('gemini')) {
+                if (pct > maxGemini) {
+                    maxGemini = pct;
+                }
+                if (l.resetTime && (!geminiReset || new Date(l.resetTime) < new Date(geminiReset))) {
+                    geminiReset = l.resetTime;
+                }
+                geminiModels.push({ modelId: id, pct, resetTime: l.resetTime, limit: l });
+            } else {
+                // Only display quota families that are actually reported by this
+                // Google account. Catalog-only models (for example GPT/OpenAI
+                // aliases) must not appear as account quota or inherit a value.
+                const fam = Alpine.store('data')?.getModelFamily?.(id) || 'other';
+                if (fam === 'openai') continue;
+                if (!otherMap[fam]) {
+                    otherMap[fam] = {
+                        name: fam === 'other' ? 'Other reported models' : fam.toUpperCase() + ' Pool', 
+                        family: fam,
+                        maxPct: -1, 
+                        resetTime: null, 
+                        models: [] 
+                    };
+                }
+                if (pct > otherMap[fam].maxPct) {
+                    otherMap[fam].maxPct = pct;
+                }
+                if (l.resetTime && (!otherMap[fam].resetTime || new Date(l.resetTime) < new Date(otherMap[fam].resetTime))) {
+                    otherMap[fam].resetTime = l.resetTime;
+                }
+                otherMap[fam].models.push({ modelId: id, pct, resetTime: l.resetTime, limit: l });
+            }
+        }
+
+        const totalModels = claudeModels.length + geminiModels.length + Object.values(otherMap).reduce((sum, f) => sum + f.models.length, 0);
+
+        return {
+            claude: isEligibleClaude && maxClaude > -1 ? { 
+                name: 'Anthropic Claude Pool',
+                percent: maxClaude, 
+                resetTime: claudeReset, 
+                models: claudeModels 
+            } : null,
+            gemini: maxGemini > -1 ? { 
+                name: 'Google Gemini Pool',
+                percent: maxGemini, 
+                resetTime: geminiReset, 
+                models: geminiModels 
+            } : null,
+            isEligibleClaude,
+            otherFamilies: Object.values(otherMap),
+            totalModels
+        };
     },
 
     // Threshold settings
@@ -598,5 +873,117 @@ window.Components.accountManager = () => ({
             // Reset file input
             event.target.value = '';
         }
+    },
+
+    // Swarm Mode & Container Tab Helpers
+    credentialsModalOpen: false,
+    currentCreds: null,
+    copiedKey: null,
+    fetchingRecoveryCode: false,
+    interceptedCode: null,
+
+    async fetchLatestRecoveryCode(email) {
+        this.fetchingRecoveryCode = true;
+        this.interceptedCode = null;
+        try {
+            const res = await fetch(`/api/swarm/latest-verification-code?email=${encodeURIComponent(email)}&timeout=8`);
+            const data = await res.json();
+            if (data.status === 'ok' && data.code) {
+                this.interceptedCode = data.code;
+                this.copyCred(data.code, 'Recovery Code');
+                Alpine.store('global').showToast(`Intercepted code: ${data.code} (Copied!)`, 'success');
+            } else {
+                Alpine.store('global').showToast(data.message || 'No new code found in recovery mailbox', 'info');
+            }
+        } catch (e) {
+            console.error('Failed to intercept recovery code:', e);
+            Alpine.store('global').showToast('Error intercepting recovery code', 'error');
+        } finally {
+            this.fetchingRecoveryCode = false;
+        }
+    },
+
+    async openAccountTab(email) {
+        // Direct 1-click action — launches clean window without modal or extension requirement
+        await this.openCleanWindow(email);
+    },
+
+    async viewCredentials(email) {
+        try {
+            const res = await fetch(`/api/swarm/credentials/${encodeURIComponent(email)}`);
+            const data = await res.json();
+            if (data.status === 'ok') {
+                this.currentCreds = data;
+                this.credentialsModalOpen = true;
+            }
+        } catch (e) {
+            console.error('Failed to load credentials:', e);
+            Alpine.store('global').showToast('Failed to load credentials from vault', 'error');
+        }
+    },
+
+    async openCleanWindow(email) {
+        try {
+            // Pre-fetch credentials in background so password is ready on clipboard
+            fetch(`/api/swarm/credentials/${encodeURIComponent(email)}`)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.status === 'ok') {
+                        this.currentCreds = data;
+                        if (data.password) navigator.clipboard.writeText(data.password);
+                    }
+                })
+                .catch(() => {});
+
+            await fetch('/api/swarm/launch-clean-window', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email })
+            });
+            Alpine.store('global').showToast(`Opened clean window for ${email} (Password copied!)`, 'success');
+        } catch (e) {
+            console.error('Failed to launch clean window:', e);
+            window.open(`https://accounts.google.com/AccountChooser?Email=${encodeURIComponent(email)}&continue=https://myaccount.google.com`, '_blank');
+        }
+    },
+
+    openAdminSecurity(email) {
+        let adminEmail = 'apps@reseller.mysolidstate.ca';
+        if (email.includes('@adamassist.com')) {
+            adminEmail = 'adam@adamassist.com';
+        } else if (email.includes('@mysolidstate.ca')) {
+            adminEmail = 'hub@mysolidstate.ca';
+        }
+
+        const targetUrl = `https://admin.google.com/ac/users/${encodeURIComponent(email)}/security?authuser=${encodeURIComponent(adminEmail)}`;
+        window.open(targetUrl, '_blank');
+        Alpine.store('global').showToast(`Opening Admin Console in current window (${adminEmail})...`, 'info');
+    },
+
+    async autoOnboard(email) {
+        try {
+            Alpine.store('global').showToast(`🤖 Starting Zero-Touch robot for ${email}...`, 'info');
+            const res = await fetch('/api/swarm/auto-onboard', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ email })
+            });
+            const data = await res.json();
+            if (data.status === 'ok') {
+                Alpine.store('global').showToast(`Zero-Touch robot running for ${email}! It will auto-type credentials, intercept verification codes, and activate the account.`, 'success');
+                this.credentialsModalOpen = false;
+            } else {
+                Alpine.store('global').showToast(`Error: ${data.error}`, 'error');
+            }
+        } catch (e) {
+            Alpine.store('global').showToast(`Failed to launch auto-onboarding: ${e.message}`, 'error');
+        }
+    },
+
+    copyCred(text, key) {
+        navigator.clipboard.writeText(text);
+        this.copiedKey = key;
+        setTimeout(() => this.copiedKey = null, 2000);
+        Alpine.store('global').showToast(`Copied ${key} to clipboard`, 'success');
     }
 });

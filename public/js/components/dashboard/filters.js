@@ -26,7 +26,7 @@ window.DashboardFilters = window.DashboardFilters || {};
 window.DashboardFilters.getInitialState = function() {
     return {
         timeRange: '24h',  // '1h', '6h', '24h', '7d', 'all'
-        displayMode: 'model',
+        displayMode: 'family',
         selectedFamilies: [],
         selectedModels: {},
         showModelFilter: false,
@@ -45,7 +45,7 @@ window.DashboardFilters.loadPreferences = function(component) {
         if (saved) {
             const prefs = JSON.parse(saved);
             component.timeRange = prefs.timeRange || '24h';
-            component.displayMode = prefs.displayMode || 'model';
+            component.displayMode = prefs.displayMode || 'family';
             component.selectedFamilies = prefs.selectedFamilies || [];
             component.selectedModels = prefs.selectedModels || {};
         }
@@ -280,7 +280,13 @@ window.DashboardFilters.getSelectedCount = function(component) {
  * @param {object} component - Dashboard component instance
  */
 window.DashboardFilters.autoSelectNew = function(component) {
-    // If no preferences saved, select all
+    // Default to family-level charts so the dashboard stays readable. Detailed
+    // model series remain available through the explicit model mode/filter.
+    if (!localStorage.getItem('dashboard_chart_prefs') && component.displayMode === 'model') {
+        component.displayMode = 'family';
+    }
+    // If no preferences saved, select only active entries from the current
+    // history window. Zero-use models are deliberately never selected.
     if (component.selectedFamilies.length === 0 && Object.keys(component.selectedModels).length === 0) {
         component.selectedFamilies = [...component.families];
         component.families.forEach(family => {

@@ -239,5 +239,9 @@ window.Components.agentSkills = () => ({
         } finally {
             this.geniusLoading = false;
         }
+    },
+    
+    destroy() {
+        this.stopTimer();
     }
 });

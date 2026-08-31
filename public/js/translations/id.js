@@ -247,6 +247,10 @@ window.translations.id = {
     claudeEmpty: "Claude Kosong",
     geminiActive: "Gemini Aktif",
     geminiEmpty: "Gemini Kosong",
+    claudePool: "Claude Pool",
+    geminiPool: "Gemini Pool",
+    claudePoolTooltip: "Sisa kuota Claude tertinggi di antara akun dalam pool ini",
+    geminiPoolTooltip: "Sisa kuota Gemini tertinggi di antara akun dalam pool ini",
     synced: "SINKRON",
     syncing: "SINKRONISASI...",
 

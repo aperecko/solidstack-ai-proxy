@@ -7,7 +7,7 @@ document.addEventListener('alpine:init', () => {
     Alpine.store('global', {
         init() {
             // Hash-based routing
-            const validTabs = ['dashboard', 'models', 'accounts', 'logs', 'settings'];
+            const validTabs = ['dashboard', 'models', 'accounts', 'logs', 'settings', 'processes', 'infrastructure', 'skills', 'load-balancer', 'philosophy', 'agent-chat', 'overnight', 'uad', 'workflow', 'economics'];
             const validSettingsTabs = ['ui', 'claude', 'models', 'server'];
             const getHash = () => window.location.hash.substring(1);
 
@@ -76,6 +76,8 @@ document.addEventListener('alpine:init', () => {
         version: '1.0.0',
         activeTab: 'dashboard',
         settingsTab: 'ui',
+        showCommandPalette: false,
+        commandSearch: '',
         webuiPassword: localStorage.getItem('antigravity_webui_password') || '',
 
         // i18n

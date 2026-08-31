@@ -84,7 +84,26 @@
             </div>
         </div>
 
-        <div class="flex items-center gap-4">
+        <!-- Center: Quick Command Palette Trigger (⌘K) -->
+        <div class="hidden md:flex items-center">
+            <button @click="$store.global.showCommandPalette = true" 
+                    type="button"
+                    class="flex items-center gap-3 px-3 py-1.5 rounded-xl bg-space-950/80 border border-space-border/60 hover:border-neon-purple/50 text-gray-400 hover:text-gray-200 transition-all text-xs font-mono group shadow-inner">
+                <svg class="w-3.5 h-3.5 text-gray-500 group-hover:text-neon-purple transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+                <span>Jump to view or action...</span>
+                <kbd class="px-1.5 py-0.5 rounded bg-space-800 border border-space-border text-[10px] text-gray-400 font-sans shadow-sm">⌘K</kbd>
+            </button>
+        </div>
+
+        <div class="flex items-center gap-3">
+            <!-- Account Fleet Summary Pill -->
+            <div class="hidden sm:flex items-center gap-2 px-2.5 py-1 rounded-full text-xs font-mono bg-space-800/80 border border-space-border/60 text-gray-300">
+                <span class="w-1.5 h-1.5 rounded-full bg-neon-green"></span>
+                <span x-text="`${$store.data.accounts.filter(a => a.enabled !== false && !a.isInvalid).length} / ${$store.data.accounts.length} Active`"></span>
+            </div>
+
             <!-- Routing Status Pill -->
             <template x-if="connectionStatus === 'connected'">
                 <div class="flex items-center gap-2 px-3 py-1 rounded-full text-xs font-mono border transition-all duration-300"
@@ -104,9 +123,6 @@
                         ? ($store.data.accounts.filter(a => !a.isInvalid).length > 0 ? 'Multi-Account [Active]' : 'System Error [0 Accounts]') 
                         : 'Native Bypass [Active]'"></span>
                 </div>
-            </template>
-            <template x-if="connectionStatus === 'connected'">
-                <div class="h-4 w-px bg-space-border"></div>
             </template>
 
             <!-- Connection Pill -->
@@ -208,6 +224,16 @@
                         </svg>
                         <span x-text="$store.global.t('accounts')">Accounts</span>
                     </button>
+                    <button
+                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
+                        :class="{'active': $store.global.activeTab === 'capabilities'}"
+                        @click="$store.global.activeTab = 'capabilities'">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M13 10V3L4 14h7v7l9-11h-7z" />
+                        </svg>
+                        <span>Capabilities</span>
+                    </button>
                 </nav>
 
                 <!-- Commander -->
@@ -216,6 +242,34 @@
                 </div>
                 
                 <nav class="flex flex-col gap-1">
+
+                    <button
+                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
+                        :class="{'active': $store.global.activeTab === 'uad'}"
+                        @click="$store.global.activeTab = 'uad'">
+                        <svg class="w-5 h-5 text-neon-cyan" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                        </svg>
+                        <span>UAD Actions</span>
+                    </button>
+                    <button
+                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
+                        :class="{'active': $store.global.activeTab === 'workflow'}"
+                        @click="$store.global.activeTab = 'workflow'">
+                        <svg class="w-5 h-5 text-amber-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                        </svg>
+                        <span>Workflow</span>
+                    </button>
+                    <button
+                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
+                        :class="{'active': $store.global.activeTab === 'economics'}"
+                        @click="$store.global.activeTab = 'economics'">
+                        <svg class="w-5 h-5 text-neon-green" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <span>Economics</span>
+                    </button>
                     <button
                         class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
                         :class="{'active': $store.global.activeTab === 'processes'}"
@@ -239,6 +293,15 @@
                         <span>Infrastructure</span>
                     </button>
                     <button
+                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-emerald-500/10"
+                        :class="{'bg-emerald-500/20 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.2)]': $store.global.activeTab === 'philosophy'}"
+                        @click="$store.global.activeTab = 'philosophy'">
+                        <svg class="w-5 h-5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+                        </svg>
+                        <span>Philosophy & Domains</span>
+                    <button
                         class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-fuchsia-500/10"
                         :class="{'bg-fuchsia-500/20 text-fuchsia-400 shadow-[0_0_15px_rgba(217,70,239,0.2)]': $store.global.activeTab === 'agent-skills'}"
                         @click="$store.global.activeTab = 'agent-skills'">
@@ -248,12 +311,32 @@
                         </svg>
                         <span>Agent Skills</span>
                     </button>
+                    <button
+                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-neon-purple/10"
+                        :class="{'bg-neon-purple/20 text-neon-purple shadow-[0_0_15px_rgba(168,85,247,0.2)]': $store.global.activeTab === 'agent-chat'}"
+                        @click="$store.global.activeTab = 'agent-chat'">
+                        <svg class="w-5 h-5 text-neon-purple" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+                        </svg>
+                        <span>Agent Chat</span>
+                    </button>
+                    <button
+                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-purple-500/10"
+                        :class="{'bg-purple-500/20 text-purple-300 shadow-[0_0_15px_rgba(168,85,247,0.2)]': $store.global.activeTab === 'overnight'}"
+                        @click="$store.global.activeTab = 'overnight'">
+                        <svg class="w-5 h-5 text-purple-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+                        </svg>
+                        <span>Overnight Loop</span>
+                    </button>
 
                     <div class="px-4 mt-6">
-                        <button @click="fetch('http://127.0.0.1:8002/api/orchestrate/ai-stack', { method: 'POST' }); $store.global.showToast('AI Stack Launch Initiated', 'success')" 
-                            class="w-full p-3 rounded-xl flex items-center justify-center gap-2 transition-all bg-emerald-500/20 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.2)] hover:bg-emerald-500/30 font-bold" 
-                            title="Start AI Stack">
-                            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <button @click="fetch('/api/orchestrate/ai-stack', { method: 'POST' }).then(r => r.ok ? $store.global.showToast('AI Stack Orchestration Dispatched', 'success') : $store.global.showToast('Stack dispatch returned: ' + r.status, 'warning')).catch(e => $store.global.showToast('Dispatch error: ' + e.message, 'error'))" 
+                            class="w-full p-3 rounded-xl flex items-center justify-center gap-2 transition-all bg-emerald-500/20 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.2)] hover:bg-emerald-500/30 font-bold font-mono text-xs" 
+                            title="Start AI Stack (Port 1987)">
+                            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
                             </svg>
                             Start AI Stack
@@ -290,13 +373,10 @@
                 <!-- Footer Info -->
                 <div class="mt-auto px-6 text-xs text-gray-400 font-mono">
                     <div class="flex justify-center">
-                        <a href="https://github.com/badri-s2001/antigravity-claude-proxy" target="_blank" rel="noopener noreferrer"
-                            class="flex items-center gap-1.5 hover:text-neon-purple transition-colors">
-                            <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                                <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
-                            </svg>
-                            <span x-text="$store.global.t('github')">GitHub</span>
-                        </a>
+                        <div class="flex items-center gap-1.5 text-gray-500 hover:text-neon-purple transition-colors">
+                            <span class="w-2 h-2 rounded-full bg-neon-purple/60"></span>
+                            <span>SolidStack Ecosystem · v1.0</span>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -316,12 +396,33 @@
                 x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from"
                 class="w-full"></div>
 
+            <!-- Capabilities -->
+            <div x-show="$store.global.activeTab === 'capabilities'" x-load-view="'capabilities'"
+                x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from"
+                class="w-full"></div>
+
             <!-- Logs -->
             <div x-show="$store.global.activeTab === 'logs'" x-load-view="'logs'" x-transition:enter="fade-enter-active"
                 x-transition:enter-start="fade-enter-from" class="w-full h-full"></div>
 
             <!-- Accounts -->
             <div x-show="$store.global.activeTab === 'accounts'" x-load-view="'accounts'"
+                x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from"
+                class="w-full"></div>
+
+
+            <!-- UAD -->
+            <div x-show="$store.global.activeTab === 'uad'" x-load-view="'uad'"
+                x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from"
+                class="w-full"></div>
+
+            <!-- Workflow -->
+            <div x-show="$store.global.activeTab === 'workflow'" x-load-view="'workflow'"
+                x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from"
+                class="w-full"></div>
+
+            <!-- Economics -->
+            <div x-show="$store.global.activeTab === 'economics'" x-load-view="'economics'"
                 x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from"
                 class="w-full"></div>
 
@@ -339,6 +440,21 @@
             <div x-show="$store.global.activeTab === 'agent-skills'" x-load-view="'skills'"
                 x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from"
                 class="w-full h-full flex flex-col"></div>
+
+            <!-- Agent Chat -->
+            <div x-show="$store.global.activeTab === 'agent-chat'" x-load-view="'agent-chat'"
+                x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from"
+                class="w-full h-full flex flex-col"></div>
+
+            <!-- Overnight Loop -->
+            <div x-show="$store.global.activeTab === 'overnight'" x-load-view="'overnight'"
+                x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from"
+                class="w-full h-full"></div>
+
+            <!-- Philosophy & Domains -->
+            <div x-show="$store.global.activeTab === 'philosophy'" x-load-view="'philosophy'"
+                x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from"
+                class="w-full h-full"></div>
 
             <!-- Settings -->
             <div x-show="$store.global.activeTab === 'settings'" x-load-view="'settings'"
@@ -374,6 +490,32 @@
                     </svg>
                     <span x-text="$store.global.t('connectGoogle')">Connect Google Account</span>
                 </button>
+
+                <div class="rounded-lg border border-neon-cyan/20 bg-space-800/60 p-3 text-left">
+                    <div class="flex items-center justify-between gap-2">
+                        <span class="text-xs font-semibold text-neon-cyan">Create swarm accounts</span>
+                        <button class="btn btn-xs btn-outline border-neon-cyan/40 text-neon-cyan" @click="discoverSwarm" :disabled="provisioning">Review available</button>
+                    </div>
+                    <div class="grid grid-cols-2 gap-2 mt-2">
+                        <select x-model="provisionDomain" class="select select-xs bg-space-900 border-space-border text-gray-300"><option value="reseller.mysolidstate.ca">reseller.mysolidstate.ca</option><option value="adamassist.com">adamassist.com</option><option value="mysolidstate.ca">mysolidstate.ca</option></select>
+                        <input x-model="provisionPrefix" placeholder="prefix" class="input input-xs bg-space-900 border-space-border text-gray-300">
+                        <input x-model.number="provisionStart" type="number" min="0" placeholder="start" class="input input-xs bg-space-900 border-space-border text-gray-300">
+                        <input x-model.number="provisionCount" type="number" min="1" max="100" placeholder="count" class="input input-xs bg-space-900 border-space-border text-gray-300">
+                    </div>
+                    <button class="btn btn-sm btn-secondary w-full mt-2" @click="provisionSwarm" :disabled="provisioning"><span x-text="provisioning ? 'Creating…' : 'Create accounts in selected dashboard'">Create accounts in selected dashboard</span></button>
+                    <p class="text-[10px] text-gray-500 mt-2" x-show="discoveredAccounts.length">Found: <span x-text="discoveredAccounts.slice(0, 8).join(', ')"></span></p>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3 mt-1">
+                    <button class="btn bg-cyan-950/40 hover:bg-cyan-900/60 border border-cyan-500/40 text-cyan-300 hover:text-white text-xs h-11 flex flex-nowrap whitespace-nowrap shadow-sm" @click="autoAddSwarm('@reseller.mysolidstate.ca')">
+                        <svg class="w-4 h-4 mr-1.5 text-neon-cyan shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                        🤖 Auto-Add Reseller
+                    </button>
+                    <button class="btn bg-purple-950/40 hover:bg-purple-900/60 border border-purple-500/40 text-purple-300 hover:text-white text-xs h-11 flex flex-nowrap whitespace-nowrap shadow-sm" @click="autoAddSwarm('@adamassist.com')">
+                        <svg class="w-4 h-4 mr-1.5 text-neon-purple shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                        🤖 Auto-Add AdamAssist
+                    </button>
+                </div>
 
                 <div class="text-center mt-2">
                     <p class="text-xs text-gray-500 mb-2" x-text="$store.global.t('or')">OR</p>
@@ -482,6 +624,74 @@
         </div>
     </dialog>
 
+    <!-- Universal Command Palette Modal (⌘K) -->
+    <div x-show="$store.global.showCommandPalette" 
+         x-transition:enter="transition ease-out duration-150"
+         x-transition:enter-start="opacity-0"
+         x-transition:enter-end="opacity-100"
+         x-transition:leave="transition ease-in duration-100"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0"
+         @keydown.window.escape="$store.global.showCommandPalette = false"
+         @keydown.window.cmd.k.prevent="$store.global.showCommandPalette = !$store.global.showCommandPalette"
+         @keydown.window.ctrl.k.prevent="$store.global.showCommandPalette = !$store.global.showCommandPalette"
+         class="fixed inset-0 z-[9999] flex items-start justify-center pt-24 bg-black/70 backdrop-blur-md p-4"
+         style="display: none;">
+        <div @click.away="$store.global.showCommandPalette = false"
+             class="w-full max-w-xl bg-space-900 border border-space-border rounded-2xl shadow-[0_0_50px_rgba(0,0,0,0.8)] overflow-hidden flex flex-col animate-scale-in">
+            <!-- Search Header -->
+            <div class="flex items-center px-4 py-3.5 border-b border-space-border/60 bg-space-950/80 gap-3">
+                <svg class="w-5 h-5 text-neon-purple shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+                <input type="text" 
+                       x-model="$store.global.commandSearch" 
+                       x-ref="commandInput"
+                       x-init="$watch('$store.global.showCommandPalette', value => { if (value) $nextTick(() => $refs.commandInput.focus()) })"
+                       placeholder="Type a view name, port, or action..." 
+                       class="w-full bg-transparent border-none text-white text-sm font-mono focus:outline-none placeholder-gray-500">
+                <button @click="$store.global.showCommandPalette = false" class="text-[10px] text-gray-500 hover:text-gray-300 font-mono px-2 py-0.5 rounded border border-space-border/60">ESC</button>
+            </div>
+            
+            <!-- Items List -->
+            <div class="max-h-80 overflow-y-auto p-2 space-y-1 custom-scrollbar text-xs font-mono">
+                <div class="px-3 py-1.5 text-[10px] text-gray-500 font-bold uppercase tracking-wider">Navigation Views</div>
+                <template x-for="item in [
+                    { id: 'dashboard', name: 'Dashboard Overview', desc: 'Real-time telemetry, swarm visualizer & stats', domain: 'core:19870' },
+                    { id: 'models', name: 'Models & Routing', desc: 'Quotas, token limits, and Subway flow map', domain: 'providers:19876' },
+                    { id: 'accounts', name: 'Accounts Fleet', desc: 'Google Workspace pools, 2SV & credentials', domain: 'accounts:19871' },
+                    { id: 'workflow', name: 'Workflow & Task Queue', desc: 'Kanban tasks, blocker review & determinations', domain: 'agents:19873' },
+                    { id: 'economics', name: 'Economics & Ledger', desc: 'Value realization, token savings & CAD pools', domain: 'observability:19875' },
+                    { id: 'capabilities', name: 'Capabilities Map', desc: 'System capabilities & OpenClaw US playbooks', domain: 'core:19870' },
+                    { id: 'uad', name: 'UAD Action Dispatcher', desc: 'Execute system scripts and diagnostic routines', domain: 'mcp:19874' },
+                    { id: 'processes', name: 'Process Orchestrator', desc: 'Daemons, service map & compatibility ports', domain: 'core:19870' },
+                    { id: 'infrastructure', name: 'Infrastructure & Nodes', desc: 'VMs, hardware consolidation & mobility', domain: 'compute:19877' },
+                    { id: 'philosophy', name: 'Philosophy & 10 Domains', desc: 'Cognitive triad & architectural invariants', domain: 'core:19870' },
+                    { id: 'skills', name: 'Skills & Containment Vault', desc: 'Executive focus tracker & idea vault', domain: 'agents:19873' },
+                    { id: 'agent-chat', name: 'Agent Chat Console', desc: 'Direct multi-agent operator chat & telemetry', domain: 'agents:19873' },
+                    { id: 'overnight', name: 'Lorax Overnight Loop', desc: 'Autonomous mutation loops & verification', domain: 'jobs:19878' },
+                    { id: 'logs', name: 'System Logs & Terminal', desc: 'Live output stream & log level filters', domain: 'observability:19875' },
+                    { id: 'settings', name: 'System Configuration', desc: 'Claude CLI presets, timeouts & UI settings', domain: 'core:19870' }
+                ].filter(i => !$store.global.commandSearch || i.name.toLowerCase().includes($store.global.commandSearch.toLowerCase()) || i.desc.toLowerCase().includes($store.global.commandSearch.toLowerCase()) || i.domain.toLowerCase().includes($store.global.commandSearch.toLowerCase()))" :key="item.id">
+                    <button @click="$store.global.activeTab = item.id; $store.global.showCommandPalette = false; $store.global.commandSearch = ''" 
+                            class="w-full text-left px-3 py-2 rounded-xl flex items-center justify-between hover:bg-white/5 transition-colors group">
+                        <div class="flex flex-col">
+                            <span class="text-white font-bold group-hover:text-neon-cyan transition-colors" x-text="item.name"></span>
+                            <span class="text-[10px] text-gray-400 font-sans" x-text="item.desc"></span>
+                        </div>
+                        <span class="px-2 py-0.5 rounded text-[10px] bg-space-950 border border-space-border/60 text-gray-400 group-hover:border-neon-purple/40 group-hover:text-neon-purple" x-text="item.domain"></span>
+                    </button>
+                </template>
+            </div>
+            
+            <!-- Quick Actions Footer -->
+            <div class="px-4 py-2.5 bg-space-950/80 border-t border-space-border/50 flex items-center justify-between text-[10px] font-mono text-gray-500">
+                <span>Navigate: <kbd class="text-gray-400">↑</kbd> <kbd class="text-gray-400">↓</kbd> Select: <kbd class="text-gray-400">↵</kbd></span>
+                <span class="text-neon-cyan">Primary Origin: 127.0.0.1:1987</span>
+            </div>
+        </div>
+    </div>
+
     <!-- Scripts - Loading Order Matters! -->
     <!-- 1. Config & Utils (global helpers) -->
     <script src="js/config/constants.js"></script>
@@ -515,10 +725,18 @@
     <script src="js/components/model-dropdown.js"></script>
     <script src="js/components/logs-viewer.js"></script>
     <script src="js/components/server-config.js"></script>
-    <script src="js/components/add-account-modal.js"></script>
+    <script src="js/components/add-account-modal.js?v=3.2.1"></script>
     <script src="js/components/commander.js"></script>
     <script src="js/components/skills.js"></script>
     <script src="js/components/load-balancer.js?v=3.2.0"></script>
+    <script src="js/components/philosophy.js"></script>
+    <script src="js/components/agent-chat.js"></script>
+    <script src="js/components/overnight.js"></script>
+
+    <script src="js/components/uad.js"></script>
+    <script src="js/components/workflow.js"></script>
+    <script src="js/components/economics.js"></script>
+
     <!-- 4. App (registers Alpine components from window.Components) -->
     <script src="app.js?v=3.2.0"></script>
 </body>

@@ -7,6 +7,7 @@
 
 import { DEFAULT_COOLDOWN_MS } from '../constants.js';
 import { formatDuration } from '../utils/helpers.js';
+import { resolvePoolForAccount } from '../economic-engine.js';
 import { logger } from '../utils/logger.js';
 
 /**
@@ -20,9 +21,26 @@ export function isAllRateLimited(accounts, modelId) {
     if (accounts.length === 0) return true;
     if (!modelId) return false; // No model specified = not rate limited
 
+    const isClaude = modelId.toLowerCase().includes('claude');
+
     return accounts.every(acc => {
         if (acc.isInvalid) return true; // Invalid accounts count as unavailable
         if (acc.enabled === false) return true; // Disabled accounts count as unavailable
+
+        if (isClaude) {
+            if (acc.type === 'apikey' || acc.email?.includes('virtual-gemini-key')) return true;
+            const tier = (acc.subscription?.tier || acc.tier || '').toLowerCase();
+            if (tier === 'free') return true;
+
+            // Prefer live cached quotas over stale accounts.json data
+            const cached = acc._cachedFormattedQuotas?.[modelId];
+            const q = cached || acc.quota?.models?.[modelId];
+            if (q && q.remainingFraction !== null && q.remainingFraction <= 0.05 && (q.resetTime || cached?.resetTime)) {
+                const resetMs = new Date(q.resetTime || cached?.resetTime).getTime();
+                if (!isNaN(resetMs) && resetMs > Date.now()) return true;
+            }
+        }
+
         const modelLimits = acc.modelRateLimits || {};
         const limit = modelLimits[modelId];
         return limit && limit.isRateLimited && limit.resetTime > Date.now();
@@ -37,11 +55,27 @@ export function isAllRateLimited(accounts, modelId) {
  * @returns {Array} Array of available account objects
  */
 export function getAvailableAccounts(accounts, modelId = null) {
+    const isClaude = modelId ? modelId.toLowerCase().includes('claude') : false;
+
     return accounts.filter(acc => {
         if (acc.isInvalid) return false;
 
         // WebUI: Skip disabled accounts
         if (acc.enabled === false) return false;
+
+        if (isClaude) {
+            if (acc.type === 'apikey' || acc.email?.includes('virtual-gemini-key')) return false;
+            const tier = (acc.subscription?.tier || acc.tier || '').toLowerCase();
+            if (tier === 'free') return false;
+
+            // Prefer live cached quotas over stale accounts.json data
+            const cached = acc._cachedFormattedQuotas?.[modelId];
+            const q = cached || acc.quota?.models?.[modelId];
+            if (q && q.remainingFraction !== null && q.remainingFraction <= 0.05 && (q.resetTime || cached?.resetTime)) {
+                const resetMs = new Date(q.resetTime || cached?.resetTime).getTime();
+                if (!isNaN(resetMs) && resetMs > Date.now()) return false;
+            }
+        }
 
         if (modelId && acc.modelRateLimits && acc.modelRateLimits[modelId]) {
             const limit = acc.modelRateLimits[modelId];
@@ -169,9 +203,12 @@ export function markRateLimited(accounts, email, resetMs = null, modelId) {
     const account = accounts.find(a => a.email === email);
     if (!account) return false;
 
-    // Store the ACTUAL reset time from the API
-    // This is used to decide whether to wait (short) or switch accounts (long)
-    const actualResetMs = (resetMs && resetMs > 0) ? resetMs : DEFAULT_COOLDOWN_MS;
+    // Google returns weekly/daily reset timestamps (e.g. 3 days out) in 429 bodies.
+    // Locking an account out for 3 days on a temporary rate-limit is fatal for the pool.
+    // Cap cooldown to a maximum of 5 minutes (300,000ms).
+    const MAX_COOLDOWN_MS = 5 * 60 * 1000;
+    const requestedMs = (resetMs && resetMs > 0) ? resetMs : DEFAULT_COOLDOWN_MS;
+    const actualResetMs = Math.min(requestedMs, MAX_COOLDOWN_MS);
 
     if (!account.modelRateLimits) {
         account.modelRateLimits = {};
@@ -182,6 +219,16 @@ export function markRateLimited(accounts, email, resetMs = null, modelId) {
         resetTime: Date.now() + actualResetMs,  // Actual reset time for decisions
         actualResetMs: actualResetMs             // Original duration from API
     };
+
+    // FIX: If it's a true quota exhaustion (> 5 mins), update the quota model
+    // so the dashboard accurately reflects 0% capacity and the true reset time.
+    if (requestedMs > MAX_COOLDOWN_MS && account.quota && account.quota.models) {
+        if (!account.quota.models[modelId]) {
+            account.quota.models[modelId] = {};
+        }
+        account.quota.models[modelId].remainingFraction = 0;
+        account.quota.models[modelId].resetTime = new Date(Date.now() + requestedMs).toISOString();
+    }
 
     // Track consecutive failures for progressive backoff (matches opencode-antigravity-auth)
     account.consecutiveFailures = (account.consecutiveFailures || 0) + 1;
@@ -210,6 +257,24 @@ export function markRateLimited(accounts, email, resetMs = null, modelId) {
  * @returns {boolean} True if account was found and marked
  */
 export function markInvalid(accounts, email, reason = 'Unknown error', verifyUrl = null) {
+    // Guard against marking accounts invalid due to transient network errors
+    const lowerReason = String(reason).toLowerCase();
+    if (
+        lowerReason.includes('enotfound') ||
+        lowerReason.includes('etimedout') ||
+        lowerReason.includes('fetch failed') ||
+        lowerReason.includes('econnreset') ||
+        lowerReason.includes('econnrefused') ||
+        lowerReason.includes('socket hang up') ||
+        lowerReason.includes('503') ||
+        lowerReason.includes('502') ||
+        lowerReason.includes('504')
+    ) {
+        logger.warn(`[AccountManager] Transient network error for ${email} (${reason}) - skipping permanent invalidation`);
+        markAccountCoolingDown(accounts, email, 30000, CooldownReason.SERVER_ERROR);
+        return false;
+    }
+
     const account = accounts.find(a => a.email === email);
     if (!account) return false;
 

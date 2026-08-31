@@ -28,42 +28,227 @@ const logger = {
 };
 
 /**
+ * Semantic model alias routing table
+ */
+export const SEMANTIC_MODEL_MAP = {
+    'fast': 'gemini-2.5-flash',
+    'cheap': 'gemini-2.5-flash',
+    'coding': 'claude-3-5-sonnet-20241022',
+    'reasoning': 'claude-3-7-sonnet-20250219',
+    'vision': 'gemini-2.5-flash',
+    'default': 'claude-3-5-sonnet-20241022',
+};
+
+/**
+ * Translate OpenAI tool definitions to Anthropic tool schema.
+ * @param {Array} tools - OpenAI tool array
+ * @returns {Array|undefined} Anthropic tool array
+ */
+export function translateOpenAITools(tools) {
+    if (!Array.isArray(tools) || tools.length === 0) return undefined;
+    const out = [];
+    for (const t of tools) {
+        if (!t || typeof t !== 'object') continue;
+        if (t.type === 'function' && t.function) {
+            out.push({
+                name: t.function.name || '',
+                description: t.function.description || '',
+                input_schema: t.function.parameters || { type: 'object', properties: {} },
+            });
+        } else if (t.name) {
+            out.push({
+                name: t.name,
+                description: t.description || '',
+                input_schema: t.parameters || t.input_schema || { type: 'object', properties: {} },
+            });
+        }
+    }
+    return out.length > 0 ? out : undefined;
+}
+
+/**
+ * Translate OpenAI tool_choice to Anthropic tool_choice.
+ * @param {*} toolChoice - OpenAI tool_choice parameter
+ * @returns {Object|undefined} Anthropic tool_choice object
+ */
+export function translateOpenAIToolChoice(toolChoice) {
+    if (!toolChoice) return undefined;
+    if (typeof toolChoice === 'string') {
+        const map = { auto: 'auto', none: 'none', required: 'any' };
+        return map[toolChoice] ? { type: map[toolChoice] } : { type: 'auto' };
+    }
+    if (typeof toolChoice === 'object') {
+        if (toolChoice.type === 'function' && toolChoice.function?.name) {
+            return { type: 'tool', name: toolChoice.function.name };
+        }
+        return toolChoice;
+    }
+    return undefined;
+}
+
+/**
+ * Heuristically inspect messages and system prompt to pick best model for "auto".
+ */
+export function analyzeRequestForModel(messages = [], system = null) {
+    let combined = (system || '').toLowerCase() + ' ';
+    let hasVision = false;
+
+    for (const msg of messages) {
+        if (!msg) continue;
+        const content = msg.content;
+        if (typeof content === 'string') {
+            combined += content.toLowerCase() + ' ';
+        } else if (Array.isArray(content)) {
+            for (const b of content) {
+                if (typeof b === 'string') {
+                    combined += b.toLowerCase() + ' ';
+                } else if (b && typeof b === 'object') {
+                    if (b.type === 'image_url' || b.type === 'input_image' || b.type === 'image') {
+                        hasVision = true;
+                    } else if (b.text) {
+                        combined += b.text.toLowerCase() + ' ';
+                    }
+                }
+            }
+        }
+    }
+
+    if (hasVision) return { model: SEMANTIC_MODEL_MAP.vision, reason: 'vision content detected' };
+
+    const codingRegex = /\b(code|function|class|def|import|debug|refactor|implement|algorithm|api|endpoint|typescript|javascript|python|rust|golang|sql)\b|```/;
+    if (codingRegex.test(combined)) {
+        if (/\b(complex|architecture|optimize|performance|recursion|distributed)\b/.test(combined)) {
+            return { model: SEMANTIC_MODEL_MAP.reasoning, reason: 'complex coding task' };
+        }
+        return { model: SEMANTIC_MODEL_MAP.coding, reason: 'coding task detected' };
+    }
+
+    const reasoningRegex = /\b(analyze|explain|reason|think|compare|evaluate|strategy|plan|research|investigate|pros and cons)\b/;
+    if (reasoningRegex.test(combined)) {
+        return { model: SEMANTIC_MODEL_MAP.reasoning, reason: 'reasoning task detected' };
+    }
+
+    if (combined.split(/\s+/).filter(Boolean).length < 25) {
+        return { model: SEMANTIC_MODEL_MAP.fast, reason: 'short simple query' };
+    }
+
+    return { model: SEMANTIC_MODEL_MAP.default, reason: 'default fallback routing' };
+}
+
+/**
+ * Resolve semantic aliases, model mappings, and auto routing.
+ */
+export function resolveRequestedModel(requestedModel, messages = [], system = null) {
+    if (!requestedModel || requestedModel === 'auto') {
+        const analyzed = analyzeRequestForModel(messages, system);
+        logger.info(`[Auto-Router] Selected '${analyzed.model}' — ${analyzed.reason}`);
+        return analyzed.model;
+    }
+
+    const lower = requestedModel.toLowerCase();
+    if (SEMANTIC_MODEL_MAP[lower]) {
+        const resolved = SEMANTIC_MODEL_MAP[lower];
+        logger.info(`[Alias-Router] Resolved alias '${requestedModel}' -> '${resolved}'`);
+        return resolved;
+    }
+
+    const modelMapping = config.modelMapping || {};
+    if (modelMapping[requestedModel]?.mapping) {
+        const target = modelMapping[requestedModel].mapping;
+        logger.info(`[Config-Router] Mapping model '${requestedModel}' -> '${target}'`);
+        return target;
+    }
+
+    return requestedModel;
+}
+
+/**
  * Convert OpenAI-format messages to Anthropic format.
- * Extracts system messages and normalizes content blocks.
+ * Extracts system messages, normalizes content blocks, and preserves tool calls.
  * 
  * @param {Array} messages - OpenAI-format messages
  * @returns {{ system: string|null, messages: Array }} Anthropic-format messages with extracted system prompt
  */
-function openaiToAnthropicMessages(messages) {
+export function openaiToAnthropicMessages(messages) {
     let systemText = null;
     const anthropicMessages = [];
 
     for (const msg of messages) {
+        if (!msg || typeof msg !== 'object') continue;
         const role = msg.role || 'user';
-        let content = msg.content || '';
+        let content = msg.content;
 
-        if (role === 'system') {
-            // Extract system prompt (use last system message if multiple)
-            systemText = typeof content === 'string'
+        if (role === 'system' || role === 'developer') {
+            const sys = typeof content === 'string'
                 ? content
-                : (Array.isArray(content) ? content.map(b => b.text || '').join('\n') : String(content));
+                : (Array.isArray(content) ? content.map(b => b.text || '').join('\n') : String(content || ''));
+            systemText = systemText ? `${systemText}\n${sys}` : sys;
             continue;
         }
 
-        // Normalize content to Anthropic block format
-        if (typeof content === 'string') {
-            content = [{ type: 'text', text: content }];
-        } else if (Array.isArray(content)) {
-            content = content.map(block => {
-                if (typeof block === 'string') return { type: 'text', text: block };
-                if (block.type === 'text') return block;
-                // Pass through image blocks, tool blocks, etc.
-                return block;
+        if (role === 'tool') {
+            // OpenAI tool response message -> Anthropic tool_result
+            anthropicMessages.push({
+                role: 'user',
+                content: [{
+                    type: 'tool_result',
+                    tool_use_id: msg.tool_call_id || msg.id || 'call_default',
+                    content: typeof content === 'string' ? content : JSON.stringify(content || ''),
+                }]
             });
+            continue;
         }
 
-        // Map OpenAI 'assistant' role to Anthropic 'assistant', 'user' stays 'user'
-        anthropicMessages.push({ role, content });
+        const blocks = [];
+        if (typeof content === 'string' && content.length > 0) {
+            blocks.push({ type: 'text', text: content });
+        } else if (Array.isArray(content)) {
+            for (const b of content) {
+                if (typeof b === 'string') {
+                    blocks.push({ type: 'text', text: b });
+                } else if (b && typeof b === 'object') {
+                    if (b.type === 'text' || b.type === 'input_text' || b.type === 'output_text') {
+                        blocks.push({ type: 'text', text: b.text || '' });
+                    } else if (b.type === 'image_url' || b.type === 'input_image') {
+                        const url = b.image_url?.url || b.image_url || b.url || '';
+                        if (typeof url === 'string' && url.startsWith('data:')) {
+                            const [header, b64] = url.split(',', 2);
+                            const mediaType = header.replace(/^data:/, '').split(';', 1)[0] || 'image/png';
+                            blocks.push({
+                                type: 'image',
+                                source: { type: 'base64', media_type: mediaType, data: b64 || '' }
+                            });
+                        }
+                    } else {
+                        blocks.push(b);
+                    }
+                }
+            }
+        }
+
+        // Check for OpenAI assistant tool_calls -> Anthropic tool_use blocks
+        if (role === 'assistant' && Array.isArray(msg.tool_calls)) {
+            for (const tc of msg.tool_calls) {
+                let parsedInput = {};
+                try {
+                    parsedInput = typeof tc.function?.arguments === 'string'
+                        ? JSON.parse(tc.function.arguments)
+                        : (tc.function?.arguments || {});
+                } catch {
+                    parsedInput = { _raw: tc.function?.arguments };
+                }
+                blocks.push({
+                    type: 'tool_use',
+                    id: tc.id || `call_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+                    name: tc.function?.name || 'function',
+                    input: parsedInput,
+                });
+            }
+        }
+
+        if (blocks.length > 0) {
+            anthropicMessages.push({ role: role === 'assistant' ? 'assistant' : 'user', content: blocks });
+        }
     }
 
     return { system: systemText, messages: anthropicMessages };
@@ -84,13 +269,50 @@ function extractTextFromBlocks(contentBlocks) {
 
 /**
  * Convert an Anthropic Messages API response to OpenAI chat.completion format.
+ * Supports text and tool_use blocks.
  * @param {Object} anthropicResponse - Response from sendMessage()
  * @param {string} model - Model ID
  * @returns {Object} OpenAI-format response
  */
-function anthropicToOpenAIResponse(anthropicResponse, model) {
-    const text = extractTextFromBlocks(anthropicResponse.content || []);
+export function anthropicToOpenAIResponse(anthropicResponse, model) {
+    const contentBlocks = anthropicResponse.content || [];
+    const textParts = [];
+    const toolCalls = [];
+
+    for (const b of contentBlocks) {
+        if (!b) continue;
+        if (b.type === 'text') {
+            textParts.push(b.text || '');
+        } else if (b.type === 'tool_use') {
+            toolCalls.push({
+                id: b.id || `call_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+                type: 'function',
+                function: {
+                    name: b.name || '',
+                    arguments: JSON.stringify(b.input || {}),
+                }
+            });
+        }
+    }
+
+    const text = textParts.join('');
     const usage = anthropicResponse.usage || {};
+    const messageObj = { role: 'assistant' };
+    if (text || toolCalls.length === 0) {
+        messageObj.content = text;
+    } else {
+        messageObj.content = null;
+    }
+    if (toolCalls.length > 0) {
+        messageObj.tool_calls = toolCalls;
+    }
+
+    let finishReason = 'stop';
+    if (toolCalls.length > 0) {
+        finishReason = 'tool_calls';
+    } else if (anthropicResponse.stop_reason === 'max_tokens') {
+        finishReason = 'length';
+    }
 
     return {
         id: `chatcmpl-${Date.now()}`,
@@ -99,10 +321,8 @@ function anthropicToOpenAIResponse(anthropicResponse, model) {
         model: anthropicResponse.model || model,
         choices: [{
             index: 0,
-            message: { role: 'assistant', content: text },
-            finish_reason: anthropicResponse.stop_reason === 'end_turn' ? 'stop'
-                : anthropicResponse.stop_reason === 'max_tokens' ? 'length'
-                : 'stop',
+            message: messageObj,
+            finish_reason: finishReason,
         }],
         usage: {
             prompt_tokens: usage.input_tokens || 0,
@@ -286,26 +506,14 @@ export function mountResponsesCompat(app, accountManager, ensureInitialized, fal
                 top_k,
             } = req.body || {};
 
-            let requestedModel = model || 'claude-sonnet-4-6';
-            if (requestedModel === 'auto') {
-                requestedModel = 'claude-sonnet-4-6';
-            }
-            // Apply the same modelMapping indirection as chat completions,
-            // so clients can request an unpooled model id (e.g. gpt-5.3-codex)
-            // and transparently land on a pooled model.
-            const modelMapping = config.modelMapping || {};
-            if (modelMapping[requestedModel] && modelMapping[requestedModel].mapping) {
-                const targetModel = modelMapping[requestedModel].mapping;
-                logger.info(`Mapping model ${requestedModel} -> ${targetModel}`);
-                requestedModel = targetModel;
-            }
-
             const { system, messages } = responsesInputToAnthropic(input, instructions);
             if (!messages.length) {
                 return res.status(400).json({
                     error: { message: 'input must be a non-empty string or array', type: 'invalid_request_error' }
                 });
             }
+
+            const requestedModel = resolveRequestedModel(model, messages, system);
 
             const anthropicRequest = {
                 app: 'opencode',
@@ -490,18 +698,12 @@ export function mountOpenAICompat(app, accountManager, ensureInitialized, fallba
                 top_p,
                 top_k,
                 stream = false,
+                tools: openaiTools,
+                tool_choice: openaiToolChoice,
             } = req.body;
 
-            let requestedModel = model || 'claude-3-5-sonnet-20241022';
-            if (requestedModel === 'auto') {
-                requestedModel = 'claude-sonnet-4-6';
-            }
-            const modelMapping = config.modelMapping || {};
-            if (modelMapping[requestedModel] && modelMapping[requestedModel].mapping) {
-                const targetModel = modelMapping[requestedModel].mapping;
-                logger.info(`Mapping model ${requestedModel} -> ${targetModel}`);
-                requestedModel = targetModel;
-            }
+            const sessionId = req.headers['x-conversation-id'] || req.headers['x-session-id'] || req.headers['x-machine-session-id'] || req.headers['X-Conversation-Id'] || `chatcmpl-${Date.now()}`;
+            logger.info(`[OpenAI-Compat] /v1/chat/completions Request from Session: ${sessionId}`);
 
             if (!openaiMessages.length) {
                 return res.status(400).json({
@@ -511,6 +713,13 @@ export function mountOpenAICompat(app, accountManager, ensureInitialized, fallba
 
             // Translate OpenAI messages to Anthropic format
             const { system, messages: anthropicMessages } = openaiToAnthropicMessages(openaiMessages);
+
+            // Resolve requested model with semantic aliases & auto-routing heuristics
+            const requestedModel = resolveRequestedModel(model, openaiMessages, system);
+
+            // Translate tools & tool_choice
+            const translatedTools = translateOpenAITools(openaiTools);
+            const translatedToolChoice = translateOpenAIToolChoice(openaiToolChoice);
 
             // Build Anthropic-format request
             const anthropicRequest = {
@@ -524,8 +733,10 @@ export function mountOpenAICompat(app, accountManager, ensureInitialized, fallba
                 stream,
             };
             if (system) anthropicRequest.system = system;
+            if (translatedTools) anthropicRequest.tools = translatedTools;
+            if (translatedToolChoice) anthropicRequest.tool_choice = translatedToolChoice;
 
-            logger.info(`[API] OpenAI-compat request: model=${requestedModel}, stream=${!!stream}, messages=${openaiMessages.length}`);
+            logger.info(`[API] OpenAI-compat request: model=${requestedModel}, stream=${!!stream}, messages=${openaiMessages.length}, tools=${translatedTools ? translatedTools.length : 0}`);
 
             if (stream) {
                 // ── Real SSE streaming ──
@@ -545,6 +756,7 @@ export function mountOpenAICompat(app, accountManager, ensureInitialized, fallba
                     const created = Math.floor(Date.now() / 1000);
                     let inputTokens = 0;
                     let outputTokens = 0;
+                    let currentToolIndex = -1;
 
                     // Helper to write an OpenAI SSE chunk
                     const writeChunk = (delta, finishReason = null) => {
@@ -563,7 +775,7 @@ export function mountOpenAICompat(app, accountManager, ensureInitialized, fallba
                         if (res.flush) res.flush();
                     };
 
-                    // Process the first event
+                    // Process incoming Anthropic streaming events
                     const processEvent = (event) => {
                         switch (event.type) {
                             case 'message_start':
@@ -573,23 +785,47 @@ export function mountOpenAICompat(app, accountManager, ensureInitialized, fallba
                                     inputTokens = event.message.usage.input_tokens || 0;
                                 }
                                 break;
+                            case 'content_block_start':
+                                if (event.content_block?.type === 'tool_use') {
+                                    currentToolIndex++;
+                                    writeChunk({
+                                        tool_calls: [{
+                                            index: currentToolIndex,
+                                            id: event.content_block.id || `call_${Date.now()}`,
+                                            type: 'function',
+                                            function: {
+                                                name: event.content_block.name || '',
+                                                arguments: '',
+                                            }
+                                        }]
+                                    });
+                                }
+                                break;
                             case 'content_block_delta':
                                 if (event.delta?.type === 'text_delta' && event.delta.text) {
                                     writeChunk({ content: event.delta.text });
+                                } else if (event.delta?.type === 'input_json_delta' && event.delta.partial_json) {
+                                    writeChunk({
+                                        tool_calls: [{
+                                            index: currentToolIndex,
+                                            function: { arguments: event.delta.partial_json }
+                                        }]
+                                    });
                                 }
                                 break;
                             case 'message_delta':
                                 if (event.usage) {
                                     outputTokens = event.usage.output_tokens || 0;
                                 }
-                                const reason = event.delta?.stop_reason === 'end_turn' ? 'stop'
+                                const reason = event.delta?.stop_reason === 'tool_use' ? 'tool_calls'
+                                    : event.delta?.stop_reason === 'end_turn' ? 'stop'
                                     : event.delta?.stop_reason === 'max_tokens' ? 'length'
                                     : null;
                                 if (reason) {
                                     writeChunk({}, reason);
                                 }
                                 break;
-                            // content_block_start, content_block_stop, message_stop — skip
+                            // content_block_stop, message_stop — skip
                         }
                     };
 
@@ -599,6 +835,89 @@ export function mountOpenAICompat(app, accountManager, ensureInitialized, fallba
 
                     for await (const event of generator) {
                         processEvent(event);
+                    }
+                    
+                    // Log to SolidStack savings DB
+                    try {
+                        const Database = (await import('better-sqlite3')).default;
+                        const fs = await import('fs');
+                        const dbPath = '/Users/test/Projects/solidstack/registry/metrics/savings.db';
+                        if (fs.existsSync(dbPath)) {
+                            const db = new Database(dbPath);
+                            // LORAX Real-Dollar Retail Pricing Map (per 1M tokens)
+                            const pricing = {
+                                'claude-3-5-sonnet': { in: 3.00, out: 15.00 },
+                                'claude-3-opus': { in: 15.00, out: 75.00 },
+                                'claude-3-5-haiku': { in: 0.25, out: 1.25 },
+                                'gemini-pro': { in: 1.25, out: 5.00 },
+                                'gemini-flash': { in: 0.075, out: 0.30 },
+                                'gpt-4o': { in: 2.50, out: 10.00 },
+                                'gpt-4o-mini': { in: 0.15, out: 0.60 },
+                                'o1-preview': { in: 15.00, out: 60.00 },
+                                'o1-mini': { in: 3.00, out: 12.00 },
+                                'gpt-5': { in: 5.00, out: 20.00 },
+                                'llama-3-405b': { in: 2.70, out: 2.70 },
+                                'llama-3-70b': { in: 0.60, out: 0.60 },
+                                'llama-3-8b': { in: 0.05, out: 0.05 },
+                                'mixtral': { in: 0.50, out: 0.50 },
+                                'deepseek-chat': { in: 0.14, out: 0.28 }
+                            };
+                            
+                            let costIn = 0.50; let costOut = 1.50; // Fallback default
+                            let matchModel = requestedModel.toLowerCase();
+                            
+                            if (matchModel.includes('sonnet')) { costIn = pricing['claude-3-5-sonnet'].in; costOut = pricing['claude-3-5-sonnet'].out; }
+                            else if (matchModel.includes('opus')) { costIn = pricing['claude-3-opus'].in; costOut = pricing['claude-3-opus'].out; }
+                            else if (matchModel.includes('haiku')) { costIn = pricing['claude-3-5-haiku'].in; costOut = pricing['claude-3-5-haiku'].out; }
+                            else if (matchModel.includes('gpt-4o-mini')) { costIn = pricing['gpt-4o-mini'].in; costOut = pricing['gpt-4o-mini'].out; }
+                            else if (matchModel.includes('gpt-4o')) { costIn = pricing['gpt-4o'].in; costOut = pricing['gpt-4o'].out; }
+                            else if (matchModel.includes('o1-preview')) { costIn = pricing['o1-preview'].in; costOut = pricing['o1-preview'].out; }
+                            else if (matchModel.includes('o1-mini')) { costIn = pricing['o1-mini'].in; costOut = pricing['o1-mini'].out; }
+                            else if (matchModel.includes('gpt-5') || matchModel.includes('luna')) { costIn = pricing['gpt-5'].in; costOut = pricing['gpt-5'].out; }
+                            else if (matchModel.includes('405b')) { costIn = pricing['llama-3-405b'].in; costOut = pricing['llama-3-405b'].out; }
+                            else if (matchModel.includes('70b')) { costIn = pricing['llama-3-70b'].in; costOut = pricing['llama-3-70b'].out; }
+                            else if (matchModel.includes('8b')) { costIn = pricing['llama-3-8b'].in; costOut = pricing['llama-3-8b'].out; }
+                            else if (matchModel.includes('mixtral')) { costIn = pricing['mixtral'].in; costOut = pricing['mixtral'].out; }
+                            else if (matchModel.includes('deepseek')) { costIn = pricing['deepseek-chat'].in; costOut = pricing['deepseek-chat'].out; }
+                            else if (matchModel.includes('pro')) { costIn = pricing['gemini-pro'].in; costOut = pricing['gemini-pro'].out; }
+                            else if (matchModel.includes('flash') || matchModel.includes('lite')) { costIn = pricing['gemini-flash'].in; costOut = pricing['gemini-flash'].out; }
+                            
+                            // Apply Tier Multipliers
+                            let multiplier = 1.0;
+                            if (matchModel.includes('medium')) { multiplier = 1.2; }
+                            else if (matchModel.includes('high') || matchModel.includes('fast')) { multiplier = 1.5; }
+                            
+                            costIn = costIn * multiplier;
+                            costOut = costOut * multiplier;
+                            
+                            const retailValue = (inputTokens / 1000000) * costIn + (outputTokens / 1000000) * costOut;
+                            
+                            const stmt = db.prepare("INSERT OR IGNORE INTO savings (session_id, timestamp, model, tokens_in, tokens_out, retail_value_saved) VALUES (?, ?, ?, ?, ?, ?)");
+                            stmt.run(sessionId, new Date().toISOString(), requestedModel, inputTokens, outputTokens, retailValue);
+                            db.close();
+                        }
+                    } catch (e) {
+                        logger.error('[OpenAI-Compat] Failed to write to savings db: ', e.message);
+                    }
+
+                    // If client requested usage in the stream, send it as the final chunk
+                    if (req.body.stream_options?.include_usage) {
+                        const usageChunk = {
+                            id: chatId,
+                            object: 'chat.completion.chunk',
+                            created,
+                            model: requestedModel,
+                            choices: [],
+                            usage: {
+                                prompt_tokens: inputTokens,
+                                completion_tokens: outputTokens,
+                                total_tokens: inputTokens + outputTokens
+                            }
+                        };
+                        res.write(`data: ${JSON.stringify(usageChunk)}
+
+`);
+                        if (res.flush) res.flush();
                     }
 
                     // Send [DONE] marker
@@ -623,10 +942,48 @@ export function mountOpenAICompat(app, accountManager, ensureInitialized, fallba
                 // ── Non-streaming ──
                 const anthropicResponse = await sendMessage(anthropicRequest, accountManager, fallbackEnabled);
                 const openaiResponse = anthropicToOpenAIResponse(anthropicResponse, requestedModel);
+                
+                // Calculate tokens
+                const inputTokens = anthropicResponse.usage?.input_tokens || 0;
+                const outputTokens = anthropicResponse.usage?.output_tokens || 0;
+                
                 try {
                     const { logConversation } = await import('./conversation-logger.js');
                     logConversation(anthropicRequest, anthropicResponse, '', '', req);
                 } catch {}
+
+                // Log to SolidStack savings DB
+                try {
+                    const Database = (await import('better-sqlite3')).default;
+                    const fs = await import('fs');
+                    const dbPath = '/Users/test/Projects/solidstack/registry/metrics/savings.db';
+                    if (fs.existsSync(dbPath)) {
+                        const db = new Database(dbPath);
+                        const pricing = {
+                            'claude-3-5-sonnet': { in: 3.00, out: 15.00 },
+                            'claude-3-opus': { in: 15.00, out: 75.00 },
+                            'gemini-pro': { in: 1.25, out: 5.00 },
+                            'gemini-flash': { in: 0.075, out: 0.30 }
+                        };
+                        
+                        let costIn = 0.50; let costOut = 1.50;
+                        let matchModel = requestedModel.toLowerCase();
+                        if (matchModel.includes('sonnet')) { costIn = pricing['claude-3-5-sonnet'].in; costOut = pricing['claude-3-5-sonnet'].out; }
+                        else if (matchModel.includes('opus')) { costIn = pricing['claude-3-opus'].in; costOut = pricing['claude-3-opus'].out; }
+                        else if (matchModel.includes('pro')) { costIn = pricing['gemini-pro'].in; costOut = pricing['gemini-pro'].out; }
+                        else if (matchModel.includes('flash') || matchModel.includes('lite')) { costIn = pricing['gemini-flash'].in; costOut = pricing['gemini-flash'].out; }
+                        
+                        const retailValue = (inputTokens / 1000000) * costIn + (outputTokens / 1000000) * costOut;
+                        const chatId = openaiResponse.id || `chatcmpl-${Date.now()}`;
+                        
+                        const stmt = db.prepare("INSERT OR IGNORE INTO savings (session_id, timestamp, model, tokens_in, tokens_out, retail_value_saved) VALUES (?, ?, ?, ?, ?, ?)");
+                        stmt.run(sessionId, new Date().toISOString(), requestedModel, inputTokens, outputTokens, retailValue);
+                        db.close();
+                    }
+                } catch (e) {
+                    logger.error('[OpenAI-Compat] Failed to write to savings db: ', e.message);
+                }
+
                 res.json(openaiResponse);
             }
 

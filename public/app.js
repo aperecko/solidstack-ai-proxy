@@ -19,6 +19,12 @@ document.addEventListener('alpine:init', () => {
     Alpine.data('infrastructure', window.Components.infrastructure);
     Alpine.data('agentSkills', window.Components.agentSkills);
     Alpine.data('loadBalancer', window.Components.loadBalancer);
+    Alpine.data('philosophyDomain', window.Components.philosophyDomain);
+    Alpine.data('agentChat', window.Components.agentChat);
+    Alpine.data('overnight', window.Components.overnight);
+    Alpine.data('economics', window.Components.economics);
+    Alpine.data('uad', window.Components.uad);
+    Alpine.data('workflow', window.Components.workflow);
 
     // View Loader Directive
     Alpine.directive('load-view', (el, { expression }, { evaluate }) => {
@@ -121,7 +127,7 @@ document.addEventListener('alpine:init', () => {
 
         startAutoRefresh() {
             if (this.refreshTimer) clearInterval(this.refreshTimer);
-            const interval = parseInt(Alpine.store('settings')?.refreshInterval || 60);
+            const interval = parseInt(Alpine.store('settings')?.refreshInterval || 3);
             if (interval > 0) {
                 this.refreshTimer = setInterval(() => Alpine.store('data').fetchData(), interval * 1000);
             }
@@ -131,15 +137,56 @@ document.addEventListener('alpine:init', () => {
             return Alpine.store('global')?.t(key) || key;
         },
 
-        async addAccountWeb(reAuthEmail = null) {
+                async autoAddSwarm(domain) {
+            Alpine.store('global').showToast('🤖 Finding next available account...', 'info');
+            try {
+                const res1 = await fetch('/api/swarm/next-pending?domain=' + encodeURIComponent(domain));
+                const data1 = await res1.json();
+                if (data1.status !== 'ok') {
+                    Alpine.store('global').showToast('Error: ' + data1.error, 'error');
+                    return;
+                }
+                const targetEmail = data1.email;
+                Alpine.store('global').showToast('🤖 Starting Zero-Touch robot for ' + targetEmail + '...', 'info');
+                
+                const res2 = await fetch('/api/swarm/auto-onboard', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: targetEmail })
+                });
+                const data2 = await res2.json();
+                if (data2.status === 'ok') {
+                    Alpine.store('global').showToast('Zero-Touch robot running for ' + targetEmail + '!', 'success');
+                    const modal = document.getElementById('add_account_modal');
+                    if (modal) modal.close();
+                } else {
+                    Alpine.store('global').showToast('Error: ' + data2.error, 'error');
+                }
+            } catch (e) {
+                Alpine.store('global').showToast('Failed to launch auto-onboard: ' + e.message, 'error');
+            }
+        },
+
+                async addAccountWeb(reAuthEmail = null) {
             const password = Alpine.store('global').webuiPassword;
             
-            // Open window synchronously to avoid popup blockers
-            const oauthWindow = window.open('', 'google_oauth', 'width=600,height=700,scrollbars=yes');
-            if (oauthWindow) {
-                oauthWindow.document.write('<div style="font-family:sans-serif;padding:20px;">Loading authorization page...</div>');
+            if (typeof reAuthEmail === 'string' && reAuthEmail.startsWith('@')) {
+                const domain = reAuthEmail;
+                try {
+                    const res = await fetch('/api/swarm/next-pending?domain=' + encodeURIComponent(domain));
+                    const data = await res.json();
+                    if (data.status === 'ok') {
+                        reAuthEmail = data.email;
+                    } else {
+                        Alpine.store('global').showToast('Error finding account: ' + data.error, 'error');
+                        return;
+                    }
+                } catch(e) {
+                    Alpine.store('global').showToast('Error: ' + e.message, 'error');
+                    return;
+                }
             }
-
+            
             try {
                 const urlPath = reAuthEmail
                     ? `/api/auth/url?email=${encodeURIComponent(reAuthEmail)}`
@@ -150,20 +197,21 @@ document.addEventListener('alpine:init', () => {
 
                 const data = await response.json();
 
-                if (data.status === 'ok') {
+                if (data.status === 'ok' && data.url) {
                     // Show info toast that OAuth is in progress
                     Alpine.store('global').showToast(Alpine.store('global').t('oauthInProgress'), 'info');
 
-                    // Open OAuth window
-                    if (oauthWindow) {
-                        oauthWindow.location.href = data.url;
-                    } else {
-                        window.open(data.url, 'google_oauth', 'width=600,height=700,scrollbars=yes');
-                    }
+                    // Launch clean window via backend to bypass 10-account limit
+                    await fetch('/api/swarm/launch-clean-window', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ email: reAuthEmail, url: data.url })
+                    });
 
                     // Poll for account changes instead of relying on postMessage
                     // (since OAuth callback is now on port 51121, not this server)
                     const initialAccountCount = Alpine.store('data').accounts.length;
+                    const initialEmails = new Set(Alpine.store('data').accounts.map((account) => account.email));
                     let pollCount = 0;
                     const maxPolls = 60; // 2 minutes (2 second intervals)
                     let cancelled = false;
@@ -178,9 +226,6 @@ document.addEventListener('alpine:init', () => {
                             clearInterval(pollInterval);
                             Alpine.store('global').oauthProgress.active = false;
                             Alpine.store('global').showToast(Alpine.store('global').t('oauthCancelled'), 'info');
-                            if (oauthWindow && !oauthWindow.closed) {
-                                oauthWindow.close();
-                            }
                         }
                     };
 
@@ -193,20 +238,17 @@ document.addEventListener('alpine:init', () => {
                         pollCount++;
                         Alpine.store('global').oauthProgress.current = pollCount;
 
-                        // Check if OAuth window was closed manually
-                        if (oauthWindow && oauthWindow.closed && !cancelled) {
-                            clearInterval(pollInterval);
-                            Alpine.store('global').oauthProgress.active = false;
-                            Alpine.store('global').showToast(Alpine.store('global').t('oauthWindowClosed'), 'warning');
-                            return;
-                        }
-
-                        // Refresh account list
+                        // Refresh account list before deciding whether the
+                        // browser window closing means failure. OAuth can finish
+                        // and close its tab before the next dashboard poll.
                         await Alpine.store('data').fetchData();
 
-                        // Check if new account was added
-                        const currentAccountCount = Alpine.store('data').accounts.length;
-                        if (currentAccountCount > initialAccountCount) {
+                        const currentAccounts = Alpine.store('data').accounts;
+                        const addedAccount = currentAccounts.find((account) => !initialEmails.has(account.email));
+                        const targetAccount = reAuthEmail ? currentAccounts.find((account) => account.email === reAuthEmail) : null;
+
+                        // Check for a newly added account or a re-authenticated target.
+                        if (addedAccount || (targetAccount && !targetAccount.isInvalid)) {
                             clearInterval(pollInterval);
                             Alpine.store('global').oauthProgress.active = false;
 
@@ -220,6 +262,15 @@ document.addEventListener('alpine:init', () => {
                             if (oauthWindow && !oauthWindow.closed) {
                                 oauthWindow.close();
                             }
+                        }
+
+                        // Only report a closed window after checking the refreshed
+                        // account list. The prior code returned too early here.
+                        if (oauthWindow && oauthWindow.closed && !cancelled) {
+                            clearInterval(pollInterval);
+                            Alpine.store('global').oauthProgress.active = false;
+                            Alpine.store('global').showToast(Alpine.store('global').t('oauthWindowClosed'), 'warning');
+                            return;
                         }
 
                         // Stop polling after max attempts

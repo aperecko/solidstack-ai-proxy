@@ -126,10 +126,13 @@ export const LOAD_CODE_ASSIST_HEADERS = ANTIGRAVITY_HEADERS;
 export const DEFAULT_PROJECT_ID = 'rising-fact-p41fc';
 
 // Configurable constants - values from config.json take precedence
-export const TOKEN_REFRESH_INTERVAL_MS = config?.tokenCacheTtlMs || (5 * 60 * 1000); // From config or 5 minutes
+// Google OAuth access tokens are valid ~1 hour, so the 5-minute default was
+// re-forcing a token-endpoint round-trip ~12x/hour/account while idle. 55 minutes
+// uses the real lifetime without chasing the expiry cliff.
+export const TOKEN_REFRESH_INTERVAL_MS = config?.tokenCacheTtlMs || (55 * 60 * 1000); // From config or 55 minutes
 export const REQUEST_BODY_LIMIT = config?.requestBodyLimit || '50mb';
 export const ANTIGRAVITY_AUTH_PORT = 9092;
-export const DEFAULT_PORT = config?.port || 8080;
+export const DEFAULT_PORT = config?.port || 1987;
 
 // Multi-account configuration
 export const ACCOUNT_CONFIG_PATH = config?.accountConfigPath || join(
@@ -162,7 +165,7 @@ export const FIRST_RETRY_DELAY_MS = config?.firstRetryDelayMs || 1000; // Quick 
 export const SWITCH_ACCOUNT_DELAY_MS = config?.switchAccountDelayMs || 5000; // Delay before switching accounts
 
 // Consecutive failure tracking - extended cooldown after repeated failures
-export const MAX_CONSECUTIVE_FAILURES = config?.maxConsecutiveFailures || 3;
+export const MAX_CONSECUTIVE_FAILURES = config?.maxConsecutiveFailures || 5;
 export const EXTENDED_COOLDOWN_MS = config?.extendedCooldownMs || 60000; // 1 minute
 
 // Capacity exhaustion - progressive backoff tiers for model capacity issues
@@ -186,6 +189,14 @@ export const MIN_BACKOFF_MS = 2000;
 // Jitter range for capacity backoff (Thundering Herd Prevention)
 // Applied to MODEL_CAPACITY_EXHAUSTED to stagger client retries
 export const CAPACITY_JITTER_MAX_MS = 10000; // ±5s jitter range
+
+// Drain rate estimation — pre-emptive rotation thresholds
+// Accounts projected to deplete within this window are excluded from selection
+export const DRAIN_ETA_EXCLUSION_MS = config?.drainEtaExclusionMs || 120_000; // 2 min
+// Accounts within this ETA receive a scoring penalty (but aren't excluded)
+export const DRAIN_ETA_WARNING_MS = config?.drainEtaWarningMs || 300_000;     // 5 min
+// Rolling window for computing requests-per-minute velocity
+export const DRAIN_VELOCITY_WINDOW_MS = config?.drainVelocityWindowMs || 300_000; // 5 min
 
 // Thinking model constants
 export const MIN_SIGNATURE_LENGTH = 50; // Minimum valid thinking signature length
@@ -504,11 +515,11 @@ const _FALLBACK_PRESETS = [
         config: {
             ANTHROPIC_AUTH_TOKEN: 'test',
             ANTHROPIC_BASE_URL: 'http://localhost:1987',
-            ANTHROPIC_MODEL: 'gemini-3.1-pro-low',
-            ANTHROPIC_DEFAULT_OPUS_MODEL: 'gemini-3.1-pro-low',
-            ANTHROPIC_DEFAULT_SONNET_MODEL: 'gemini-3.5-flash-low',
-            ANTHROPIC_DEFAULT_HAIKU_MODEL: 'gemini-3.5-flash-low',
-            CLAUDE_CODE_SUBAGENT_MODEL: 'gemini-3.5-flash-low',
+            ANTHROPIC_MODEL: 'gemini-3.1-pro-high',
+            ANTHROPIC_DEFAULT_OPUS_MODEL: 'gemini-3.1-pro-high',
+            ANTHROPIC_DEFAULT_SONNET_MODEL: 'gemini-3.7-flash-high',
+            ANTHROPIC_DEFAULT_HAIKU_MODEL: 'gemini-3.1-flash-lite',
+            CLAUDE_CODE_SUBAGENT_MODEL: 'gemini-3.7-flash-high',
             ENABLE_EXPERIMENTAL_MCP_CLI: 'true'
         }
     }
@@ -523,7 +534,7 @@ export const MODEL_FALLBACK_MAP = {};
 // Default test models for each family (used by test suite)
 export const TEST_MODELS = {
     claude: 'claude-opus-4-6-thinking',
-    gemini: 'gemini-3.5-flash-low'
+    gemini: 'gemini-3.7-flash-high'
 };
 
 /**
@@ -711,6 +722,9 @@ export default {
     QUOTA_EXHAUSTED_BACKOFF_TIERS_MS,
     MIN_BACKOFF_MS,
     CAPACITY_JITTER_MAX_MS,
+    DRAIN_ETA_EXCLUSION_MS,
+    DRAIN_ETA_WARNING_MS,
+    DRAIN_VELOCITY_WINDOW_MS,
     MIN_SIGNATURE_LENGTH,
     GEMINI_MAX_OUTPUT_TOKENS,
     GEMINI_SKIP_SIGNATURE,

@@ -66,21 +66,38 @@ function generatePKCE() {
  * @param {string} [customRedirectUri] - Optional custom redirect URI (e.g. for WebUI)
  * @returns {{url: string, verifier: string, state: string}} Auth URL and PKCE data
  */
-export function getAuthorizationUrl(customRedirectUri = null) {
+export function getAuthorizationUrl(customRedirectUri = null, loginHint = null) {
     const { verifier, challenge } = generatePKCE();
     const state = crypto.randomBytes(16).toString('hex');
 
+    let promptValue = 'consent select_account';
+    
+    if (loginHint && loginHint.includes('@') && loginHint.split('@')[0].length > 0) {
+        promptValue = 'consent';
+    }
+
+    // Google requires the redirect URI to exactly match the callback listener.
+    // Keep the default fixed for the registered OAuth client; callers may pass
+    // an explicitly configured URI when a non-default callback port is used.
+    const redirectUri = customRedirectUri || OAUTH_REDIRECT_URI;
     const params = new URLSearchParams({
         client_id: OAUTH_CONFIG.clientId,
-        redirect_uri: customRedirectUri || OAUTH_REDIRECT_URI,
+        redirect_uri: redirectUri,
         response_type: 'code',
         scope: OAUTH_CONFIG.scopes.join(' '),
         access_type: 'offline',
-        prompt: 'consent',
+        prompt: promptValue,
         code_challenge: challenge,
         code_challenge_method: 'S256',
         state: state
     });
+
+    if (loginHint) {
+        params.set('login_hint', loginHint);
+        if (loginHint.includes('@')) {
+            params.set('hd', loginHint.split('@')[1]);
+        }
+    }
 
     return {
         url: `${OAUTH_CONFIG.authUrl}?${params.toString()}`,
@@ -171,20 +188,53 @@ function tryBindPort(server, port, host = '0.0.0.0') {
  * @param {number} timeoutMs - Timeout in milliseconds (default 120000)
  * @returns {{promise: Promise<string>, abort: Function, getPort: Function}} Object with promise, abort, and getPort functions
  */
-export function startCallbackServer(expectedState, timeoutMs = 120000) {
-    let server = null;
-    let timeoutId = null;
-    let isAborted = false;
-    let actualPort = OAUTH_CONFIG.callbackPort;
-    const host = process.env.HOST || '0.0.0.0';
+// Module-level shared callback server state
+let sharedCallbackServer = null;
+let sharedServerPort = OAUTH_CONFIG.callbackPort;
+const activePendingCallbacks = new Map();
 
-    const promise = new Promise(async (resolve, reject) => {
-        // Build list of ports to try: primary + fallbacks
+// Idle-release: the callback port (default 51121) must NOT be held forever.
+// The redirect_uri baked into Google auth URLs is always localhost:51121, so any
+// standalone login script (e.g. swarm-auth-script.js, accounts:add CLI) in another
+// process needs to be able to bind it. The shared server therefore closes itself
+// shortly after the last pending flow resolves/aborts.
+const SHARED_SERVER_IDLE_CLOSE_MS = 10000;
+let sharedServerCloseTimer = null;
+
+function cancelSharedServerClose() {
+    if (sharedServerCloseTimer) {
+        clearTimeout(sharedServerCloseTimer);
+        sharedServerCloseTimer = null;
+    }
+}
+
+function scheduleSharedServerClose() {
+    if (activePendingCallbacks.size > 0) return;
+    cancelSharedServerClose();
+    sharedServerCloseTimer = setTimeout(() => {
+        sharedServerCloseTimer = null;
+        if (activePendingCallbacks.size > 0 || !sharedCallbackServer) return;
+        try {
+            sharedCallbackServer.close(() => {});
+            logger.info(`[OAuth] Shared callback server idle — released port ${sharedServerPort}`);
+        } catch (e) {
+            logger.warn(`[OAuth] Error closing idle shared callback server: ${e.message}`);
+        }
+        sharedCallbackServer = null;
+    }, SHARED_SERVER_IDLE_CLOSE_MS);
+}
+
+function ensureSharedCallbackServer(host) {
+    if (sharedCallbackServer) {
+        cancelSharedServerClose();
+        return Promise.resolve(sharedServerPort);
+    }
+
+    return new Promise(async (resolve, reject) => {
         const portsToTry = [OAUTH_CONFIG.callbackPort, ...(OAUTH_CONFIG.callbackFallbackPorts || [])];
-        const errors = [];
 
-        server = http.createServer((req, res) => {
-            const url = new URL(req.url, `http://${host === '0.0.0.0' ? 'localhost' : host}:${actualPort}`);
+        const server = http.createServer((req, res) => {
+            const url = new URL(req.url, `http://${host === '0.0.0.0' ? 'localhost' : host}:${sharedServerPort}`);
 
             if (url.pathname !== '/oauth-callback') {
                 res.writeHead(404);
@@ -208,25 +258,31 @@ export function startCallbackServer(expectedState, timeoutMs = 120000) {
                     </body>
                     </html>
                 `);
-                server.close();
-                reject(new Error(`OAuth error: ${error}`));
+                if (state && activePendingCallbacks.has(state)) {
+                    const cb = activePendingCallbacks.get(state);
+                    activePendingCallbacks.delete(state);
+                    if (cb.timeoutId) clearTimeout(cb.timeoutId);
+                    cb.reject(new Error(`OAuth error: ${error}`));
+                    scheduleSharedServerClose();
+                }
                 return;
             }
 
-            if (state !== expectedState) {
+            // Look up state in active pending callbacks
+            const activeCb = state ? activePendingCallbacks.get(state) : null;
+
+            if (!activeCb) {
                 res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
                 res.end(`
                     <html>
                     <head><meta charset="UTF-8"><title>Authentication Failed</title></head>
                     <body style="font-family: system-ui; padding: 40px; text-align: center;">
                         <h1 style="color: #dc3545;">❌ Authentication Failed</h1>
-                        <p>State mismatch - possible CSRF attack.</p>
+                        <p>State mismatch or expired authorization session. Please click "Add Account" or "Retry" to start a fresh login.</p>
                         <p>You can close this window.</p>
                     </body>
                     </html>
                 `);
-                server.close();
-                reject(new Error('State mismatch'));
                 return;
             }
 
@@ -242,8 +298,10 @@ export function startCallbackServer(expectedState, timeoutMs = 120000) {
                     </body>
                     </html>
                 `);
-                server.close();
-                reject(new Error('No authorization code'));
+                activePendingCallbacks.delete(state);
+                if (activeCb.timeoutId) clearTimeout(activeCb.timeoutId);
+                activeCb.reject(new Error('No authorization code'));
+                scheduleSharedServerClose();
                 return;
             }
 
@@ -254,95 +312,79 @@ export function startCallbackServer(expectedState, timeoutMs = 120000) {
                 <head><meta charset="UTF-8"><title>Authentication Successful</title></head>
                 <body style="font-family: system-ui; padding: 40px; text-align: center;">
                     <h1 style="color: #28a745;">✅ Authentication Successful!</h1>
-                    <p>You can close this window and return to the terminal.</p>
-                    <script>setTimeout(() => window.close(), 2000);</script>
+                    <p>Google Account connected. You can close this window now.</p>
+                    <script>setTimeout(() => window.close(), 1500);</script>
                 </body>
                 </html>
             `);
 
-            server.close();
-            resolve(code);
+            activePendingCallbacks.delete(state);
+            if (activeCb.timeoutId) clearTimeout(activeCb.timeoutId);
+            activeCb.resolve(code);
+            scheduleSharedServerClose();
         });
 
-        // Try ports with fallback logic (issue #176 - Windows EACCES fix)
-        let boundSuccessfully = false;
         for (const port of portsToTry) {
             try {
                 await tryBindPort(server, port, host);
-                actualPort = port;
-                boundSuccessfully = true;
-
-                if (port !== OAUTH_CONFIG.callbackPort) {
-                    logger.warn(`[OAuth] Primary port ${OAUTH_CONFIG.callbackPort} unavailable, using fallback port ${port}`);
-                } else {
-                    logger.info(`[OAuth] Callback server listening on ${host}:${port}`);
-                }
-                break;
+                sharedServerPort = port;
+                sharedCallbackServer = server;
+                logger.info(`[OAuth] Shared callback server listening on ${host}:${port}`);
+                return resolve(port);
             } catch (err) {
-                const errMsg = err.code === 'EACCES'
-                    ? `Permission denied on port ${port}`
-                    : err.code === 'EADDRINUSE'
-                    ? `Port ${port} already in use`
-                    : `Failed to bind port ${port}: ${err.message}`;
-                errors.push(errMsg);
-                logger.warn(`[OAuth] ${errMsg}`);
+                logger.warn(`[OAuth] Port ${port} unavailable: ${err.message}`);
             }
         }
+        reject(new Error(`Failed to bind OAuth callback server on ports: ${portsToTry.join(', ')}`));
+    });
+}
 
-        if (!boundSuccessfully) {
-            // All ports failed - provide helpful error message
-            const isWindows = process.platform === 'win32';
-            let errorMsg = `Failed to start OAuth callback server.\nTried ports: ${portsToTry.join(', ')}\n\nErrors:\n${errors.join('\n')}`;
+/**
+ * Start a local server to receive the OAuth callback
+ * Supports multiple concurrent state flows via a shared listener
+ *
+ * @param {string} expectedState - Expected state parameter for CSRF protection
+ * @param {number} timeoutMs - Timeout in milliseconds (default 120000)
+ * @returns {{promise: Promise<string>, abort: Function, getPort: Function}} Object with promise, abort, and getPort functions
+ */
+export function startCallbackServer(expectedState, timeoutMs = 120000) {
+    let timeoutId = null;
+    let isAborted = false;
+    const host = process.env.HOST || '0.0.0.0';
 
-            if (isWindows) {
-                errorMsg += `\n
-================== WINDOWS TROUBLESHOOTING ==================
-The default port range may be reserved by Hyper-V/WSL2/Docker.
-
-Option 1: Use a custom port
-  Set OAUTH_CALLBACK_PORT=3456 in your environment or .env file
-
-Option 2: Reset Windows NAT (run as Administrator)
-  net stop winnat && net start winnat
-
-Option 3: Check reserved port ranges
-  netsh interface ipv4 show excludedportrange protocol=tcp
-
-Option 4: Exclude port from reservation (run as Administrator)
-  netsh int ipv4 add excludedportrange protocol=tcp startport=51121 numberofports=1
-==============================================================`;
-            } else {
-                errorMsg += `\n\nTry setting a custom port: OAUTH_CALLBACK_PORT=3456`;
-            }
-
-            reject(new Error(errorMsg));
-            return;
+    const promise = new Promise(async (resolve, reject) => {
+        try {
+            await ensureSharedCallbackServer(host);
+        } catch (err) {
+            return reject(err);
         }
 
-        // Timeout after specified duration
+        // Register this state in active pending callbacks
         timeoutId = setTimeout(() => {
             if (!isAborted) {
-                server.close();
+                activePendingCallbacks.delete(expectedState);
+                scheduleSharedServerClose();
                 reject(new Error('OAuth callback timeout - no response received'));
             }
         }, timeoutMs);
+
+        activePendingCallbacks.set(expectedState, {
+            resolve,
+            reject,
+            timeoutId
+        });
     });
 
-    // Abort function to clean up server when manual completion happens
     const abort = () => {
         if (isAborted) return;
         isAborted = true;
-        if (timeoutId) {
-            clearTimeout(timeoutId);
-        }
-        if (server) {
-            server.close();
-            logger.info('[OAuth] Callback server aborted (manual completion)');
-        }
+        if (timeoutId) clearTimeout(timeoutId);
+        activePendingCallbacks.delete(expectedState);
+        scheduleSharedServerClose();
+        logger.info(`[OAuth] Callback session aborted for state ${expectedState}`);
     };
 
-    // Get actual port (useful when fallback is used)
-    const getPort = () => actualPort;
+    const getPort = () => sharedServerPort;
 
     return { promise, abort, getPort };
 }
@@ -354,7 +396,7 @@ Option 4: Exclude port from reservation (run as Administrator)
  * @param {string} verifier - PKCE code verifier
  * @returns {Promise<{accessToken: string, refreshToken: string, expiresIn: number}>} OAuth tokens
  */
-export async function exchangeCode(code, verifier) {
+export async function exchangeCode(code, verifier, redirectUri = OAUTH_REDIRECT_URI) {
     const response = await throttledFetch(OAUTH_CONFIG.tokenUrl, {
         method: 'POST',
         headers: {
@@ -366,7 +408,7 @@ export async function exchangeCode(code, verifier) {
             code: code,
             code_verifier: verifier,
             grant_type: 'authorization_code',
-            redirect_uri: OAUTH_REDIRECT_URI
+            redirect_uri: redirectUri
         })
     });
 
@@ -448,7 +490,10 @@ export async function getUserEmail(accessToken) {
     }
 
     const userInfo = await response.json();
-    return userInfo.email;
+    return {
+        email: userInfo.email,
+        picture: userInfo.picture || null
+    };
 }
 
 /**
@@ -516,18 +561,19 @@ export async function discoverProjectId(accessToken) {
  * @param {string} verifier - PKCE code verifier
  * @returns {Promise<{email: string, refreshToken: string, accessToken: string, projectId: string|null}>} Complete account info
  */
-export async function completeOAuthFlow(code, verifier) {
-    // Exchange code for tokens
-    const tokens = await exchangeCode(code, verifier);
+export async function completeOAuthFlow(code, verifier, redirectUri = OAUTH_REDIRECT_URI) {
+    // Exchange code for tokens using the same redirect URI used to authorize.
+    const tokens = await exchangeCode(code, verifier, redirectUri);
 
-    // Get user email
-    const email = await getUserEmail(tokens.accessToken);
+    // Get user info
+    const { email, picture } = await getUserEmail(tokens.accessToken);
 
     // Discover project ID
     const projectId = await discoverProjectId(tokens.accessToken);
 
     return {
         email,
+        picture,
         refreshToken: tokens.refreshToken,
         accessToken: tokens.accessToken,
         projectId

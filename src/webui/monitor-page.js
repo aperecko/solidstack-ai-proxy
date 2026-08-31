@@ -83,7 +83,7 @@ export function buildMonitorPage() {
         '<footer>Strategy: <span id="strat">-</span> &nbsp;·&nbsp; <a href="/">&#8592; Dashboard</a> &nbsp;·&nbsp; <a href="/api/utilization">Raw JSON</a></footer>',
         '<script>',
         'var R=15,cd=R;',
-        'function fmt(s){if(s==null)return"\\u2014";if(s<60)return s+"s";var m=Math.floor(s/60),r=s%60;return m+"m"+(r>0?" "+r+"s":"")}',
+        'function fmt(s){if(s==null)return"\\u2014";if(s<60)return s+"s";if(s<3600){var m=Math.floor(s/60),r=s%60;return m+"m"+(r>0?" "+r+"s":"");}if(s<86400){var h=Math.floor(s/3600),m=Math.floor((s%3600)/60);return h+"h"+(m>0?" "+m+"m":"");}var d=Math.floor(s/86400),h=Math.floor((s%86400)/3600);return d+"d"+(h>0?" "+h+"h":"");}',
         'function ago(s){if(s==null)return"never";if(s<60)return s+"s ago";if(s<3600)return Math.floor(s/60)+"m ago";return Math.floor(s/3600)+"h ago"}',
         'function bc(p){return p<=5?"z":p<=25?"lw":p<=60?"m":"h"}',
         'function ac(e){var p=["#3b82f6","#8b5cf6","#06b6d4","#10b981","#f59e0b","#ef4444","#ec4899","#a855f7","#84cc16","#f97316"],h=0,i;for(i=0;i<e.length;i++)h=(h*31+e.charCodeAt(i))&0xffff;return p[h%p.length]}',
@@ -105,7 +105,7 @@ export function buildMonitorPage() {
         '    \'<div class="fs fb"><div class="v">\'+f.total+\'</div><div class="l">Total</div></div>\'+',
         '    \'<div class="sep"></div>\'+',
         '    \'<div class="fs fg"><div class="v">\'+f.free+\'</div><div class="l">Free</div></div>\'+',
-        '    \'<div class="fs fp"><div class="v">\'+f.pro+\'</div><div class="l">Pro</div></div>\'+',
+        '    \'<div class="fs fp"><div class="v">\'+f.pro+\'</div><div class="l">Pro / Plus</div></div>\'+',
         '    \'<div class="sep"></div>\'+',
         '    \'<div class="fs fg"><div class="v">\'+f.geminiAvailable+\'</div><div class="l">Gemini &#10003;</div></div>\'+',
         '    \'<div class="fs fb"><div class="v">\'+f.claudeAvailable+\'</div><div class="l">Claude &#10003;</div></div>\'+',
@@ -114,14 +114,15 @@ export function buildMonitorPage() {
         '    \'<div class="fs \'+( f.invalid>0?"fy":"fg")+\'"><div class="v">\'+f.invalid+\'</div><div class="l">Invalid</div></div>\';}',
         'function renderCard(a){',
         '  var c=ac(a.email);',
-        '  var tier=a.tier==="pro"?\'<span class="badge b-pro">PRO</span>\':\'<span class="badge b-free">FREE</span>\';',
+        '  var tier=a.tier==="ultra"?\'<span class="badge" style="background:#4c1d95;color:#ddd6fe">ULTRA</span>\':a.tier==="plus"?\'<span class="badge" style="background:#0284c7;color:#bae6fd">PLUS</span>\':a.tier==="pro"?\'<span class="badge b-pro">PRO</span>\':a.email.includes("virtual-gemini-key")?\'<span class="badge" style="background:#065f46;color:#a7f3d0">API KEY</span>\':\'<span class="badge b-free">FREE</span>\';',
+        '  var isEligibleClaude=(a.tier==="pro"||a.tier==="ultra"||a.tier==="plus")&&!a.email.includes("virtual-gemini-key");',
         '  var sb=!a.enabled?\'<span class="badge b-dis">DISABLED</span>\':',
         '    a.status.fullyExhausted?\'<span class="badge b-ex">EXHAUSTED</span>\':',
-        '    (!a.status.geminiAvailable||!a.status.claudeAvailable)?\'<span class="badge b-pt">PARTIAL</span>\':',
+        '    (!a.status.geminiAvailable||(isEligibleClaude&&!a.status.claudeAvailable))?\'<span class="badge b-pt">PARTIAL</span>\':',
         '    \'<span class="badge b-ok">ACTIVE</span>\';',
-        '  var cls=a.status.fullyExhausted?"c-ex":(!a.status.geminiAvailable||!a.status.claudeAvailable)?"c-pt":"c-ok";',
+        '  var cls=a.status.fullyExhausted?"c-ex":(!a.status.geminiAvailable||(isEligibleClaude&&!a.status.claudeAvailable))?"c-pt":"c-ok";',
         '  var gp=a.status.geminiAvailable?\'<span class="sp sg">&#128994; Gemini</span>\':\'<span class="sp srd">&#128308; Gemini &middot; resets \'+fmt(a.status.nextResetInSec)+\'</span>\';',
-        '  var cp=a.status.claudeAvailable?\'<span class="sp sbl">&#128309; Claude</span>\':\'<span class="sp srd">&#128308; Claude &middot; resets \'+fmt(a.status.nextResetInSec)+\'</span>\';',
+        '  var cp=a.status.claudeAvailable?\'<span class="sp sbl">&#128309; Claude</span>\':(!isEligibleClaude?\'<span class="sp" style="background:#1e2130;color:var(--mt);border:1px solid var(--bd)">&#9898; Claude N/A</span>\':\'<span class="sp srd">&#128308; Claude &middot; resets \'+fmt(a.status.nextResetInSec)+\'</span>\');',
         '  var kp=a.isCoolingDown?\'<span class="sp sy">&#8987; Cooldown \'+fmt(Math.ceil(a.cooldownMs/1000))+\'</span>\':"";',
         '  var ip=a.isInvalid?\'<span class="sp srd">&#10060; \'+( a.invalidReason||"Invalid")+\'</span>\':"";',
         '  var cdBtns=\'<div style="display:flex;gap:4px;margin-top:6px;align-items:center">\'+',
@@ -248,7 +249,7 @@ export function buildMonitorPage() {
         'refresh();',
         '<\/script>',
         '</body>',
-        '</html>'html>'
+        '</html>'
     ].join('\n');
     return html;
 }

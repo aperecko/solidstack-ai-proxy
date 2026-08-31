@@ -1,0 +1,253 @@
+<div x-data="overnight" class="view-container">
+    <!-- Header -->
+    <div class="flex flex-wrap items-center justify-between gap-4 mb-6">
+        <div class="flex flex-wrap items-center gap-3">
+            <h1 class="text-2xl font-bold text-white tracking-tight flex items-center gap-2">
+                <svg class="w-6 h-6 text-neon-purple" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/>
+                </svg>
+                Lorax Overnight Evolution
+            </h1>
+            <!-- Status Pill -->
+            <div class="flex items-center gap-2 px-3 py-1 rounded-full text-xs font-mono border"
+                 :class="status.running ? 'bg-neon-green/10 border-neon-green/30 text-neon-green' : 'bg-space-800 border-space-border text-gray-400'">
+                <div class="w-2 h-2 rounded-full" :class="status.running ? 'bg-neon-green shadow-[0_0_8px_rgba(34,197,94,0.8)] animate-pulse' : 'bg-gray-600'"></div>
+                <span x-text="status.running ? `RUNNING (PID: ${status.pid})` : 'IDLE / READY'"></span>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-2">
+            <button class="btn btn-xs btn-outline border-space-border text-gray-400 hover:text-white transition-all h-8 px-3" 
+                    @click="fetchStatus(); fetchLogs();">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                <span>Refresh</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Metrics KPI Grid -->
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+        <div class="view-card !p-4 bg-space-900 border border-space-border/60">
+            <div class="text-[11px] font-mono text-gray-400 uppercase tracking-wider mb-1">Total Cycles</div>
+            <div class="text-2xl font-bold text-white font-mono" x-text="status.total_cycles || 0">0</div>
+            <div class="text-[11px] text-gray-500 font-mono mt-1">Autonomous rounds</div>
+        </div>
+        <div class="view-card !p-4 bg-space-900 border border-space-border/60">
+            <div class="text-[11px] font-mono text-gray-400 uppercase tracking-wider mb-1">Merged Mutations</div>
+            <div class="text-2xl font-bold text-neon-green font-mono" x-text="status.merged_cycles || 0">0</div>
+            <div class="text-[11px] text-gray-500 font-mono mt-1">Passing benchmarks</div>
+        </div>
+        <div class="view-card !p-4 bg-space-900 border border-space-border/60">
+            <div class="text-[11px] font-mono text-gray-400 uppercase tracking-wider mb-1">Discarded Rounds</div>
+            <div class="text-2xl font-bold text-red-400 font-mono" x-text="status.discarded_cycles || 0">0</div>
+            <div class="text-[11px] text-gray-500 font-mono mt-1">Regressions rejected</div>
+        </div>
+        <div class="view-card !p-4 bg-space-900 border border-space-border/60">
+            <div class="text-[11px] font-mono text-gray-400 uppercase tracking-wider mb-1">Evolutionary Yield</div>
+            <div class="text-2xl font-bold text-neon-cyan font-mono" x-text="successRate + '%'">0%</div>
+            <div class="text-[11px] text-gray-500 font-mono mt-1">Acceptance efficiency</div>
+        </div>
+    </div>
+
+    <!-- Control Box -->
+    <div class="view-card mb-6 !p-5 bg-space-900 border border-space-border/60">
+        <div class="flex items-center justify-between mb-4">
+            <h3 class="text-sm font-bold text-white uppercase tracking-wider font-mono flex items-center gap-2">
+                <svg class="w-4 h-4 text-neon-purple" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+                </svg>
+                Overnight Evolution Parameters
+            </h3>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-5">
+            <div>
+                <label class="block text-xs font-mono text-gray-400 mb-1.5">Max Execution Duration (Hours)</label>
+                <input type="number" step="0.5" x-model="hours" :disabled="status.running"
+                       class="w-full bg-space-950 border border-space-border rounded-xl px-3.5 py-2 text-sm text-gray-200 font-mono focus:border-neon-purple focus:outline-none">
+            </div>
+            <div>
+                <label class="block text-xs font-mono text-gray-400 mb-1.5">Harness / Test Command</label>
+                <input type="text" x-model="testCmd" :disabled="status.running"
+                       class="w-full bg-space-950 border border-space-border rounded-xl px-3.5 py-2 text-sm text-gray-200 font-mono focus:border-neon-purple focus:outline-none">
+            </div>
+            <div>
+                <label class="block text-xs font-mono text-gray-400 mb-1.5">Cycle Interval (Seconds)</label>
+                <input type="number" x-model="intervalSec" :disabled="status.running"
+                       class="w-full bg-space-950 border border-space-border rounded-xl px-3.5 py-2 text-sm text-gray-200 font-mono focus:border-neon-purple focus:outline-none">
+            </div>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-3">
+            <template x-if="!status.running">
+                <button @click="startLoop()" :disabled="starting"
+                        class="btn bg-gradient-to-r from-neon-purple to-purple-600 hover:from-purple-600 hover:to-purple-700 border-none text-white px-6 rounded-xl font-mono text-xs shadow-lg shadow-neon-purple/20 gap-2 h-10">
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                    </svg>
+                    <span x-text="starting ? 'Initializing...' : 'Launch Overnight Evolution'"></span>
+                </button>
+            </template>
+
+            <template x-if="status.running">
+                <button @click="stopLoop()" :disabled="stopping"
+                        class="btn bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/40 px-6 rounded-xl font-mono text-xs gap-2 h-10">
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                    <span x-text="stopping ? 'Halting...' : 'Abort / Stop Loop'"></span>
+                </button>
+            </template>
+        </div>
+    </div>
+
+    <!-- Meta-Cognitive Skill Deficits Panel -->
+    <template x-if="deficits && deficits.length > 0">
+        <div class="mb-6 bg-red-950/40 border border-red-500/40 rounded-2xl p-5 shadow-lg shadow-red-500/10">
+            <h2 class="text-lg font-bold text-red-400 mb-2 flex items-center gap-2">
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 18.657A8 8 0 016.343 7.343S7 9 9 10c0-2 .5-5 2.986-7C14 5 16.09 5.777 17.656 7.343A7.975 7.975 0 0120 13a7.975 7.975 0 01-2.343 5.657z" /><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.879 16.121A3 3 0 1012.015 11L11 14H9c0 .768.293 1.536.879 2.121z" /></svg>
+                Skill Deficits Detected (Meta-Cognitive Gate)
+            </h2>
+            <p class="text-xs text-red-300 mb-4">
+                LORAX encountered 3 consecutive verification failures on the following components.
+                Run <code class="bg-red-900/60 px-1 rounded text-red-200">/learn</code> to teach the system how to resolve these constraints.
+            </p>
+            <div class="space-y-3">
+                <template x-for="def in deficits" :key="def.timestamp">
+                    <div class="bg-black/50 p-3 rounded-lg border border-red-500/20 flex flex-col gap-1">
+                        <div class="flex items-center justify-between">
+                            <span class="font-mono text-neon-cyan font-bold text-xs" x-text="def.component"></span>
+                            <span class="text-[10px] text-gray-500" x-text="new Date(def.timestamp * 1000).toLocaleTimeString()"></span>
+                        </div>
+                        <div class="text-xs text-gray-300">
+                            <span class="text-red-400 font-semibold">Missing Context:</span> <span x-text="def.missing_skill_context"></span>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+    </template>
+
+    <!-- Subtab Navigation -->
+    <div class="flex items-center gap-2 border-b border-space-border/60 mb-4 pb-1">
+        <button class="px-4 py-2 text-xs font-mono font-bold transition-all border-b-2"
+                :class="activeSubtab === 'overview' ? 'border-neon-purple text-neon-purple' : 'border-transparent text-gray-400 hover:text-white'"
+                @click="activeSubtab = 'overview'">
+            Recent Iterations
+        </button>
+        <button class="px-4 py-2 text-xs font-mono font-bold transition-all border-b-2"
+                :class="activeSubtab === 'report' ? 'border-neon-cyan text-neon-cyan' : 'border-transparent text-gray-400 hover:text-white'"
+                @click="activeSubtab = 'report'; fetchLogs();">
+            Live Audit Report
+        </button>
+        <button class="px-4 py-2 text-xs font-mono font-bold transition-all border-b-2"
+                :class="activeSubtab === 'raw_logs' ? 'border-neon-green text-neon-green' : 'border-transparent text-gray-400 hover:text-white'"
+                @click="activeSubtab = 'raw_logs'; fetchLogs();">
+            Daemon Output
+        </button>
+        <button class="px-4 py-2 text-xs font-mono font-bold transition-all border-b-2"
+                :class="activeSubtab === 'visual_diffs' ? 'border-blue-400 text-blue-400' : 'border-transparent text-gray-400 hover:text-white'"
+                @click="activeSubtab = 'visual_diffs'">
+            Mutation Review
+        </button>
+    </div>
+
+    <!-- Tab Contents -->
+    <!-- 1. Recent Iterations Table -->
+    <div x-show="activeSubtab === 'overview'" class="view-card !p-0 bg-space-900 border border-space-border/60">
+        <table class="w-full">
+            <thead>
+                <tr class="bg-space-950/60 border-b border-space-border/40">
+                    <th class="pl-6 py-3 text-left text-[10px] font-bold text-gray-400 uppercase tracking-wider font-mono">Iteration</th>
+                    <th class="py-3 text-left text-[10px] font-bold text-gray-400 uppercase tracking-wider font-mono">Timestamp</th>
+                    <th class="py-3 text-left text-[10px] font-bold text-gray-400 uppercase tracking-wider font-mono">Target Branch</th>
+                    <th class="py-3 text-left text-[10px] font-bold text-gray-400 uppercase tracking-wider font-mono">Latency / Cost</th>
+                    <th class="py-3 text-left text-[10px] font-bold text-gray-400 uppercase tracking-wider font-mono">Verdict</th>
+                    <th class="py-3 pr-6 text-right text-[10px] font-bold text-gray-400 uppercase tracking-wider font-mono">Posterior Score</th>
+                </tr>
+            </thead>
+            <tbody>
+                <template x-for="item in (status.recent_iterations || [])" :key="item.iteration">
+                    <tr class="border-b border-space-border/20 hover:bg-white/5 transition-colors font-mono text-xs">
+                        <td class="pl-6 py-3.5 font-bold text-white" x-text="'#' + item.iteration"></td>
+                        <td class="py-3.5 text-gray-400" x-text="item.time"></td>
+                        <td class="py-3.5 text-neon-cyan" x-text="item.branch"></td>
+                        <td class="py-3.5 text-gray-400" x-text="item.latency"></td>
+                        <td class="py-3.5">
+                            <span class="px-2 py-0.5 rounded text-[10px] font-bold tracking-wide"
+                                  :class="item.verdict === 'MERGED' ? 'bg-neon-green/20 text-neon-green border border-neon-green/30' : 'bg-red-500/20 text-red-400 border border-red-500/30'"
+                                  x-text="item.verdict"></span>
+                        </td>
+                        <td class="py-3.5 pr-6 text-right text-gray-300" x-text="item.posterior"></td>
+                    </tr>
+                </template>
+                <tr x-show="!status.recent_iterations || status.recent_iterations.length === 0">
+                    <td colspan="6" class="py-8 text-center text-gray-500 text-sm font-sans">
+                        No overnight iterations recorded yet. Launch a loop above to begin recursive self-evolution.
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <!-- 2. Execution Report Markdown View -->
+    <div x-show="activeSubtab === 'report'" class="view-card !p-5 bg-space-900 border border-space-border/60">
+        <div class="flex items-center justify-between mb-3 text-xs font-mono text-gray-400">
+            <span>Source: <code class="text-neon-cyan">.logs/overnight_execution_report.md</code></span>
+            <button class="btn btn-xs btn-ghost text-gray-400 hover:text-white" @click="fetchLogs()">Reload</button>
+        </div>
+        <pre class="p-4 rounded-xl bg-space-950 border border-space-border text-xs font-mono text-gray-300 whitespace-pre-wrap overflow-x-auto max-h-[500px] custom-scrollbar" x-text="logs"></pre>
+    </div>
+
+    <!-- 3. Daemon Raw Output -->
+    <div x-show="activeSubtab === 'raw_logs'" class="view-card !p-5 bg-space-900 border border-space-border/60">
+        <div class="flex items-center justify-between mb-3 text-xs font-mono text-gray-400">
+            <span>Daemon Tail: <code class="text-neon-cyan">.logs/evolution.out.log</code></span>
+            <button class="btn btn-xs btn-ghost text-gray-400 hover:text-white" @click="fetchLogs()">Reload</button>
+        </div>
+        <pre class="p-4 rounded-xl bg-black border border-space-border text-xs font-mono text-emerald-400 whitespace-pre-wrap overflow-x-auto max-h-[500px] custom-scrollbar" x-text="rawLog"></pre>
+    </div>
+
+    <!-- 4. Mutation Review (Visual Diffs) -->
+    <div x-show="activeSubtab === 'visual_diffs'" class="view-card !p-5 bg-space-900 border border-space-border/60">
+        <div class="flex items-center justify-between mb-4">
+            <h3 class="text-sm font-bold text-white uppercase tracking-wider font-mono">Latest Visual Evolution</h3>
+            <button class="btn btn-xs btn-outline border-space-border text-gray-400 hover:text-white transition-all h-8 px-3" 
+                    @click="$refs.beforeImg.src='/lorax_before.png?' + new Date().getTime(); $refs.afterImg.src='/lorax_after.png?' + new Date().getTime();">
+                Refresh Images
+            </button>
+        </div>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="space-y-2">
+                <div class="text-xs font-mono text-red-400 font-bold">BEFORE MUTATION</div>
+                <div class="relative min-h-[200px] rounded-xl border border-red-500/30 bg-black/40 flex items-center justify-center overflow-hidden">
+                    <img x-ref="beforeImg" src="/lorax_before.png" class="w-full rounded" onerror="this.classList.add('hidden'); this.nextElementSibling.classList.remove('hidden');" onload="this.classList.remove('hidden'); this.nextElementSibling.classList.add('hidden');">
+                    <div class="text-center p-6 text-gray-500 font-mono text-xs hidden">
+                        <svg class="w-8 h-8 mx-auto mb-2 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                        </svg>
+                        <span>No baseline screenshot recorded</span>
+                    </div>
+                </div>
+            </div>
+            <div class="space-y-2">
+                <div class="text-xs font-mono text-neon-green font-bold">AFTER MUTATION</div>
+                <div class="relative min-h-[200px] rounded-xl border border-neon-green/30 bg-black/40 flex items-center justify-center overflow-hidden">
+                    <img x-ref="afterImg" src="/lorax_after.png" class="w-full rounded" onerror="this.classList.add('hidden'); this.nextElementSibling.classList.remove('hidden');" onload="this.classList.remove('hidden'); this.nextElementSibling.classList.add('hidden');">
+                    <div class="text-center p-6 text-gray-500 font-mono text-xs hidden">
+                        <svg class="w-8 h-8 mx-auto mb-2 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <span>No mutated screenshot recorded</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="mt-4 p-4 rounded-xl bg-space-950 border border-space-border">
+            <div class="text-xs font-mono text-gray-400 mb-1 uppercase">LLM Judge Reasoning</div>
+            <div class="text-sm text-gray-300 font-mono" x-text="status.latest_reasoning || 'Evaluate the most recent commit in the Recent Iterations tab.'"></div>
+        </div>
+    </div>
+</div>

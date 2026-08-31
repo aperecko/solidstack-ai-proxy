@@ -14,6 +14,7 @@
 
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import express from 'express';
 import { getPublicConfig, saveConfig, config } from '../config.js';
 import { DEFAULT_PORT, ACCOUNT_CONFIG_PATH, MAX_ACCOUNTS, DEFAULT_PRESETS, DEFAULT_SERVER_PRESETS } from '../constants.js';
@@ -22,9 +23,12 @@ import { readServerPresets, saveServerPreset, updateServerPreset, deleteServerPr
 import { logger } from '../utils/logger.js';
 import { getAuthorizationUrl, completeOAuthFlow, startCallbackServer } from '../auth/oauth.js';
 import { loadAccounts, saveAccounts } from '../account-manager/storage.js';
+import { discoverSwarmAccounts, provisionSwarmAccounts } from '../account-manager/swarm-admin.js';
 import { getPackageVersion } from '../utils/helpers.js';
-import { getRoutingStats } from '../cloudcode/routing-logger.js';
+import { getRoutingStats, getSystemUsageReport } from '../cloudcode/routing-logger.js';
 import { eventLogger } from '../utils/event-logger.js';
+import { buildMonitorPage } from './monitor-page.js';
+import { NATIVE_TOOLS, callNativeTool } from '../tool-catalog.js';
 
 // Get package version
 const packageVersion = getPackageVersion();
@@ -32,6 +36,21 @@ const packageVersion = getPackageVersion();
 // OAuth state storage (state -> { server, verifier, state, timestamp })
 // Maps state ID to active OAuth flow data
 const pendingOAuthFlows = new Map();
+
+function safeRuntimeInfo() {
+    return {
+        nodeVersion: process.version,
+        execPath: process.execPath,
+        cwd: process.cwd(),
+        pid: process.pid,
+        host: process.env.HOST || '0.0.0.0',
+        port: process.env.PORT || DEFAULT_PORT,
+        oauthCallbackPort: process.env.OAUTH_CALLBACK_PORT || '51121',
+        oauthRedirectUri: `http://localhost:${process.env.OAUTH_CALLBACK_PORT || '51121'}/oauth-callback`,
+        accountConfigPath: ACCOUNT_CONFIG_PATH
+    };
+}
+
 
 /**
  * WebUI Helper Functions - Direct account manipulation
@@ -282,17 +301,144 @@ function validateConfigFields(input) {
  * @param {AccountManager} accountManager - Account manager instance
  */
 export function mountWebUI(app, dirname, accountManager) {
-    // Apply auth middleware
-    app.use(createAuthMiddleware());
-
-    // Serve compiled production control plane dist bundle if present
+    // The legacy Commander dashboard is the primary :1987 experience.
+    // Keep the React control plane available explicitly at /control-plane so
+    // it cannot shadow the account-management dashboard at `/`.
     const distPath = path.join(dirname, '../../dist');
     if (fs.existsSync(distPath)) {
-        app.use(express.static(distPath));
+        app.use('/control-plane', express.static(distPath));
     }
 
-    // Serve static files from public directory
+    // Legacy Commander assets and views remain the default dashboard.
     app.use(express.static(path.join(dirname, '../public')));
+
+    // React control-plane deep links resolve under its explicit prefix.
+    if (fs.existsSync(distPath)) {
+        app.get('/control-plane/*', (req, res) => res.sendFile(path.join(distPath, 'index.html')));
+    }
+
+    // ==========================================
+    // UI Self-Improvement & Changes API
+    // ==========================================
+    const uiChangesLogPath = path.join(dirname, '../../.logs/ui-changes.jsonl');
+
+    /**
+     * POST /api/ui-changes - Append a UI state transition event
+     */
+    app.post('/api/ui-changes', (req, res) => {
+        try {
+            const event = req.body;
+            if (!event || typeof event !== 'object') {
+                return res.status(400).json({ status: 'error', error: 'Invalid event payload' });
+            }
+            const logDir = path.dirname(uiChangesLogPath);
+            if (!fs.existsSync(logDir)) {
+                fs.mkdirSync(logDir, { recursive: true });
+            }
+            const line = JSON.stringify({
+                timestamp: event.timestamp || new Date().toISOString(),
+                zoneId: event.zoneId || 'unknown',
+                action: event.action || 'applied',
+                secondsRemainingAtEvent: event.secondsRemainingAtEvent ?? null,
+                note: event.note || null
+            }) + '\n';
+            fs.appendFileSync(uiChangesLogPath, line, 'utf8');
+            res.json({ status: 'ok', logged: true });
+        } catch (err) {
+            logger.error('[WebUI] Failed to append ui-change log:', err);
+            res.status(500).json({ status: 'error', error: err.message });
+        }
+    });
+
+    /**
+     * GET /api/ui-changes - Read back recent UI change log entries
+     */
+    app.get('/api/ui-changes', (req, res) => {
+        try {
+            const limit = parseInt(req.query.limit || '50', 10);
+            if (!fs.existsSync(uiChangesLogPath)) {
+                return res.json({ status: 'ok', entries: [] });
+            }
+            const content = fs.readFileSync(uiChangesLogPath, 'utf8');
+            const lines = content.trim().split('\n').filter(Boolean);
+            const entries = lines.slice(-limit).map(l => {
+                try { return JSON.parse(l); } catch { return null; }
+            }).filter(Boolean);
+            res.json({ status: 'ok', entries });
+        } catch (err) {
+            res.status(500).json({ status: 'error', error: err.message });
+        }
+    });
+
+    // ==========================================
+    // Unified Tool Catalog API
+    // ==========================================
+
+    /**
+     * GET /api/tools - Merged tool catalog: native UI/browser tools + SSmcp infra tools
+     */
+    app.get('/api/tools', async (req, res) => {
+        try {
+            const nativeList = [...NATIVE_TOOLS];
+            let ssmcpTools = [];
+            try {
+                const ssmcpUrl = process.env.SSMCP_HTTP_TARGET || 'http://127.0.0.1:8765';
+                const response = await fetch(`${ssmcpUrl}/tools/list`, { signal: AbortSignal.timeout(1500) });
+                if (response.ok) {
+                    const data = await response.json();
+                    if (Array.isArray(data?.tools)) {
+                        ssmcpTools = data.tools.map(t => ({ ...t, category: 'infra' }));
+                    }
+                }
+            } catch (err) {
+                // SSmcp offline or not reachable; proceed with native tools
+            }
+            res.json({
+                status: 'ok',
+                tools: [...nativeList, ...ssmcpTools]
+            });
+        } catch (err) {
+            res.status(500).json({ status: 'error', error: err.message });
+        }
+    });
+
+    /**
+     * POST /api/tools/call - Dispatch tool execution by name
+     */
+    app.post('/api/tools/call', async (req, res) => {
+        try {
+            const { name, arguments: args } = req.body || {};
+            if (!name) {
+                return res.status(400).json({ status: 'error', error: 'Missing tool name' });
+            }
+
+            const isNative = NATIVE_TOOLS.some(t => t.name === name);
+            if (isNative) {
+                const result = await callNativeTool(name, args || {});
+                return res.json(result);
+            }
+
+            // Forward to SSmcp server
+            const ssmcpUrl = process.env.SSMCP_HTTP_TARGET || 'http://127.0.0.1:8765';
+            const forwardRes = await fetch(`${ssmcpUrl}/tools/call`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, arguments: args || {} }),
+                signal: AbortSignal.timeout(15000)
+            });
+
+            if (!forwardRes.ok) {
+                const errText = await forwardRes.text();
+                return res.status(forwardRes.status).json({ ok: false, error: errText });
+            }
+
+            const resultData = await forwardRes.json();
+            res.json(resultData);
+        } catch (err) {
+            logger.error(`[Tool Catalog] Tool execution error for ${req.body?.name}:`, err);
+            res.status(500).json({ ok: false, error: err.message });
+        }
+    });
 
     // ==========================================
     // Account Management API
@@ -312,7 +458,7 @@ export function mountWebUI(app, dirname, accountManager) {
      *
      * Designed for the /monitor dashboard and external alerting.
      */
-    app.get('/api/utilization', (req, res) => {
+    app.get('/api/utilization', async (req, res) => {
         try {
             const allAccounts = accountManager.getAllAccounts();
             const now = Date.now();
@@ -348,11 +494,21 @@ export function mountWebUI(app, dirname, accountManager) {
                 let geminiExhausted = 0, geminiTotal = 0;
                 let claudeExhausted = 0, claudeTotal = 0;
 
+                const isEligibleForClaude = account.type !== 'apikey' && (tier === 'pro' || tier === 'ultra' || tier === 'plus');
+
                 for (const [modelId, q] of Object.entries(models)) {
-                    const frac = typeof q.remainingFraction === 'number' ? q.remainingFraction : null;
+                    const isClaude = modelId.toLowerCase().includes('claude');
+                    const isGemini = modelId.toLowerCase().includes('gemini');
+
+                    let frac = typeof q.remainingFraction === 'number' ? q.remainingFraction : null;
+                    if (isClaude && !isEligibleForClaude) {
+                        frac = 0;
+                    }
+
                     const resetISO = q.resetTime || null;
                     const resetMs = resetISO ? Math.max(0, new Date(resetISO).getTime() - now) : null;
-                    const exhausted = frac !== null && frac < 0.05;
+                    const isLimited = rateLimits[modelId]?.isRateLimited || false;
+                    const exhausted = isLimited || (frac !== null && frac < 0.05);
 
                     quota[modelId] = {
                         remainingFraction: frac,
@@ -364,20 +520,18 @@ export function mountWebUI(app, dirname, accountManager) {
                         resetInMin: resetMs !== null ? Math.ceil(resetMs / 60000) : null
                     };
 
-                    const family = modelId.includes('claude') ? 'claude' : modelId.includes('gemini') ? 'gemini' : null;
-                    if (family === 'gemini') { geminiTotal++; if (exhausted) geminiExhausted++; }
-                    if (family === 'claude') { claudeTotal++; if (exhausted) claudeExhausted++; }
+                    if (isGemini) { geminiTotal++; if (exhausted) geminiExhausted++; }
+                    if (isClaude) { claudeTotal++; if (exhausted || !isEligibleForClaude) claudeExhausted++; }
                 }
 
-                const geminiAvailable = geminiTotal > 0 && geminiExhausted < geminiTotal;
-                const claudeAvailable = claudeTotal > 0 && claudeExhausted < claudeTotal;
-                const fullyExhausted = geminiTotal > 0 && claudeTotal > 0 && !geminiAvailable && !claudeAvailable;
+                const cooldownMs = accountManager.getCooldownRemaining(email);
+                const isAccountActive = account.enabled !== false && !account.isInvalid && cooldownMs === 0;
+                const geminiAvailable = isAccountActive && geminiTotal > 0 && geminiExhausted < geminiTotal;
+                const claudeAvailable = isAccountActive && isEligibleForClaude && claudeTotal > 0 && claudeExhausted < claudeTotal;
+                const fullyExhausted = isAccountActive && !geminiAvailable && !claudeAvailable;
 
                 // ── Health tracker ─────────────────────────────────────────
                 const health = healthByEmail[email] || null;
-
-                // ── Cooldown ───────────────────────────────────────────────
-                const cooldownMs = accountManager.getCooldownRemaining(email);
 
                 // ── Next available time ────────────────────────────────────
                 // The soonest any rate-limited/exhausted model resets
@@ -432,13 +586,14 @@ export function mountWebUI(app, dirname, accountManager) {
 
             // ── Fleet-wide summary ─────────────────────────────────────────
             const freeAccounts = accounts.filter(a => a.tier === 'free');
-            const proAccounts  = accounts.filter(a => a.tier === 'pro');
+            const proAccounts  = accounts.filter(a => a.tier === 'pro' || a.tier === 'plus' || a.tier === 'ultra');
             const fullyExhaustedCount = accounts.filter(a => a.status.fullyExhausted).length;
             const geminiAvailableCount = accounts.filter(a => a.status.geminiAvailable).length;
             const claudeAvailableCount = accounts.filter(a => a.status.claudeAvailable).length;
 
             const routingStats = getRoutingStats();
             const persistentEvents = eventLogger.getEvents(50);
+            const systemUsage = await getSystemUsageReport();
 
             res.json({
                 status: 'ok',
@@ -455,11 +610,146 @@ export function mountWebUI(app, dirname, accountManager) {
                     strategy: accountManager.getStrategyName()
                 },
                 routingStats,
+                systemUsage,
                 eventLog: persistentEvents,
                 accounts
             });
         } catch (error) {
             logger.error('[WebUI] Error building utilization report:', error);
+            res.status(500).json({ status: 'error', error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/system-usage - Real-time AI operations, accumulated tokens, and local vs remote workload breakdown
+     */
+    app.get('/api/system-usage', async (req, res) => {
+        try {
+            const usageReport = await getSystemUsageReport();
+            res.json({
+                status: 'ok',
+                generatedAt: new Date().toISOString(),
+                ...usageReport
+            });
+        } catch (error) {
+            logger.error('[WebUI] Error building system usage report:', error);
+            res.status(500).json({ status: 'error', error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/ui-changes - Append a UI change-log entry (from ChangeConfirmGate)
+     * Appends as JSON lines to .logs/ui-changes.jsonl so AGY Desktop / OpenCode
+     * can tail or read the file directly for fallback/fix context.
+     */
+    app.post('/api/ui-changes', (req, res) => {
+        try {
+            const entry = req.body;
+            if (!entry || typeof entry !== 'object' || !entry.zoneId || !entry.action) {
+                return res.status(400).json({ status: 'error', error: 'zoneId and action are required' });
+            }
+            const logDir = path.join(dirname, '../../.logs');
+            if (!fs.existsSync(logDir)) {
+                fs.mkdirSync(logDir, { recursive: true });
+            }
+            const logPath = path.join(logDir, 'ui-changes.jsonl');
+            const line = JSON.stringify({
+                timestamp: entry.timestamp || new Date().toISOString(),
+                zoneId: entry.zoneId,
+                action: entry.action,
+                secondsRemainingAtEvent: entry.secondsRemainingAtEvent ?? null,
+                note: entry.note || null,
+            });
+            fs.appendFileSync(logPath, line + '\n');
+            res.json({ status: 'ok' });
+        } catch (error) {
+            logger.error('[WebUI] Error appending UI change log:', error);
+            res.status(500).json({ status: 'error', error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/ui-changes - Read recent UI change-log entries
+     * Convenience read endpoint for the Evolve drawer's history strip.
+     */
+    app.get('/api/ui-changes', (req, res) => {
+        try {
+            const limit = parseInt(req.query.limit || '100', 10);
+            const logPath = path.join(dirname, '../../.logs', 'ui-changes.jsonl');
+            if (!fs.existsSync(logPath)) {
+                return res.json({ status: 'ok', entries: [] });
+            }
+            const lines = fs.readFileSync(logPath, 'utf8').trim().split('\n').filter(Boolean);
+            const entries = lines.slice(-limit).map((l) => {
+                try { return JSON.parse(l); } catch { return null; }
+            }).filter(Boolean);
+            res.json({ status: 'ok', entries });
+        } catch (error) {
+            res.status(500).json({ status: 'error', error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/tools - Merged tool catalog: native tools + SSmcp's tools/list
+     * One flat, categorized list so the chat agent (and the sidebar) can pick
+     * from every available action - UI changes, browser control, and all
+     * SSmcp infra tools - without knowing which backend each one lives on.
+     */
+    app.get('/api/tools', async (req, res) => {
+        try {
+            let mcpTools = [];
+            try {
+                const mcpRes = await fetch('http://127.0.0.1:8765/mcp', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ jsonrpc: '2.0', id: Date.now(), method: 'tools/list', params: {} }),
+                });
+                const mcpData = await mcpRes.json();
+                mcpTools = (mcpData?.result?.tools || []).map(t => ({ ...t, category: t.category || 'infra' }));
+            } catch (e) {
+                logger.warn('[WebUI] Could not reach SSmcp for tools/list (non-fatal):', e.message);
+            }
+            res.json({
+                status: 'ok',
+                tools: [...NATIVE_TOOLS, ...mcpTools],
+                categories: ['ui', 'browser', 'infra'],
+            });
+        } catch (error) {
+            res.status(500).json({ status: 'error', error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/tools/call - Dispatch a tool call by name
+     * Native tools (modify_ui, open_chrome_profile) run locally.
+     * Anything else is proxied to SSmcp's mcp-api tools/call.
+     */
+    app.post('/api/tools/call', async (req, res) => {
+        try {
+            const { name, arguments: args } = req.body || {};
+            if (!name) {
+                return res.status(400).json({ status: 'error', error: 'name is required' });
+            }
+            const isNative = NATIVE_TOOLS.some(t => t.name === name);
+            if (isNative) {
+                const result = await callNativeTool(name, args || {});
+                return res.json({ status: result.ok ? 'ok' : 'error', ...result });
+            }
+            // Proxy to SSmcp
+            const mcpRes = await fetch('http://127.0.0.1:8765/mcp', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    jsonrpc: '2.0',
+                    id: Date.now(),
+                    method: 'tools/call',
+                    params: { name, arguments: args || {} },
+                }),
+            });
+            const mcpData = await mcpRes.json();
+            res.json({ status: 'ok', result: mcpData?.result ?? mcpData });
+        } catch (error) {
+            logger.error('[WebUI] Error dispatching tool call:', error);
             res.status(500).json({ status: 'error', error: error.message });
         }
     });
@@ -518,6 +808,14 @@ export function mountWebUI(app, dirname, accountManager) {
         } catch (error) {
             res.status(500).json({ status: 'error', error: error.message });
         }
+    });
+
+    /**
+     * GET / - Legacy Commander dashboard entry point.
+     * Explicit route prevents a stale React dist index from becoming primary.
+     */
+    app.get('/', (req, res) => {
+        res.sendFile(path.join(dirname, '../public/index.html'));
     });
 
     /**
@@ -688,6 +986,197 @@ export function mountWebUI(app, dirname, accountManager) {
             });
         } catch (error) {
             logger.error('[WebUI] Error updating account thresholds:', error);
+            res.status(500).json({ status: 'error', error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/swarm/credentials/:email - Retrieve on-demand password and 2SV backup codes
+     */
+     app.get('/api/swarm/credentials/:email', async (req, res) => {
+        try {
+            const { email } = req.params;
+            const vaultPath = path.join(os.homedir(), '.config', 'antigravity-proxy', 'swarm-recovery-vault.json');
+            let vaultData = {};
+            if (fs.existsSync(vaultPath)) {
+                try {
+                    vaultData = JSON.parse(fs.readFileSync(vaultPath, 'utf8'));
+                } catch (e) {}
+            }
+            const accVault = vaultData[email] || {};
+            res.json({
+                status: 'ok',
+                email,
+                password: process.env.DEFAULT_PASSWORD || 'Swarmd6f9b714!!2026',
+                recoveryEmail: accVault.recoveryEmail || 'apps@reseller.mysolidstate.ca',
+                backupCodes: accVault.backupCodes || [],
+                nextBackupCode: (accVault.backupCodes && accVault.backupCodes[0]) || null
+            });
+        } catch (error) {
+            res.status(500).json({ status: 'error', error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/swarm/launch-clean-window - Launch clean window bypassing 10-account stack
+     */
+    app.post('/api/swarm/launch-clean-window', async (req, res) => {
+        try {
+            const { email, url } = req.body;
+            const targetUrl = url || `https://accounts.google.com/AccountChooser?Email=${encodeURIComponent(email)}&continue=https://myaccount.google.com`;
+            const { spawn } = await import('child_process');
+            spawn('open', ['-na', 'Google Chrome', '--args', '--incognito', targetUrl], { detached: true, stdio: 'ignore' }).unref();
+            res.json({ status: 'ok', message: `Launched clean window for ${email}` });
+        } catch (error) {
+            res.status(500).json({ status: 'error', error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/swarm/launch-admin-profile - Open Admin Console in the exact authenticated Super Admin Chrome profile
+     */
+    app.post('/api/swarm/launch-admin-profile', async (req, res) => {
+        try {
+            const { email } = req.body;
+            let profileDirectory = 'Profile 8'; // adam@adamassist.com
+            if (email.includes('@reseller.mysolidstate.ca')) {
+                profileDirectory = 'Profile 13'; // apps@reseller.mysolidstate.ca
+            } else if (email.includes('@mysolidstate.ca')) {
+                profileDirectory = 'Profile 10'; // hub@mysolidstate.ca
+            } else if (email.includes('@adamassist.com')) {
+                profileDirectory = 'Profile 8'; // adam@adamassist.com
+            }
+
+            const targetUrl = `https://admin.google.com/ac/users/${encodeURIComponent(email)}/security`;
+            const { spawn } = await import('child_process');
+            spawn('open', ['-na', 'Google Chrome', '--args', `--profile-directory=${profileDirectory}`, targetUrl], { detached: true, stdio: 'ignore' }).unref();
+            res.json({ status: 'ok', profileDirectory, targetUrl });
+        } catch (error) {
+            res.status(500).json({ status: 'error', error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/swarm/discover - Discover numeric/z-prefixed Workspace users.
+     */
+    app.get('/api/swarm/discover', async (req, res) => {
+        try {
+            const accounts = await discoverSwarmAccounts();
+            res.json({ status: 'ok', accounts, count: accounts.length });
+        } catch (error) {
+            logger.error('[WebUI] Swarm discovery failed:', error);
+            res.status(500).json({ status: 'error', error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/swarm/provision - Create swarm users through Google Admin SDK.
+     */
+    app.post('/api/swarm/provision', async (req, res) => {
+        try {
+            const { domain, prefix = '', startIdx = 1, count } = req.body || {};
+            const normalizedCount = Number(count);
+            const normalizedStart = Number(startIdx);
+            if (!domain || !Number.isInteger(normalizedCount) || normalizedCount < 1 || normalizedCount > 100 || !Number.isInteger(normalizedStart) || normalizedStart < 0) {
+                return res.status(400).json({ status: 'error', error: 'domain, integer startIdx, and count between 1 and 100 are required' });
+            }
+            const safePrefix = String(prefix);
+            if (!/^[a-zA-Zz]*$/.test(safePrefix)) {
+                return res.status(400).json({ status: 'error', error: 'prefix may contain letters only' });
+            }
+            const allowedDomains = ['mysolidstate.ca', 'reseller.mysolidstate.ca', 'adamassist.com'];
+            if (!allowedDomains.includes(domain)) {
+                return res.status(400).json({ status: 'error', error: `Unsupported domain: ${domain}` });
+            }
+            const created = await provisionSwarmAccounts(domain, safePrefix, normalizedStart, normalizedCount);
+            res.json({ status: 'ok', domain, prefix: safePrefix, startIdx: normalizedStart, requested: normalizedCount, created });
+        } catch (error) {
+            logger.error('[WebUI] Swarm provisioning failed:', error);
+            res.status(500).json({ status: 'error', error: error.message });
+        }
+    });
+
+    /**
+     * POST /api/swarm/auto-onboard - Run autonomous zero-touch onboarding robot for an account
+     */
+    
+    app.get('/api/swarm/next-pending', async (req, res) => {
+        try {
+            const domain = req.query.domain;
+            const fs = await import('fs');
+            const path = await import('path');
+            const os = await import('os');
+            const vaultPath = path.join(os.homedir(), '.config', 'antigravity-proxy', 'swarm-recovery-vault.json');
+            const accountsPath = path.join(os.homedir(), '.config', 'antigravity-proxy', 'accounts.json');
+            const vault = JSON.parse(fs.readFileSync(vaultPath, 'utf8'));
+            const accountsData = JSON.parse(fs.readFileSync(accountsPath, 'utf8'));
+            const activeEmails = new Set(accountsData.accounts.map(a => a.email));
+            
+            const invalidAccount = accountsData.accounts.find(a => a.email.endsWith(domain) && a.isInvalid);
+            if (invalidAccount) {
+                return res.json({ status: 'ok', email: invalidAccount.email });
+            }
+            
+            const pending = Object.keys(vault)
+                .filter(email => !activeEmails.has(email) && email.endsWith(domain))
+                .sort((a, b) => {
+                    const numA = parseInt(a.match(/^(\d+)/)?.[1] || 0);
+                    const numB = parseInt(b.match(/^(\d+)/)?.[1] || 0);
+                    return numA - numB;
+                });
+                
+            if (pending.length > 0) {
+                res.json({ status: 'ok', email: pending[0] });
+            } else {
+                res.status(404).json({ status: 'error', error: 'No pending accounts in vault for domain ' + domain });
+            }
+        } catch (error) {
+            res.status(500).json({ status: 'error', error: error.message });
+        }
+    });
+
+    app.post('/api/swarm/auto-onboard', async (req, res) => {
+        try {
+            const { email } = req.body;
+            if (!email) {
+                return res.status(400).json({ status: 'error', error: 'Email is required' });
+            }
+            const { spawn } = await import('child_process');
+            const proc = spawn('node', ['ai-proxy/src/bulletproof-zero-touch.js', email], {
+                cwd: '/Users/test/Projects/solidstack',
+                detached: true,
+                stdio: 'ignore'
+            });
+            proc.unref();
+            res.json({ status: 'ok', message: `Autonomous zero-touch onboarding launched for ${email}` });
+        } catch (error) {
+            res.status(500).json({ status: 'error', error: error.message });
+        }
+    });
+
+    /**
+     * GET /api/swarm/latest-verification-code - Intercept 6-digit Google verification code from recovery inbox
+     */
+    app.get('/api/swarm/latest-verification-code', async (req, res) => {
+        try {
+            const email = req.query.email || '';
+            const timeout = req.query.timeout || '8';
+            const projectRoot = '/Users/test/Projects/solidstack';
+            const { exec } = await import('child_process');
+            exec(`python3 ss/recovery_listener.py "${email}" ${timeout}`, { cwd: projectRoot }, (error, stdout) => {
+                try {
+                    // Extract json payload
+                    const jsonMatch = stdout.match(/\{[\s\S]*\}/);
+                    if (jsonMatch) {
+                        const parsed = JSON.parse(jsonMatch[0]);
+                        return res.json(parsed);
+                    }
+                    res.json({ status: 'error', raw: stdout });
+                } catch (e) {
+                    res.status(500).json({ status: 'error', error: stdout || error?.message });
+                }
+            });
+        } catch (error) {
             res.status(500).json({ status: 'error', error: error.message });
         }
     });
@@ -1406,6 +1895,13 @@ export function mountWebUI(app, dirname, accountManager) {
     // OAuth API
     // ==========================================
 
+    // Safe diagnostics: runtime identity and OAuth callback configuration.
+    // No credentials or tokens are returned.
+    app.get('/api/diagnostics/runtime', (req, res) => {
+        res.json({ status: 'ok', runtime: safeRuntimeInfo() });
+    });
+
+
     /**
      * GET /api/auth/url - Get OAuth URL to start the flow
      * Uses CLI's OAuth flow (localhost:51121) instead of WebUI's port
@@ -1413,6 +1909,8 @@ export function mountWebUI(app, dirname, accountManager) {
      */
     app.get('/api/auth/url', async (req, res) => {
         try {
+            const loginHint = req.query.email || req.query.login_hint || null;
+
             // Clean up old flows (> 10 mins)
             const now = Date.now();
             for (const [key, val] of pendingOAuthFlows.entries()) {
@@ -1421,11 +1919,20 @@ export function mountWebUI(app, dirname, accountManager) {
                 }
             }
 
-            // Generate OAuth URL using default redirect URI (localhost:51121)
-            const { url, verifier, state } = getAuthorizationUrl();
+            // Use the registered callback URI deterministically. Do not silently
+            // generate a URL for one port while listening on another.
+            const callbackPort = Number(process.env.OAUTH_CALLBACK_PORT || 51121);
+            const redirectUri = `http://localhost:${callbackPort}/oauth-callback`;
+            const { url, verifier, state } = getAuthorizationUrl(redirectUri, loginHint);
 
-            // Start callback server on port 51121 (same as CLI)
-            const { promise: serverPromise, abort: abortServer } = startCallbackServer(state, 120000); // 2 min timeout
+            // Start the callback server on the same configured port. If that
+            // port is occupied, fail instead of silently creating a mismatched
+            // Google redirect URI.
+            const { promise: serverPromise, abort: abortServer, getPort } = startCallbackServer(state, 600000); // 10 min timeout
+            if (getPort() !== callbackPort) {
+                abortServer();
+                throw new Error(`OAuth callback port ${callbackPort} is unavailable; refusing fallback port ${getPort} because Google redirect URIs must match exactly`);
+            }
 
             // Store the flow data
             pendingOAuthFlows.set(state, {
@@ -1433,7 +1940,9 @@ export function mountWebUI(app, dirname, accountManager) {
                 abortServer,
                 verifier,
                 state,
-                timestamp: Date.now()
+                timestamp: Date.now(),
+                status: 'awaiting_callback',
+                emailHint: loginHint
             });
 
             // Start async handler for the OAuth callback
@@ -1441,25 +1950,37 @@ export function mountWebUI(app, dirname, accountManager) {
                 .then(async (code) => {
                     try {
                         logger.info('[WebUI] Received OAuth callback, completing flow...');
-                        const accountData = await completeOAuthFlow(code, verifier);
+                        const flow = pendingOAuthFlows.get(state);
+                        if (flow) flow.status = 'completing';
+                        const accountData = await completeOAuthFlow(code, verifier, redirectUri);
 
-                        // Add or update the account
-                        // Note: Don't set projectId here - it will be discovered and stored
-                        // in the refresh token via getProjectForAccount() on first use
+                        // Add or update the account with compound project binding
+                        const compoundToken = accountData.refreshToken.includes('||')
+                            ? accountData.refreshToken
+                            : `${accountData.refreshToken}||aicode-consumers`;
+
                         await addAccount({
                             email: accountData.email,
-                            refreshToken: accountData.refreshToken,
+                            picture: accountData.picture,
+                            refreshToken: compoundToken,
+                            projectId: 'aicode-consumers',
                             source: 'oauth'
                         });
 
                         // Reload AccountManager to pick up the new account
                         await accountManager.reload();
 
+                        const completedFlow = pendingOAuthFlows.get(state);
+                        if (completedFlow) {
+                            completedFlow.status = 'completed';
+                            completedFlow.email = accountData.email;
+                            completedFlow.completedAt = Date.now();
+                        }
                         logger.success(`[WebUI] Account ${accountData.email} added successfully`);
                     } catch (err) {
                         logger.error('[WebUI] OAuth flow completion error:', err);
                     } finally {
-                        pendingOAuthFlows.delete(state);
+                        setTimeout(() => pendingOAuthFlows.delete(state), 10 * 60 * 1000);
                     }
                 })
                 .catch((err) => {
@@ -1473,6 +1994,73 @@ export function mountWebUI(app, dirname, accountManager) {
             res.json({ status: 'ok', url, state });
         } catch (error) {
             logger.error('[WebUI] Error generating auth URL:', error);
+            res.status(500).json({ status: 'error', error: error.message });
+        }
+    });
+
+    app.get('/api/auth/status', (req, res) => {
+        const state = req.query.state;
+        if (!state) return res.status(400).json({ status: 'error', error: 'state is required' });
+        const flow = pendingOAuthFlows.get(state);
+        if (!flow) return res.json({ status: 'ok', state, phase: 'unknown' });
+        res.json({ status: 'ok', state, phase: flow.status || 'awaiting_callback', email: flow.email || null, error: flow.error || null });
+    });
+
+    /**
+     * POST /api/auth/launch-browser - Open the browser via the backend
+     * Uses incognito or specific Profile mapping depending on email domain
+     */
+    app.post('/api/auth/launch-browser', (req, res) => {
+        try {
+            const { url, email } = req.body;
+            if (!url) {
+                return res.status(400).json({ status: 'error', error: 'URL required' });
+            }
+            
+            let profileArg = '--incognito';
+            let isSwarm = false;
+            let debugPort = 9223;
+
+            if (email) {
+                const FAMILY_PROFILES = {
+                    'assistaius@gmail.com': 'Profile 24',
+                    'adamtechnicalsolutions@gmail.com': 'Profile 19',
+                    'apps000123000@gmail.com': 'Profile 20',
+                    'aptsoultuions@gmail.com': 'Profile 21',
+                    'haliburtonarcher@gmail.com': 'Profile 15',
+                    'adampps@gmail.com': 'Profile 14'
+                };
+                if (FAMILY_PROFILES[email]) {
+                    profileArg = `--profile-directory="${FAMILY_PROFILES[email]}"`;
+                } else if (email.endsWith('@adamassist.com') || email.endsWith('@reseller.mysolidstate.ca')) {
+                    isSwarm = true;
+                    // For swarms, we use incognito and a dedicated temp profile to allow the debugger to attach reliably
+                    const tempDir = `/tmp/swarm_profile_${Date.now()}`;
+                    profileArg += ` --user-data-dir=${tempDir} --remote-debugging-port=${debugPort} --no-first-run --no-default-browser-check --disable-fre --disable-sync --disable-features=Translate`;
+                }
+            }
+
+            const command = `open -n -a "Google Chrome" --args ${profileArg} "${url}"`;
+            import('child_process').then(({ exec }) => {
+                exec(command, (error) => {
+                    if (error) {
+                        logger.error(`[WebUI] Failed to launch Chrome:`, error);
+                        return res.status(500).json({ status: 'error', error: error.message });
+                    }
+                    
+                    if (isSwarm) {
+                        // Kick off headless CDP injection
+                        import('../auth/cdp-injector.js').then(({ injectSwarmPassword }) => {
+                            injectSwarmPassword(debugPort, email);
+                        }).catch(err => {
+                            logger.error(`[CDP] Failed to load injector: ${err.message}`);
+                        });
+                    }
+
+                    res.json({ status: 'ok', launched: true });
+                });
+            });
+        } catch (error) {
             res.status(500).json({ status: 'error', error: error.message });
         }
     });
@@ -1508,13 +2096,21 @@ export function mountWebUI(app, dirname, accountManager) {
             const { code } = extractCodeFromInput(callbackInput);
 
             // Complete the OAuth flow
-            const accountData = await completeOAuthFlow(code, verifier);
+            const callbackPort = Number(process.env.OAUTH_CALLBACK_PORT || 51121);
+            const redirectUri = `http://localhost:${callbackPort}/oauth-callback`;
+            const accountData = await completeOAuthFlow(code, verifier, redirectUri);
 
-            // Add or update the account
+            // Add or update the account. Preserve the managed project binding
+            // used by the automatic callback path so manual and automatic OAuth
+            // produce the same Antigravity account record.
+            const compoundToken = accountData.refreshToken.includes('||')
+                ? accountData.refreshToken
+                : `${accountData.refreshToken}||aicode-consumers`;
             await addAccount({
                 email: accountData.email,
-                refreshToken: accountData.refreshToken,
-                projectId: accountData.projectId,
+                picture: accountData.picture,
+                refreshToken: compoundToken,
+                projectId: accountData.projectId || 'aicode-consumers',
                 source: 'oauth'
             });
 

@@ -1,0 +1,117 @@
+<div x-data="philosophyDomain" class="view-container space-y-8">
+    <!-- Header -->
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-space-border pb-6">
+        <div>
+            <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-mono uppercase tracking-wider mb-2">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/></svg>
+                SolidStack Philosophy & Cognitive Domains
+            </div>
+            <h1 class="text-3xl font-bold text-white tracking-tight">Software Designed for How Your Brain Thinks</h1>
+            <p class="text-sm text-gray-400 mt-1 max-w-3xl">
+                Core Law: <strong class="text-gray-200">Changing something's name does not change its purposed abilities</strong>. Every craft expresses reality through its own linguistic poetry while the underlying physical invariants remain rock-solid.
+            </p>
+        </div>
+    </div>
+
+    <!-- Domain Selector Pills -->
+    <div class="space-y-3">
+        <div class="flex items-center justify-between">
+            <span class="text-xs font-mono uppercase tracking-widest text-gray-400">Select Your Craft / Mindset</span>
+            <span class="text-xs text-gray-500">Live Metaphor & Terminology Translation</span>
+        </div>
+        <div class="flex flex-wrap gap-2">
+            <template x-for="domain in domains" :key="domain.id">
+                <button @click="selectedDomain = domain" 
+                        class="px-4 py-2 rounded-xl text-sm font-medium border transition-all flex items-center gap-2"
+                        :class="selectedDomain.id === domain.id 
+                            ? 'bg-emerald-500/20 border-emerald-500/60 text-emerald-300 shadow-md shadow-emerald-500/10 scale-105' 
+                            : 'bg-space-900 border-space-border text-gray-400 hover:text-white hover:border-gray-600'">
+                    <span x-text="domain.icon"></span>
+                    <span x-text="domain.name"></span>
+                </button>
+            </template>
+        </div>
+    </div>
+
+    <!-- Active Domain & P-F-P Triad -->
+    <div class="view-card space-y-6">
+        <div class="flex items-center justify-between border-b border-space-border pb-4">
+            <div>
+                <h3 class="text-xl font-bold text-white flex items-center gap-2">
+                    <span x-text="selectedDomain.icon"></span>
+                    <span x-text="selectedDomain.name"></span>
+                </h3>
+                <p class="text-sm text-gray-400 mt-1" x-text="selectedDomain.tagline"></p>
+            </div>
+            <div class="flex items-center gap-3">
+                <button @click="navigator.clipboard.writeText(`System Instruction - Mindset: ${selectedDomain.name} (${selectedDomain.category})\nTagline: ${selectedDomain.tagline}\nPresent: ${selectedDomain.pfp.present}\nFuture: ${selectedDomain.pfp.future}\nPast: ${selectedDomain.pfp.past}`); if ($store.global?.showToast) $store.global.showToast('Domain cognitive prompt copied', 'success');"
+                        class="btn btn-xs btn-outline border-space-border text-gray-300 hover:text-emerald-400 font-mono gap-1">
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                    <span>Copy Domain Prompt</span>
+                </button>
+                <span class="text-xs font-mono px-3 py-1 rounded-full bg-space-800 border border-space-border text-gray-300" x-text="selectedDomain.category"></span>
+            </div>
+        </div>
+
+        <!-- The 3 P-F-P Triad Cards -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div class="p-4 rounded-xl bg-amber-500/5 border border-amber-500/20 space-y-2">
+                <div class="flex items-center justify-between text-xs font-mono font-bold text-amber-400 uppercase tracking-wider">
+                    <span>⚡ 1. The Present</span>
+                    <span>Interactions (1–3)</span>
+                </div>
+                <p class="text-xs text-gray-300 leading-relaxed" x-text="selectedDomain.pfp.present"></p>
+            </div>
+
+            <div class="p-4 rounded-xl bg-sky-500/5 border border-sky-500/20 space-y-2">
+                <div class="flex items-center justify-between text-xs font-mono font-bold text-sky-400 uppercase tracking-wider">
+                    <span>🔮 2. The Future</span>
+                    <span>Intentions (4–6)</span>
+                </div>
+                <p class="text-xs text-gray-300 leading-relaxed" x-text="selectedDomain.pfp.future"></p>
+            </div>
+
+            <div class="p-4 rounded-xl bg-purple-500/5 border border-purple-500/20 space-y-2">
+                <div class="flex items-center justify-between text-xs font-mono font-bold text-purple-400 uppercase tracking-wider">
+                    <span>🏛️ 3. The Past</span>
+                    <span>Identity (7–9)</span>
+                </div>
+                <p class="text-xs text-gray-300 leading-relaxed" x-text="selectedDomain.pfp.past"></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- The 10 Invariant Slots Projection -->
+    <div class="space-y-4">
+        <div class="flex items-center justify-between">
+            <h3 class="text-lg font-bold text-white flex items-center gap-2">
+                <svg class="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+                The 10 Invariant Slots Live Matrix
+            </h3>
+            <span class="text-xs font-mono text-emerald-400">Ports & API Contracts 100% Invariant</span>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <template x-for="idx in [0,1,2,3,4,5,6,7,8,9]" :key="idx">
+                <div class="p-4 rounded-xl border flex items-start justify-between gap-4 transition-all"
+                     :class="getTierColor(idx)">
+                    <div class="space-y-1">
+                        <div class="flex items-center gap-2">
+                            <span class="w-6 h-6 rounded bg-black/40 flex items-center justify-center font-mono font-bold text-xs text-white" x-text="idx"></span>
+                            <h4 class="font-bold text-sm text-white" x-text="getSlotData(idx).label"></h4>
+                        </div>
+                        <p class="text-xs text-gray-400" x-text="getSlotData(idx).metaphor"></p>
+                        <div class="pt-2 flex items-center gap-2 text-[11px] font-mono text-gray-500">
+                            <span x-text="getTechnicalInvariant(idx)"></span>
+                        </div>
+                    </div>
+                    <div class="text-right space-y-1.5 flex flex-col items-end">
+                        <span class="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded bg-black/40 text-gray-400"
+                              x-text="getTierLabel(idx)"></span>
+                        <span class="text-xs font-mono font-medium text-emerald-400" x-text="'[' + getSlotData(idx).verb + '()]'"></span>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </div>
+</div>

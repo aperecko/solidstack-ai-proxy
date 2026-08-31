@@ -60,8 +60,11 @@ window.DashboardStats.updateStats = function(component) {
             return;
         }
 
-        // Check if ANY tracked model with data is rate limited (<= 5%)
-        const hasRateLimitedModel = withData.some(([_, l]) => {
+        // Check if ANY applicable tracked model with data is rate limited (<= 5%)
+        const tier = (acc.subscription?.tier || acc.tier || 'free').toLowerCase();
+        const isFree = tier === 'free';
+        const hasRateLimitedModel = withData.some(([id, l]) => {
+            if (isFree && id.toLowerCase().includes('claude')) return false;
             if (l.remainingFraction === null || l.remainingFraction === undefined) return false;
             return l.remainingFraction <= 0.05;
         });
@@ -83,10 +86,13 @@ window.DashboardStats.updateStats = function(component) {
     let totalTrackedModels = 0;
 
     enabledAccounts.forEach(acc => {
+         const tier = (acc.subscription?.tier || acc.tier || 'free').toLowerCase();
+         const isFree = tier === 'free';
          const entries = Object.entries(acc.limits || {});
          entries.forEach(([id, l]) => {
-             // Skip null entries (no data)
+             // Skip null entries (no data) or Claude on free accounts
              if (l === null || l === undefined) return;
+             if (isFree && id.toLowerCase().includes('claude')) return;
              totalTrackedModels++;
              if (l.remainingFraction !== null && l.remainingFraction !== undefined && l.remainingFraction <= 0.05) {
                  totalLimitedModels++;
@@ -100,7 +106,7 @@ window.DashboardStats.updateStats = function(component) {
     };
 
     // Calculate subscription tier distribution
-    const subscription = { ultra: 0, pro: 0, free: 0, apikey: 0 };
+    const subscription = { ultra: 0, pro: 0, plus: 0, free: 0, apikey: 0 };
     enabledAccounts.forEach(acc => {
         if (acc.type === 'apikey') {
             subscription.apikey++;
@@ -110,6 +116,8 @@ window.DashboardStats.updateStats = function(component) {
                 subscription.ultra++;
             } else if (tier === 'pro') {
                 subscription.pro++;
+            } else if (tier === 'plus') {
+                subscription.plus++;
             } else {
                 subscription.free++;
             }

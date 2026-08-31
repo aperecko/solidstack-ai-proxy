@@ -51,7 +51,7 @@ const DEFAULT_CONFIG = {
     requestDelayMs: 200, // Delay in ms when throttling enabled (100-5000ms)
     // Rate limit handling (matches opencode-antigravity-auth)
     rateLimitDedupWindowMs: 2000,  // 2 seconds - prevents concurrent retry storms
-    maxConsecutiveFailures: 3,     // Before applying extended cooldown
+    maxConsecutiveFailures: 5,     // Before applying extended cooldown
     extendedCooldownMs: 60000,     // 1 minute extended cooldown
     maxCapacityRetries: 5,         // Max retries for capacity exhaustion
     switchAccountDelayMs: 5000,    // Delay before switching accounts on rate limit

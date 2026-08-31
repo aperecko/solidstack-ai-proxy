@@ -95,7 +95,7 @@ function cleanupPidFile() {
  * Get current port from environment or default
  */
 function getPort() {
-  return process.env.PORT || 8080;
+  return process.env.PORT || 1987;
 }
 
 /**
@@ -415,7 +415,7 @@ USAGE
   --fallback         Enable model fallback on errors
 
 ━━━ ENVIRONMENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-  PORT              Custom port (default: 8080)
+  PORT              Custom port (default: 1987)
 
 ━━━ EXAMPLES ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
   acc start                    Launch proxy
@@ -429,7 +429,7 @@ USAGE
   Edit ~/.claude/settings.json:
   {
     "env": {
-      "ANTHROPIC_BASE_URL": "http://localhost:8080"
+      "ANTHROPIC_BASE_URL": "http://localhost:1987"
     }
   }
 

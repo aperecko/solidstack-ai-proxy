@@ -67,7 +67,7 @@ document.addEventListener('alpine:init', () => {
                 const cached = localStorage.getItem('ag_data_cache');
                 if (cached) {
                     const data = JSON.parse(cached);
-                    const CACHE_TTL = 24 * 60 * 60 * 1000; // 24 hours
+                    const CACHE_TTL = 60 * 1000; // 60 seconds TTL (prevents stale invalidation states)
 
                     // Check TTL
                     if (data.timestamp && (Date.now() - data.timestamp > CACHE_TTL)) {
@@ -249,6 +249,10 @@ document.addEventListener('alpine:init', () => {
                 // Config
                 const config = this.modelConfig[modelId] || {};
                 const family = this.getModelFamily(modelId);
+                // The dashboard is an Antigravity account view. Keep the catalog
+                // broad for routing, but do not present OpenAI/GPT aliases as
+                // account-backed quota rows.
+                if (family === 'openai') return;
 
                 // Visibility Logic for Models Page (quotaRows):
                 let isHidden = config.hidden;
@@ -286,7 +290,18 @@ document.addEventListener('alpine:init', () => {
                     const limit = acc.limits?.[modelId];
                     if (!limit) return;
 
-                    const pct = (limit.remainingFraction !== null && limit.remainingFraction !== undefined) ? Math.round(limit.remainingFraction * 100) : 100;
+                    const isClaude = family === 'claude' || modelId.toLowerCase().includes('claude');
+                    const tier = (acc.subscription?.tier || acc.tier || 'free').toLowerCase();
+                    const isFree = tier === 'free' || acc.type === 'apikey';
+                    
+                    // Claude specifically requires paid Google Cloud/Vertex AI (Pro/Plus/Ultra)
+                    // Free accounts or basic API keys DO NOT contribute to this pool.
+                    if (isClaude && isFree) return;
+                    
+                    // Missing quota is unknown, not 100%. Never manufacture a
+                    // full quota value for an account/model combination.
+                    if (limit.remainingFraction === null || limit.remainingFraction === undefined) return;
+                    const pct = Math.round(limit.remainingFraction * 100);
                     minQuota = Math.min(minQuota, pct);
 
                     // Accumulate for average
@@ -329,7 +344,7 @@ document.addEventListener('alpine:init', () => {
                 if (this.filters.status === 'depleted' && minQuota > 0) return;
 
                 // Group by family and the exact quota level across accounts to eliminate redundancy
-                const quotaProfileKey = family + '_' + quotaInfo.map(q => `${q.fullEmail}:${q.pct}`).sort().join('|');
+                const quotaProfileKey = family;
 
                 if (!groups[quotaProfileKey]) {
                     groups[quotaProfileKey] = {
@@ -362,16 +377,38 @@ document.addEventListener('alpine:init', () => {
                 const uniqueThresholds = new Set(g.quotaInfo.map(q => q.thresholdPct));
                 const hasVariedThresholds = uniqueThresholds.size > 1;
 
-                // Consolidate redundant quotas into shared buckets
+                // Consolidate redundant quotas into shared Swarm buckets
                 const bucketMap = new Map();
+                const FAMILY_MAP = {
+                  'aptsoultuions@gmail.com': "Adam's Family (Pro)",
+                  'apps000123000@gmail.com': "Adam's Family (Pro)",
+                  'chrisjeomara@gmail.com': "Adam's Family (Pro)",
+                  'adamperecko@gmail.com': "Adam's Family (Pro)",
+                  'assistaius@gmail.com': "Lesley's Family (Pro) [US]",
+                  'adamtechnicalsolutions@gmail.com': "Lesley's Family (Pro) [US]",
+                  'falconeerkennels@gmail.com': "Lesley's Family (Pro) [US]",
+                  'adampps@gmail.com': "Kristen's Family (Plus) [US]",
+                  'haliburtonarcher@gmail.com': 'Standby Family'
+                };
+
                 g.quotaInfo.forEach(q => {
-                    const isApiKey = q.fullEmail.includes('virtual-gemini-key') || q.thresholdSource === 'apikey';
-                    const type = isApiKey ? 'apikey' : 'oauth';
-                    const key = `${type}_${q.pct}`;
+                    let groupName = 'Individual Accounts';
+                    if (q.fullEmail.endsWith('@adamassist.com')) {
+                        groupName = 'AdamAssist Swarm';
+                    } else if (q.fullEmail.endsWith('@reseller.mysolidstate.ca')) {
+                        groupName = 'Reseller Swarm';
+                    } else if (FAMILY_MAP[q.fullEmail]) {
+                        groupName = FAMILY_MAP[q.fullEmail];
+                    } else if (q.fullEmail.includes('virtual-gemini-key')) {
+                        groupName = 'Virtual API Keys';
+                    }
+
+                    const key = groupName;
                     if (!bucketMap.has(key)) {
                         bucketMap.set(key, {
-                            type,
-                            pct: q.pct,
+                            type: groupName.includes('API Key') ? 'apikey' : 'oauth',
+                            groupName: groupName,
+                            pctSum: 0,
                             count: 0,
                             accounts: [],
                             thresholdPct: q.thresholdPct
@@ -379,9 +416,18 @@ document.addEventListener('alpine:init', () => {
                     }
                     const b = bucketMap.get(key);
                     b.count++;
-                    b.accounts.push(q.email);
+                    b.pctSum += q.pct;
+                    b.accounts.push(q.email + ' (' + q.pct + '%)');
                 });
-                const consolidatedQuotas = Array.from(bucketMap.values());
+
+                const consolidatedQuotas = Array.from(bucketMap.values()).map(b => ({
+                    type: b.type,
+                    groupName: b.groupName,
+                    pct: Math.round(b.pctSum / b.count),
+                    count: b.count,
+                    accounts: b.accounts,
+                    thresholdPct: b.thresholdPct
+                }));
 
                 // Format display name
                 let displayName = g.family.toUpperCase() + ' Grouped Models';

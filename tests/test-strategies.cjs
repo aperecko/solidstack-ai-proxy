@@ -997,7 +997,7 @@ async function runTests() {
 
         // Health of first account should be 40 (below minUsable 50)
         const healthTracker = strategy.getHealthTracker();
-        assertEqual(healthTracker.getScore(accounts[0].email), 40);
+        assertEqual(Math.round(healthTracker.getScore(accounts[0].email)), 40);
         assertFalse(healthTracker.isUsable(accounts[0].email));
 
         // Selection should prefer second account

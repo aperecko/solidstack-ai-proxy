@@ -131,6 +131,37 @@ export class QuotaTracker {
     getLowThreshold() {
         return this.#config.lowThreshold;
     }
+
+    /**
+     * Check if an account's quota is projected to deplete soon based on drain ETA.
+     * Combines the API-reported remaining fraction with the drain rate ETA from
+     * quota-store to provide pre-emptive depletion detection.
+     *
+     * @param {Object} account - Account object
+     * @param {string} modelId - Model ID to check
+     * @param {number} [etaMs] - Projected time-to-depletion in ms (from getDrainRate)
+     * @param {number} [exclusionMs=120000] - ETA threshold below which to flag as imminent
+     * @returns {boolean} True if quota is projected to deplete within exclusionMs
+     */
+    isQuotaImminent(account, modelId, etaMs, exclusionMs = 120_000) {
+        // If we have an ETA, use it directly
+        if (etaMs !== null && etaMs !== undefined) {
+            return etaMs <= exclusionMs;
+        }
+
+        // Fallback: use API-reported remaining fraction with stale-aware heuristic
+        const fraction = this.getQuotaFraction(account, modelId);
+        if (fraction === null) return false;
+        if (!this.isQuotaFresh(account)) return false;
+
+        // If fraction is critically low AND data is fresh, treat as imminent
+        if (fraction <= this.#config.criticalThreshold) return true;
+
+        // If fraction is low (<15%) and stale data, assume it's worse now
+        if (fraction <= 0.15 && !this.isQuotaFresh(account)) return true;
+
+        return false;
+    }
 }
 
 export default QuotaTracker;

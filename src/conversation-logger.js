@@ -5,6 +5,7 @@ import fs from 'fs';
 import crypto from 'crypto';
 import express from 'express';
 import { logger } from './utils/logger.js';
+import { calculateEconomics } from './economic-engine.js';
 
 const DB_DIR = path.join(os.homedir(), '.solidstack', 'conversations');
 const DB_PATH = path.join(DB_DIR, 'conversations.db');
@@ -12,7 +13,11 @@ const DB_PATH = path.join(DB_DIR, 'conversations.db');
 let db = null;
 
 function getDb() {
-    if (db) return db;
+    if (db) try { db.exec('ALTER TABLE conversations ADD COLUMN task_id TEXT'); } catch(e) {}
+    try { db.exec('ALTER TABLE conversations ADD COLUMN pool_id TEXT'); } catch(e) {}
+    try { db.exec('ALTER TABLE conversations ADD COLUMN retail_value_cad REAL DEFAULT 0'); } catch(e) {}
+    try { db.exec('ALTER TABLE conversations ADD COLUMN actual_cogs_cad REAL DEFAULT 0'); } catch(e) {}
+    return db;
     try {
         fs.mkdirSync(DB_DIR, { recursive: true });
     } catch {}
@@ -33,7 +38,11 @@ function getDb() {
             user_message_count INTEGER DEFAULT 0,
             assistant_message_count INTEGER DEFAULT 0,
             summary TEXT,
-            status TEXT DEFAULT 'completed'
+            status TEXT DEFAULT 'completed',
+            task_id TEXT,
+            pool_id TEXT,
+            retail_value_cad REAL DEFAULT 0,
+            actual_cogs_cad REAL DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS messages (
             id TEXT PRIMARY KEY,
@@ -82,7 +91,7 @@ export function logConversation(request, response, accountEmail, accountTier, re
     try {
         const _db = getDb();
         const now = Date.now();
-        const convId = generateId();
+        const convId = req?.headers?.['x-conversation-id'] || req?.headers?.['x-session-id'] || req?.headers?.['x-machine-session-id'] || req?.headers?.['X-Conversation-Id'] || generateId();
         const clientId = hashClientId(req);
         const model = response.model || request.model;
         const usage = response.usage || {};
@@ -96,14 +105,24 @@ export function logConversation(request, response, accountEmail, accountTier, re
 
         const summary = summarizeMessages(request.messages);
 
+        let taskId = req?.headers?.['x-solidstack-task'] || null;
+        if (!taskId) {
+            const taskMatch = summary.match(/\b(TASK-[A-Z0-9-]+)\b/) || 
+                              (request.messages?.[0]?.content && typeof request.messages[0].content === 'string' ? request.messages[0].content.match(/\b(TASK-[A-Z0-9-]+)\b/) : null);
+            if (taskMatch) taskId = taskMatch[1];
+        }
+        
+        const eco = calculateEconomics(model, inputTokens, outputTokens, accountEmail);
+
+
         _db.prepare(`
             INSERT INTO conversations (id, client_id, model, account_email, account_tier,
                 created_at, updated_at, input_tokens, output_tokens, cache_read_tokens,
-                user_message_count, assistant_message_count, summary, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                user_message_count, assistant_message_count, summary, status, task_id, pool_id, retail_value_cad, actual_cogs_cad)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(convId, clientId, model, accountEmail || '', accountTier || '',
             now, now, inputTokens, outputTokens, cacheReadTokens,
-            userMessages.length, 1, summary, 'completed');
+            userMessages.length, 1, summary, 'completed', taskId, eco.poolId, eco.marketValueCad, eco.actualCogsCad);
 
         const insertMsg = _db.prepare(`
             INSERT INTO messages (id, conversation_id, role, content, tokens, created_at)
@@ -131,7 +150,7 @@ export function logConversation(request, response, accountEmail, accountTier, re
 const streamingAccumulators = new Map();
 
 export function initStreamingLog(req, model, accountEmail, accountTier) {
-    const convId = generateId();
+    const convId = req?.headers?.['x-conversation-id'] || req?.headers?.['x-session-id'] || req?.headers?.['x-machine-session-id'] || req?.headers?.['X-Conversation-Id'] || generateId();
     streamingAccumulators.set(convId, {
         id: convId,
         request: req.body,
@@ -178,16 +197,25 @@ export function finalizeStreamingLog(convId, error) {
         const userMessages = (request.messages || []).filter(m => m.role === 'user');
         const summary = summarizeMessages(request.messages);
         const status = error ? 'error' : 'completed';
+        
+        let taskId = acc.request._req?.headers?.['x-solidstack-task'] || null;
+        if (!taskId) {
+            const taskMatch = summary.match(/\b(TASK-[A-Z0-9-]+)\b/) || 
+                              (request.messages?.[0]?.content && typeof request.messages[0].content === 'string' ? request.messages[0].content.match(/\b(TASK-[A-Z0-9-]+)\b/) : null);
+            if (taskMatch) taskId = taskMatch[1];
+        }
+        
+        const eco = calculateEconomics(model, totalInput, totalOutput, acc.accountEmail);
 
         _db.prepare(`
             INSERT INTO conversations (id, client_id, model, account_email, account_tier,
                 created_at, updated_at, input_tokens, output_tokens, cache_read_tokens,
-                user_message_count, assistant_message_count, summary, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                user_message_count, assistant_message_count, summary, status, task_id, pool_id, retail_value_cad, actual_cogs_cad)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(acc.id, hashClientId(acc.request._req), model,
             acc.accountEmail || '', acc.accountTier || '',
             acc.startedAt, now, totalInput, totalOutput, totalCache,
-            userMessages.length, 1, summary, status);
+            userMessages.length, 1, summary, status, taskId, eco.poolId, eco.marketValueCad, eco.actualCogsCad);
 
         const insertMsg = _db.prepare(`
             INSERT INTO messages (id, conversation_id, role, content, tokens, created_at)
@@ -303,6 +331,46 @@ export function createConversationRouter() {
             `).all();
 
             res.json({ stats, byModel, byDay, byClient });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+
+    
+    router.get('/conversations/stats/by-task', (req, res) => {
+        try {
+            const _db = getDb();
+            const byTask = _db.prepare(`
+                SELECT task_id, 
+                       COUNT(*) as count, 
+                       SUM(input_tokens) as input_tokens,
+                       SUM(output_tokens) as output_tokens,
+                       SUM(retail_value_cad) as market_value_cad,
+                       SUM(actual_cogs_cad) as actual_cogs_cad
+                FROM conversations 
+                WHERE task_id IS NOT NULL 
+                GROUP BY task_id
+            `).all();
+            res.json({ byTask });
+        } catch (err) {
+            res.status(500).json({ error: err.message });
+        }
+    });
+    
+    router.get('/conversations/stats/by-pool', (req, res) => {
+        try {
+            const _db = getDb();
+            const byPool = _db.prepare(`
+                SELECT pool_id, 
+                       COUNT(*) as count, 
+                       SUM(input_tokens + output_tokens) as total_tokens,
+                       SUM(retail_value_cad) as market_value_cad,
+                       SUM(actual_cogs_cad) as actual_cogs_cad
+                FROM conversations 
+                WHERE pool_id IS NOT NULL 
+                GROUP BY pool_id
+            `).all();
+            res.json({ byPool });
         } catch (err) {
             res.status(500).json({ error: err.message });
         }

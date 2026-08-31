@@ -64,6 +64,23 @@ window.Components.logsViewer = () => ({
         this.$watch('filters', () => { if(this.isAutoScroll) this.$nextTick(() => this.scrollToBottom()) });
     },
 
+    isPaused: false,
+
+    togglePause() {
+        this.isPaused = !this.isPaused;
+        if (Alpine.store('global')?.showToast) {
+            Alpine.store('global').showToast(this.isPaused ? 'Log stream paused' : 'Log stream resumed', 'info');
+        }
+    },
+
+    copyLogs() {
+        const text = this.filteredLogs.map(l => `[${new Date(l.timestamp).toISOString()}] [${l.level}] ${l.message}`).join('\n');
+        navigator.clipboard.writeText(text);
+        if (Alpine.store('global')?.showToast) {
+            Alpine.store('global').showToast(`Copied ${this.filteredLogs.length} logs to clipboard`, 'success');
+        }
+    },
+
     startLogStream() {
         if (this.eventSource) this.eventSource.close();
 
@@ -74,6 +91,7 @@ window.Components.logsViewer = () => ({
 
         this.eventSource = new EventSource(url);
         this.eventSource.onmessage = (event) => {
+            if (this.isPaused) return;
             try {
                 const log = JSON.parse(event.data);
                 this.logs.push(log);

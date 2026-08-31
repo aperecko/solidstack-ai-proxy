@@ -3,6 +3,31 @@
         background-color: rgba(34, 197, 94, 0.1) !important;
         color: rgb(34, 197, 94) !important;
         border-color: rgba(34, 197, 94, 0.3) !important;
+        padding: 0.125rem 0.5rem !important;
+        font-size: 10px !important;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+        font-weight: 700 !important;
+        text-transform: uppercase !important;
+        border-radius: 0.25rem !important;
+        border-width: 1px !important;
+        border-style: solid !important;
+        display: inline-block !important;
+        line-height: 1rem !important;
+    }
+    .status-pill-plus {
+        background-color: rgba(6, 182, 212, 0.12) !important;
+        color: rgb(34, 211, 238) !important;
+        border-color: rgba(6, 182, 212, 0.3) !important;
+        padding: 0.125rem 0.5rem !important;
+        font-size: 10px !important;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important;
+        font-weight: 700 !important;
+        text-transform: uppercase !important;
+        border-radius: 0.25rem !important;
+        border-width: 1px !important;
+        border-style: solid !important;
+        display: inline-block !important;
+        line-height: 1rem !important;
     }
 </style>
 <div x-data="accountManager" class="view-container">
@@ -89,13 +114,79 @@
     <div class="view-card !p-0">
         <table class="w-full">
             <thead x-show="$store.data.accounts.length > 0">
-                <tr class="bg-space-900/50 border-b border-space-border/50">
-                    <th class="pl-6 py-3 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-16" x-text="$store.global.t('enabled')">Enabled</th>
-                    <th class="py-3 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider flex-1 min-w-[200px]" x-text="$store.global.t('accountEmail')">Account (Email)</th>
-                    <th class="py-3 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-20" x-text="$store.global.t('source')">Source</th>
-                    <th class="py-3 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-16" x-text="$store.global.t('tier')">Tier</th>
-                    <th class="py-3 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-32" x-text="$store.global.t('quota')">Quota</th>
-                    <th class="py-3 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-24" x-text="$store.global.t('health')">Health</th>
+                <tr class="bg-space-900/50 border-b border-space-border/50 select-none">
+                    <th class="pl-6 py-3 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-16 cursor-pointer hover:text-white transition-colors group"
+                        @click="setSort('enabled')">
+                        <div class="flex items-center gap-1">
+                            <span x-text="$store.global.t('enabled')">Enabled</span>
+                            <svg class="w-3 h-3 transition-colors"
+                                 :class="sortCol === 'enabled' ? 'text-neon-cyan' : 'text-gray-700 opacity-0 group-hover:opacity-100'"
+                                 fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                      :d="sortCol === 'enabled' ? (sortAsc ? 'M5 15l7-7 7 7' : 'M19 9l-7 7-7-7') : 'M8 9l4-4 4 4m0 6l-4 4-4-4'" />
+                            </svg>
+                        </div>
+                    </th>
+                    <th class="py-3 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider flex-1 min-w-[200px] cursor-pointer hover:text-white transition-colors group"
+                        @click="setSort('email')">
+                        <div class="flex items-center gap-1">
+                            <span x-text="$store.global.t('accountEmail')">Account (Email)</span>
+                            <svg class="w-3 h-3 transition-colors"
+                                 :class="sortCol === 'email' ? 'text-neon-cyan' : 'text-gray-700 opacity-0 group-hover:opacity-100'"
+                                 fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                      :d="sortCol === 'email' ? (sortAsc ? 'M5 15l7-7 7 7' : 'M19 9l-7 7-7-7') : 'M8 9l4-4 4 4m0 6l-4 4-4-4'" />
+                            </svg>
+                        </div>
+                    </th>
+                    <th class="py-3 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-20 cursor-pointer hover:text-white transition-colors group"
+                        @click="setSort('source')">
+                        <div class="flex items-center gap-1">
+                            <span x-text="$store.global.t('source')">Source</span>
+                            <svg class="w-3 h-3 transition-colors"
+                                 :class="sortCol === 'source' ? 'text-neon-cyan' : 'text-gray-700 opacity-0 group-hover:opacity-100'"
+                                 fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                      :d="sortCol === 'source' ? (sortAsc ? 'M5 15l7-7 7 7' : 'M19 9l-7 7-7-7') : 'M8 9l4-4 4 4m0 6l-4 4-4-4'" />
+                            </svg>
+                        </div>
+                    </th>
+                    <th class="py-3 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-16 cursor-pointer hover:text-white transition-colors group"
+                        @click="setSort('tier')">
+                        <div class="flex items-center gap-1">
+                            <span x-text="$store.global.t('tier')">Tier</span>
+                            <svg class="w-3 h-3 transition-colors"
+                                 :class="sortCol === 'tier' ? 'text-neon-cyan' : 'text-gray-700 opacity-0 group-hover:opacity-100'"
+                                 fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                      :d="sortCol === 'tier' ? (sortAsc ? 'M5 15l7-7 7 7' : 'M19 9l-7 7-7-7') : 'M8 9l4-4 4 4m0 6l-4 4-4-4'" />
+                            </svg>
+                        </div>
+                    </th>
+                    <th class="py-3 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-36 cursor-pointer hover:text-white transition-colors group"
+                        @click="setSort('quota')">
+                        <div class="flex items-center gap-1">
+                            <span x-text="$store.global.t('quota')">Quota</span>
+                            <svg class="w-3 h-3 transition-colors"
+                                 :class="sortCol === 'quota' ? 'text-neon-cyan' : 'text-gray-700 opacity-0 group-hover:opacity-100'"
+                                 fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                      :d="sortCol === 'quota' ? (sortAsc ? 'M5 15l7-7 7 7' : 'M19 9l-7 7-7-7') : 'M8 9l4-4 4 4m0 6l-4 4-4-4'" />
+                            </svg>
+                        </div>
+                    </th>
+                    <th class="py-3 text-left text-[10px] font-bold text-gray-500 uppercase tracking-wider w-24 cursor-pointer hover:text-white transition-colors group"
+                        @click="setSort('health')">
+                        <div class="flex items-center gap-1">
+                            <span x-text="$store.global.t('health')">Health</span>
+                            <svg class="w-3 h-3 transition-colors"
+                                 :class="sortCol === 'health' ? 'text-neon-cyan' : 'text-gray-700 opacity-0 group-hover:opacity-100'"
+                                 fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                      :d="sortCol === 'health' ? (sortAsc ? 'M5 15l7-7 7 7' : 'M19 9l-7 7-7-7') : 'M8 9l4-4 4 4m0 6l-4 4-4-4'" />
+                            </svg>
+                        </div>
+                    </th>
                     <th class="py-3 pr-6 text-right text-[10px] font-bold text-gray-500 uppercase tracking-wider w-32" x-text="$store.global.t('operations')">Operations</th>
                 </tr>
             </thead>
@@ -132,139 +223,264 @@
                         </td>
                     </tr>
                 </template>
+            </tbody>
 
-                <!-- Account Rows -->
-                <template x-for="acc in pagedAccounts" :key="acc.email">
-                    <tr class="border-b border-space-border/30 last:border-0 hover:bg-white/5 transition-colors group">
-                        <td class="pl-6 py-4">
-                            <label class="relative inline-flex items-center cursor-pointer">
-                                <input type="checkbox" class="sr-only peer"
-                                    :checked="acc.enabled !== false"
-                                    @change="toggleAccount(acc.email, $el.checked)">
-                                <div class="w-9 h-5 bg-space-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-gray-600 after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-neon-green peer-checked:after:bg-white"></div>
-                            </label>
-                        </td>
-                        <td class="py-4">
-                            <div class="tooltip tooltip-right" :data-tip="Redact.email(acc.email)">
-                                <span class="font-mono text-sm text-gray-300 truncate max-w-[320px] inline-block cursor-help group-hover:text-white transition-colors"
-                                      x-text="formatEmail(Redact.email(acc.email))">
-                                </span>
-                            </div>
-                        </td>
-                        <td class="py-4">
-                            <span :class="acc.source === 'oauth' ? 'status-pill-purple' : 'status-pill-free'"
-                                  x-text="acc.source || 'oauth'">
-                            </span>
-                        </td>
-                        <td class="py-4">
-                            <span :class="{
-                                      'status-pill-apikey': acc.type === 'apikey',
-                                      'status-pill-ultra': acc.type !== 'apikey' && acc.subscription?.tier === 'ultra',
-                                      'status-pill-pro': acc.type !== 'apikey' && acc.subscription?.tier === 'pro',
-                                      'status-pill-free': acc.type !== 'apikey' && (!acc.subscription || acc.subscription.tier === 'free' || acc.subscription.tier === 'unknown')
-                                  }"
-                                  x-text="acc.type === 'apikey' ? 'API KEY' : (acc.subscription?.tier || 'free').toUpperCase()">
-                            </span>
-                        </td>
-                        <td class="py-4 cursor-pointer" @click="openQuotaModal(acc)">
-                            <div x-data="{ quota: getMainModelQuota(acc) }">
-                                <template x-if="quota.percent !== null">
-                                    <div class="flex items-center gap-2">
-                                        <div class="w-16 bg-gray-700 rounded-full h-2 overflow-hidden">
-                                            <div class="h-full rounded-full transition-all"
-                                                 :class="{
-                                                     'bg-neon-green': quota.percent > 50,
-                                                     'bg-yellow-500': quota.percent > 20 && quota.percent <= 50,
-                                                     'bg-red-500': quota.percent <= 20
-                                                 }"
-                                                 :style="`width: ${quota.percent}%`">
-                                            </div>
-                                        </div>
-                                        <span class="text-xs font-mono text-gray-400" x-text="quota.percent + '%'"></span>
-                                    </div>
-                                </template>
-                                <template x-if="quota.percent === null">
-                                    <span class="text-xs text-gray-600">-</span>
-                                </template>
-                                <div x-show="acc.quotaThreshold !== undefined"
-                                     class="text-[10px] font-mono text-neon-yellow/60 mt-0.5"
-                                     x-text="'min: ' + getEffectiveThreshold(acc)"></div>
-                            </div>
-                        </td>
-                        <td class="py-4">
-                            <div class="flex items-center gap-2">
-                                <div class="w-2 h-2 rounded-full flex-shrink-0"
-                                     :class="acc.status === 'ok' ?
-                                             'bg-neon-green shadow-[0_0_8px_rgba(34,197,94,0.6)] animate-pulse' :
-                                             (acc.status === 'banned' ? 
-                                              'bg-red-800 shadow-[0_0_8px_rgba(153,27,27,0.6)]' :
-                                              'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]')">
-                                </div>
-                                <span class="text-xs font-mono font-semibold"
-                                      :class="acc.status === 'ok' ? 'text-neon-green' : (acc.status === 'banned' ? 'text-red-800' : 'text-red-400')"
-                                      x-text="acc.status.toUpperCase()">
-                                </span>
-                                <p x-show="acc.status === 'banned'" 
-                                   class="text-[9px] text-red-600/70 mt-0.5 max-w-[200px] leading-tight"
-                                   x-text="acc.error || 'Gemini disabled for ToS violation'">
-                                </p>
-                            </div>
-                        </td>
-                        <td class="py-4 pr-6">
-                            <div class="flex justify-end gap-2">
-                                <!-- Fix Button -->
-                                <button x-show="acc.status === 'invalid'"
-                                    class="px-3 py-1 text-[10px] font-bold font-mono uppercase tracking-wider rounded bg-yellow-500/10 text-yellow-400 hover:bg-yellow-500/20 border border-yellow-500/30 hover:border-yellow-500/50 transition-all"
-                                    @click="fixAccount(acc.email)"
-                                    x-text="$store.global.t('fix')">
-                                    FIX
-                                </button>
-                                <!-- Appeal Button (banned accounts only) -->
-                                <a x-show="acc.status === 'banned'"
-                                   href="mailto:gemini-code-assist-user-feedback@google.com"
-                                   class="px-3 py-1 text-[10px] font-bold font-mono uppercase tracking-wider rounded bg-red-900/20 text-red-400 hover:bg-red-900/30 border border-red-800/30 hover:border-red-800/50 transition-all"
-                                   title="Email Google to appeal this ban">
-                                   APPEAL
-                                </a>
-                                <!-- Settings Button (threshold) -->
-                                <button class="p-2 rounded hover:bg-white/10 text-gray-500 hover:text-neon-yellow transition-colors"
-                                    @click="openThresholdModal(acc)"
-                                    title="Account Settings">
-                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                            d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                            d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                                    </svg>
-                                </button>
-                                <button class="p-2 rounded hover:bg-white/10 text-gray-500 hover:text-white transition-colors"
-                                    @click="refreshAccount(acc.email)"
-                                    :disabled="refreshing"
-                                    :title="$store.global.t('refreshData')">
-                                    <svg class="w-4 h-4 transition-transform"
-                                         :class="{ 'animate-spin': refreshing }"
+            <!-- Account Rows -->
+                <template x-for="pool in pagedAccountPools" :key="pool.name">
+                    <!-- We use a virtual wrapper for x-for, but render tbody for the group -->
+                    <tbody class="pool-group">
+                        <tr class="bg-space-900/80 border-b border-space-border/50 cursor-pointer hover:bg-space-800 transition-colors select-none"
+                            @click="togglePool(pool.name)">
+                            <td colspan="4" class="pl-6 py-2">
+                                <div class="flex items-center gap-2">
+                                    <svg class="w-3.5 h-3.5 text-gray-400 transition-transform duration-200" 
+                                         :class="(poolExpanded[pool.name] !== undefined ? poolExpanded[pool.name] : pool.hasIssues) ? 'rotate-90 text-neon-purple' : ''" 
                                          fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                            d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
                                     </svg>
-                                </button>
-                                <button
-                                    class="p-2 rounded transition-colors"
-                                    :class="acc.source === 'database' ? 'text-gray-700 cursor-not-allowed' : 'hover:bg-red-500/10 text-gray-500 hover:text-red-400'"
-                                    :disabled="acc.source === 'database'"
-                                    @click="acc.source !== 'database' && confirmDeleteAccount(acc.email)"
-                                    :title="acc.source === 'database' ? $store.global.t('cannotDeleteDatabase') : $store.global.t('delete')">
-                                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                                            d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                    </svg>
-                                </button>
-                            </div>
-                        </td>
-                    </tr>
+                                    <span class="text-xs font-bold text-gray-300 tracking-wider font-mono uppercase" x-text="pool.name"></span>
+                                    <span class="text-[10px] text-gray-500 font-mono" x-text="'(' + pool.accounts.length + ')'"></span>
+                                    <template x-if="pool.hasIssues">
+                                        <span class="px-1.5 py-0.5 text-[9px] font-mono font-bold uppercase rounded bg-yellow-500/20 text-yellow-400 border border-yellow-500/30 flex items-center gap-1">
+                                            <span class="w-1.5 h-1.5 rounded-full bg-yellow-400 animate-pulse"></span>
+                                            <span>Needs Attention</span>
+                                        </span>
+                                    </template>
+                                </div>
+                            </td>
+                            <td colspan="3" class="pr-6 py-2 text-right">
+                                <div class="inline-flex items-center justify-end gap-3">
+                                    <template x-if="pool.maxClaudePercent !== null">
+                                        <div class="inline-flex items-center justify-end gap-2" :title="$store.global.t('claudePoolTooltip')">
+                                            <span class="text-[10px] text-neon-purple font-mono uppercase tracking-wider">Claude Pool</span>
+                                            <div class="w-16 bg-gray-700 rounded-full h-1.5 overflow-hidden">
+                                                <div class="h-full rounded-full transition-all"
+                                                     :class="{
+                                                         'bg-neon-green': pool.maxClaudePercent > 50,
+                                                         'bg-yellow-500': pool.maxClaudePercent > 20 && pool.maxClaudePercent <= 50,
+                                                         'bg-red-500': pool.maxClaudePercent <= 20
+                                                     }"
+                                                     :style="`width: ${pool.maxClaudePercent}%`">
+                                                </div>
+                                            </div>
+                                            <span class="text-[10px] font-mono"
+                                                  :class="pool.maxClaudePercent > 20 ? 'text-neon-green' : 'text-red-400'"
+                                                  x-text="pool.maxClaudePercent + '%'"></span>
+                                        </div>
+                                    </template>
+                                    <template x-if="pool.maxGeminiPercent !== null">
+                                        <div class="inline-flex items-center justify-end gap-2" :title="$store.global.t('geminiPoolTooltip')">
+                                            <span class="text-[10px] text-neon-cyan font-mono uppercase tracking-wider">Gemini Pool</span>
+                                            <div class="w-16 bg-gray-700 rounded-full h-1.5 overflow-hidden">
+                                                <div class="h-full rounded-full transition-all"
+                                                     :class="{
+                                                         'bg-neon-green': pool.maxGeminiPercent > 50,
+                                                         'bg-yellow-500': pool.maxGeminiPercent > 20 && pool.maxGeminiPercent <= 50,
+                                                         'bg-red-500': pool.maxGeminiPercent <= 20
+                                                     }"
+                                                     :style="`width: ${pool.maxGeminiPercent}%`">
+                                                </div>
+                                            </div>
+                                            <span class="text-[10px] font-mono"
+                                                  :class="pool.maxGeminiPercent > 20 ? 'text-neon-green' : 'text-red-400'"
+                                                  x-text="pool.maxGeminiPercent + '%'"></span>
+                                        </div>
+                                    </template>
+                                </div>
+                            </td>
+                        </tr>
+                        
+                        <!-- Account rows within the group -->
+                        <template x-for="acc in pool.accounts" :key="acc.email">
+                            <tr x-show="poolExpanded[pool.name] !== undefined ? poolExpanded[pool.name] : pool.hasIssues" class="border-b border-space-border/30 last:border-0 hover:bg-white/5 transition-colors group">
+                                    <td class="pl-6 py-4">
+                                        <label class="relative inline-flex items-center cursor-pointer">
+                                            <input type="checkbox" class="sr-only peer"
+                                                :checked="acc.enabled !== false"
+                                                @change="toggleAccount(acc.email, $el.checked)">
+                                            <div class="w-7 h-4 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-neon-cyan"></div>
+                                        </label>
+                                    </td>
+                                    <td class="py-4">
+                                        <div class="flex items-center gap-2 tooltip tooltip-right" :data-tip="Redact.email(acc.email)">
+                                            <!-- Profile Picture Avatar -->
+                                            <template x-if="acc.picture">
+                                                <img :src="acc.picture" class="w-6 h-6 rounded-full border border-space-border object-cover" alt="Profile">
+                                            </template>
+                                            <template x-if="!acc.picture">
+                                                <div class="w-6 h-6 rounded-full bg-space-800 border border-space-border flex items-center justify-center text-[10px] text-gray-500 font-bold"
+                                                     x-text="acc.email.charAt(0).toUpperCase()"></div>
+                                            </template>
+                                            <span class="font-mono text-sm text-gray-300 truncate max-w-[300px] inline-block cursor-help group-hover:text-white transition-colors"
+                                                  x-text="formatEmail(Redact.email(acc.email))">
+                                            </span>
+                                        </div>
+                                    </td>
+                                    <td class="py-4">
+                                        <span :class="acc.source === 'oauth' ? 'status-pill-purple' : 'status-pill-free'"
+                                              x-text="acc.source || 'oauth'">
+                                        </span>
+                                    </td>
+                                    <td class="py-4">
+                                        <span :class="{
+                                                  'status-pill-apikey': acc.type === 'apikey',
+                                                  'status-pill-ultra': acc.type !== 'apikey' && acc.subscription?.tier === 'ultra',
+                                                  'status-pill-pro': acc.type !== 'apikey' && acc.subscription?.tier === 'pro',
+                                                  'status-pill-plus': acc.type !== 'apikey' && acc.subscription?.tier === 'plus',
+                                                  'status-pill-free': acc.type !== 'apikey' && (!acc.subscription || acc.subscription.tier === 'free' || acc.subscription.tier === 'unknown')
+                                              }"
+                                              x-text="acc.type === 'apikey' ? 'API KEY' : (acc.subscription?.tier || 'free').toUpperCase()">
+                                        </span>
+                                    </td>
+                                    <td class="py-4 cursor-pointer" @click="openQuotaModal(acc)" title="Click to view Quota Distribution">
+                                        <div x-data="{ q: getAccountGroupedQuotas(acc) }" class="space-y-1.5 min-w-[130px]">
+                                            <!-- Claude Pool Indicator -->
+                                            <template x-if="q.claude !== null">
+                                                <div class="flex items-center justify-between gap-2">
+                                                    <span class="text-[10px] text-neon-purple font-mono uppercase tracking-wider">Claude</span>
+                                                    <div class="flex items-center gap-1.5">
+                                                        <div class="w-12 bg-gray-700 rounded-full h-1.5 overflow-hidden">
+                                                            <div class="h-full rounded-full transition-all duration-300"
+                                                                 :class="{
+                                                                     'bg-neon-green': q.claude.percent > 50,
+                                                                     'bg-yellow-500': q.claude.percent > 20 && q.claude.percent <= 50,
+                                                                     'bg-red-500': q.claude.percent <= 20
+                                                                 }"
+                                                                 :style="`width: ${q.claude.percent}%`">
+                                                            </div>
+                                                        </div>
+                                                        <span class="text-[10px] font-mono w-7 text-right"
+                                                              :class="q.claude.percent > 20 ? 'text-neon-green' : 'text-red-400'"
+                                                              x-text="q.claude.percent + '%'"></span>
+                                                    </div>
+                                                </div>
+                                            </template>
+                                            
+                                            <!-- Gemini Pool Indicator -->
+                                            <template x-if="q.gemini !== null">
+                                                <div class="flex items-center justify-between gap-2">
+                                                    <span class="text-[10px] text-neon-cyan font-mono uppercase tracking-wider">Gemini</span>
+                                                    <div class="flex items-center gap-1.5">
+                                                        <div class="w-12 bg-gray-700 rounded-full h-1.5 overflow-hidden">
+                                                            <div class="h-full rounded-full transition-all duration-300"
+                                                                 :class="{
+                                                                     'bg-neon-green': q.gemini.percent > 50,
+                                                                     'bg-yellow-500': q.gemini.percent > 20 && q.gemini.percent <= 50,
+                                                                     'bg-red-500': q.gemini.percent <= 20
+                                                                 }"
+                                                                 :style="`width: ${q.gemini.percent}%`">
+                                                            </div>
+                                                        </div>
+                                                        <span class="text-[10px] font-mono w-7 text-right"
+                                                              :class="q.gemini.percent > 20 ? 'text-neon-green' : 'text-red-400'"
+                                                              x-text="q.gemini.percent + '%'"></span>
+                                                    </div>
+                                                </div>
+                                            </template>
+
+                                            <!-- Fallback if no limits tracked yet -->
+                                            <template x-if="q.claude === null && q.gemini === null">
+                                                <span class="text-xs text-gray-600 font-mono">-</span>
+                                            </template>
+
+                                            <div x-show="acc.quotaThreshold !== undefined"
+                                                 class="text-[9px] font-mono text-neon-yellow/60"
+                                                 x-text="'min: ' + getEffectiveThreshold(acc)"></div>
+                                        </div>
+                                    </td>
+                                    <td class="py-4">
+                                        <div class="flex items-center gap-2">
+                                            <div class="w-2 h-2 rounded-full flex-shrink-0"
+                                                 :class="acc.status === 'ok' ?
+                                                         'bg-neon-green shadow-[0_0_8px_rgba(34,197,94,0.6)] animate-pulse' :
+                                                         (acc.status === 'banned' ? 
+                                                          'bg-red-800 shadow-[0_0_8px_rgba(153,27,27,0.6)]' :
+                                                          'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]')">
+                                            </div>
+                                            <span class="text-xs font-mono font-semibold"
+                                                  :class="acc.status === 'ok' ? 'text-neon-green' : (acc.status === 'banned' ? 'text-red-800' : 'text-red-400')"
+                                                  x-text="acc.status === 'ok' ? 'HEALTHY' : (acc.status === 'banned' ? 'BANNED' : 'LIMITED')">
+                                            </span>
+                                        </div>
+                                        <div x-show="acc.status !== 'ok' && acc.statusReason" 
+                                             class="text-[10px] font-mono text-gray-500 mt-1 max-w-[150px] truncate"
+                                             :title="acc.statusReason"
+                                             x-text="acc.statusReason"></div>
+                                    </td>
+                                    <td class="py-4 pr-6">
+                                        <div class="flex justify-end gap-2">
+                                            <!-- Fix Button -->
+                                            <button x-show="acc.status === 'invalid'"
+                                                class="px-3 py-1 text-[10px] font-bold font-mono uppercase tracking-wider rounded bg-yellow-500/10 text-yellow-400 hover:bg-yellow-500/20 border border-yellow-500/30 hover:border-yellow-500/50 transition-all"
+                                                @click="fixAccount(acc.email)"
+                                                x-text="$store.global.t('fix')">
+                                                FIX
+                                            </button>
+                                            <!-- Appeal Button (banned accounts only) -->
+                                            <a x-show="acc.status === 'banned'"
+                                               href="mailto:gemini-code-assist-user-feedback@google.com"
+                                               class="px-3 py-1 text-[10px] font-bold font-mono uppercase tracking-wider rounded bg-red-900/20 text-red-400 hover:bg-red-900/30 border border-red-800/30 hover:border-red-800/50 transition-all"
+                                               title="Email Google to appeal this ban">
+                                               APPEAL
+                                            </a>
+                                             <!-- Open Container Tab Button -->
+                                             <button class="p-2 rounded hover:bg-neon-cyan/10 text-gray-500 hover:text-neon-cyan transition-colors"
+                                                 @click="openAccountTab(acc.email)"
+                                                 title="Open Containerized Account Tab">
+                                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                                 </svg>
+                                             </button>
+                                             <!-- Credentials Key Button -->
+                                             <button class="p-2 rounded hover:bg-neon-purple/10 text-gray-500 hover:text-neon-purple transition-colors"
+                                                 @click="viewCredentials(acc.email)"
+                                                 title="View 2SV Backup Codes & Password">
+                                                 <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                                                 </svg>
+                                             </button>
+                                            <!-- Settings Button (threshold) -->
+                                            <button class="p-2 rounded hover:bg-white/10 text-gray-500 hover:text-neon-yellow transition-colors"
+                                                @click="openThresholdModal(acc)"
+                                                title="Account Settings">
+                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                        d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                        d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                                </svg>
+                                            </button>
+                                            <button class="p-2 rounded hover:bg-white/10 text-gray-500 hover:text-white transition-colors"
+                                                @click="refreshAccount(acc.email)"
+                                                :disabled="refreshing"
+                                                :title="$store.global.t('refreshData')">
+                                                <svg class="w-4 h-4 transition-transform"
+                                                     :class="{ 'animate-spin': refreshing }"
+                                                     fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                        d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                                </svg>
+                                            </button>
+                                            <button
+                                                class="p-2 rounded transition-colors"
+                                                :class="acc.source === 'database' ? 'text-gray-700 cursor-not-allowed' : 'hover:bg-red-500/10 text-gray-500 hover:text-red-400'"
+                                                :disabled="acc.source === 'database'"
+                                                @click="acc.source !== 'database' && confirmDeleteAccount(acc.email)"
+                                                :title="acc.source === 'database' ? $store.global.t('cannotDeleteDatabase') : $store.global.t('delete')">
+                                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                                </svg>
+                                            </button>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </template>
+                    </tbody>
                 </template>
 
                 <!-- No Search Results -->
+                <tbody>
                 <template x-if="$store.data.accounts.length > 0 && filteredAccounts.length === 0">
                     <tr>
                         <td colspan="6" class="py-12 text-center">
@@ -468,47 +684,158 @@
 
     <!-- Quota Distribution Modal -->
     <dialog id="quota_modal" class="modal backdrop-blur-sm">
-        <div class="modal-box max-w-2xl w-full bg-space-900 border border-space-border text-gray-300 shadow-2xl p-6">
-            <h3 class="font-bold text-xl text-white mb-2 flex items-center gap-2">
+        <div class="modal-box max-w-2xl w-full bg-space-900 border border-space-border text-gray-300 shadow-2xl p-6"
+             x-data="{ get q() { return selectedAccount ? getAccountGroupedQuotas(selectedAccount) : { claude: null, gemini: null, otherFamilies: [], totalModels: 0 }; } }">
+            <h3 class="font-bold text-xl text-white mb-1 flex items-center gap-2">
                 <svg class="w-6 h-6 text-neon-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
                 </svg>
                 <span x-text="$store.global.t('quotaDistribution')">Quota Distribution</span>
             </h3>
-            <p class="text-sm text-gray-500 font-mono mb-6" x-text="Redact.email(selectedAccountEmail)"></p>
+            <p class="text-sm text-gray-500 font-mono mb-5" x-text="Redact.email(selectedAccountEmail)"></p>
 
-            <div class="grid grid-cols-1 gap-4 overflow-y-auto max-h-[60vh] pr-2 custom-scrollbar">
-                <template x-for="(limit, modelId) in selectedAccountLimits" :key="modelId">
-                    <div class="p-3 bg-space-800/50 border border-space-border/30 rounded-lg">
-                        <div class="flex justify-between items-center mb-2">
-                            <span class="text-sm font-semibold text-gray-200" x-text="modelId"></span>
-                            <div class="flex items-center gap-2">
-                                <span class="text-xs font-mono"
-                                      :class="limit.remainingFraction > 0.5 ? 'text-neon-green' : (limit.remainingFraction > 0.2 ? 'text-yellow-500' : 'text-red-500')"
-                                      x-text="Math.round(limit.remainingFraction * 100) + '%'"></span>
-                            </div>
-                        </div>
-
-                        <div class="w-full bg-gray-700 rounded-full h-2.5 mb-2 overflow-hidden">
-                            <div class="h-full rounded-full transition-all duration-500"
-                                 :class="limit.remainingFraction > 0.5 ? 'bg-neon-green' : (limit.remainingFraction > 0.2 ? 'bg-yellow-500' : 'bg-red-500')"
-                                 :style="`width: ${limit.remainingFraction * 100}%`">
-                            </div>
-                        </div>
-
+            <div class="space-y-4 overflow-y-auto max-h-[60vh] pr-1 custom-scrollbar">
+                <!-- Group Level Card 1: Anthropic Claude Pool -->
+                <template x-if="q.claude !== null">
+                    <div class="p-4 bg-space-800/60 border border-neon-purple/30 rounded-xl space-y-3 shadow-md">
                         <div class="flex justify-between items-center">
-                            <span class="text-[10px] text-gray-500 uppercase font-bold" x-text="$store.data.getModelFamily(modelId)"></span>
-                            <template x-if="limit.resetTime">
-                                <span class="text-[10px] text-yellow-500/80 font-mono italic"
-                                      x-text="$store.global.t('resetsIn', { time: window.utils.formatTimeUntil(limit.resetTime) })"></span>
+                            <div class="flex items-center gap-2">
+                                <span class="w-2.5 h-2.5 rounded-full bg-neon-purple shadow-[0_0_8px_rgba(168,85,247,0.6)]"></span>
+                                <span class="text-sm font-bold text-white font-mono uppercase tracking-wide">Anthropic Claude Pool</span>
+                                <span class="text-[10px] text-gray-500 font-mono" x-text="'(' + q.claude.models.length + ' models)'"></span>
+                            </div>
+                            <span class="text-sm font-mono font-bold"
+                                  :class="q.claude.percent > 20 ? 'text-neon-green' : 'text-red-400'"
+                                  x-text="q.claude.percent + '%'"></span>
+                        </div>
+
+                        <div class="w-full bg-gray-700/80 rounded-full h-2 overflow-hidden">
+                            <div class="h-full rounded-full transition-all duration-500"
+                                 :class="{
+                                     'bg-neon-green': q.claude.percent > 50,
+                                     'bg-yellow-500': q.claude.percent > 20 && q.claude.percent <= 50,
+                                     'bg-red-500': q.claude.percent <= 20
+                                 }"
+                                 :style="`width: ${q.claude.percent}%`">
+                            </div>
+                        </div>
+
+                        <div class="flex justify-between items-center text-[10px] font-mono text-gray-500">
+                            <span class="uppercase">Pro / Plus / Ultra tier pool</span>
+                            <template x-if="q.claude.resetTime">
+                                <span class="text-yellow-500/90 italic"
+                                      x-text="$store.global.t('resetsIn', { time: window.utils.formatTimeUntil(q.claude.resetTime) })"></span>
                             </template>
                         </div>
                     </div>
                 </template>
 
-                <template x-if="Object.keys(selectedAccountLimits).length === 0">
+                <!-- Group Level Card 2: Google Gemini Pool -->
+                <template x-if="q.gemini !== null">
+                    <div class="p-4 bg-space-800/60 border border-neon-cyan/30 rounded-xl space-y-3 shadow-md">
+                        <div class="flex justify-between items-center">
+                            <div class="flex items-center gap-2">
+                                <span class="w-2.5 h-2.5 rounded-full bg-neon-cyan shadow-[0_0_8px_rgba(6,182,212,0.6)]"></span>
+                                <span class="text-sm font-bold text-white font-mono uppercase tracking-wide">Google Gemini Pool</span>
+                                <span class="text-[10px] text-gray-500 font-mono" x-text="'(' + q.gemini.models.length + ' reported models)'"></span>
+                            </div>
+                            <span class="text-sm font-mono font-bold"
+                                  :class="q.gemini.percent > 20 ? 'text-neon-green' : 'text-red-400'"
+                                  x-text="q.gemini.percent + '%'"></span>
+                        </div>
+
+                        <div class="w-full bg-gray-700/80 rounded-full h-2 overflow-hidden">
+                            <div class="h-full rounded-full transition-all duration-500"
+                                 :class="{
+                                     'bg-neon-green': q.gemini.percent > 50,
+                                     'bg-yellow-500': q.gemini.percent > 20 && q.gemini.percent <= 50,
+                                     'bg-red-500': q.gemini.percent <= 20
+                                 }"
+                                 :style="`width: ${q.gemini.percent}%`">
+                            </div>
+                        </div>
+
+                        <div class="flex justify-between items-center text-[10px] font-mono text-gray-500">
+                            <span class="uppercase">Antigravity Gemini access · account-reported</span>
+                            <template x-if="q.gemini.resetTime">
+                                <span class="text-yellow-500/90 italic"
+                                      x-text="$store.global.t('resetsIn', { time: window.utils.formatTimeUntil(q.gemini.resetTime) })"></span>
+                            </template>
+                        </div>
+                    </div>
+                </template>
+
+                <!-- Other reported families only; catalog-only OpenAI/GPT entries are excluded. -->
+                <!-- Other Families if any -->
+                <template x-for="fam in q.otherFamilies" :key="fam.name">
+                    <div class="p-4 bg-space-800/60 border border-space-border/50 rounded-xl space-y-3 shadow-md">
+                        <div class="flex justify-between items-center">
+                            <div class="flex items-center gap-2">
+                                <span class="w-2.5 h-2.5 rounded-full bg-gray-400"></span>
+                                <span class="text-sm font-bold text-white font-mono uppercase tracking-wide" x-text="fam.name"></span>
+                                <span class="text-[10px] text-gray-500 font-mono" x-text="'(' + fam.models.length + ' models)'"></span>
+                            </div>
+                            <span class="text-sm font-mono font-bold"
+                                  :class="fam.maxPct > 20 ? 'text-neon-green' : 'text-red-400'"
+                                  x-text="fam.maxPct + '%'"></span>
+                        </div>
+
+                        <div class="w-full bg-gray-700/80 rounded-full h-2 overflow-hidden">
+                            <div class="h-full rounded-full transition-all duration-500"
+                                 :class="{
+                                     'bg-neon-green': fam.maxPct > 50,
+                                     'bg-yellow-500': fam.maxPct > 20 && fam.maxPct <= 50,
+                                     'bg-red-500': fam.maxPct <= 20
+                                 }"
+                                 :style="`width: ${fam.maxPct}%`">
+                            </div>
+                        </div>
+                    </div>
+                </template>
+
+                <!-- Empty State -->
+                <template x-if="q.claude === null && q.gemini === null && q.otherFamilies.length === 0">
                     <div class="text-center py-8 text-gray-500" x-text="$store.global.t('noQuotaData')">
                         No quota data available for this account yet.
+                    </div>
+                </template>
+
+                <!-- Toggle for detailed per-model limits -->
+                <template x-if="q.totalModels > 0">
+                    <div class="pt-2 border-t border-space-border/40">
+                        <button type="button"
+                                @click="quotaModalShowDetails = !quotaModalShowDetails"
+                                class="w-full py-2 px-3 text-xs font-mono rounded bg-space-800/40 hover:bg-space-800 border border-space-border/30 text-gray-400 hover:text-white flex items-center justify-between transition-colors">
+                            <span x-text="quotaModalShowDetails ? '▼ Hide individual model limits' : '▶ Inspect all ' + q.totalModels + ' model limits'"></span>
+                            <span class="text-[10px] text-gray-500 uppercase font-sans">Detailed Breakdown</span>
+                        </button>
+
+                        <div x-show="quotaModalShowDetails" x-transition class="mt-3 space-y-2 max-h-60 overflow-y-auto pr-1">
+                            <template x-for="(limit, modelId) in selectedAccountLimits" :key="modelId">
+                                <div class="p-2.5 bg-space-950/60 border border-space-border/20 rounded-lg flex items-center justify-between gap-3 text-xs font-mono">
+                                    <div class="truncate flex items-center gap-2">
+                                        <span class="w-1.5 h-1.5 rounded-full shrink-0"
+                                              :class="modelId.includes('claude') ? 'bg-neon-purple' : (modelId.includes('gemini') ? 'bg-neon-cyan' : 'bg-gray-400')"></span>
+                                        <span class="text-gray-300 truncate" x-text="modelId"></span>
+                                    </div>
+                                    <div class="flex items-center gap-3 shrink-0">
+                                        <div class="w-16 bg-gray-700 rounded-full h-1.5 overflow-hidden">
+                                            <div class="h-full rounded-full transition-all"
+                                                 :class="{
+                                                     'bg-neon-green': (limit.remainingFraction || 0) > 0.5,
+                                                     'bg-yellow-500': (limit.remainingFraction || 0) > 0.2 && (limit.remainingFraction || 0) <= 0.5,
+                                                     'bg-red-500': (limit.remainingFraction || 0) <= 0.2
+                                                 }"
+                                                 :style="`width: ${Math.round((limit.remainingFraction || 0) * 100)}%`">
+                                            </div>
+                                        </div>
+                                        <span class="w-8 text-right font-bold"
+                                              :class="(limit.remainingFraction || 0) > 0.2 ? 'text-neon-green' : 'text-red-400'"
+                                              x-text="Math.round((limit.remainingFraction || 0) * 100) + '%'"></span>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
                     </div>
                 </template>
             </div>
@@ -673,4 +1000,113 @@
             <button>close</button>
         </form>
     </dialog>
+
+    <!-- Human Verification Credentials Modal -->
+    <div x-show="credentialsModalOpen" 
+         class="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+         x-transition:enter="transition ease-out duration-200"
+         x-transition:enter-start="opacity-0"
+         x-transition:enter-end="opacity-100"
+         x-transition:leave="transition ease-in duration-150"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0"
+         style="display: none;">
+        <div class="bg-space-900 border border-space-border rounded-2xl max-w-lg w-full p-6 shadow-2xl relative"
+             @click.away="credentialsModalOpen = false">
+            <div class="flex items-center justify-between mb-4 pb-3 border-b border-space-border">
+                <div class="flex items-center gap-2">
+                    <svg class="w-5 h-5 text-neon-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                    </svg>
+                    <h3 class="font-bold text-white text-base">Human Verification Credentials</h3>
+                </div>
+                <button @click="credentialsModalOpen = false" class="text-gray-400 hover:text-white p-1">✕</button>
+            </div>
+
+            <template x-if="currentCreds">
+                <div class="space-y-4 font-sans text-sm">
+                    <div>
+                        <label class="text-[11px] text-gray-400 font-mono block mb-1">Target Account</label>
+                        <div class="p-2.5 bg-space-950 rounded-xl font-mono text-xs text-neon-cyan border border-space-border flex items-center justify-between">
+                            <span x-text="currentCreds.email"></span>
+                            <button @click="copyCred(currentCreds.email, 'email')" class="text-gray-400 hover:text-white text-xs px-2 py-0.5 rounded bg-space-800">Copy</button>
+                        </div>
+                    </div>
+
+                    <div x-data="{ showPw: false }">
+                        <label class="text-[11px] text-gray-400 font-mono block mb-1">Master Password</label>
+                        <div class="p-2.5 bg-space-950 rounded-xl font-mono text-xs text-white border border-space-border flex items-center justify-between">
+                            <span x-text="showPw ? currentCreds.password : '••••••••••••••••'"></span>
+                            <div class="flex items-center gap-2">
+                                <button @click="showPw = !showPw" type="button" class="text-gray-400 hover:text-white text-xs px-2 py-0.5 rounded bg-space-800" x-text="showPw ? 'Hide' : 'Reveal'"></button>
+                                <button @click="copyCred(currentCreds.password, 'password')" class="text-gray-400 hover:text-white text-xs px-2 py-0.5 rounded bg-space-800">Copy</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="text-[11px] text-gray-400 font-mono block mb-1">Recovery Email</label>
+                        <div class="p-2.5 bg-space-950 rounded-xl font-mono text-xs text-gray-300 border border-space-border flex items-center justify-between">
+                            <span x-text="currentCreds.recoveryEmail"></span>
+                            <button @click="copyCred(currentCreds.recoveryEmail, 'recoveryEmail')" class="text-gray-400 hover:text-white text-xs px-2 py-0.5 rounded bg-space-800">Copy</button>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="text-[11px] text-gray-400 font-mono block mb-1">Live Recovery Email Interceptor</label>
+                        <div class="p-2.5 bg-space-950 rounded-xl font-mono text-xs border border-cyan-500/30 flex items-center justify-between bg-cyan-950/20">
+                            <div class="flex items-center gap-2">
+                                <span class="text-gray-400">Recovery Inbox (apps@):</span>
+                                <template x-if="interceptedCode">
+                                    <span class="text-neon-cyan font-bold tracking-widest px-2 py-0.5 rounded bg-cyan-500/20" x-text="interceptedCode"></span>
+                                </template>
+                            </div>
+                            <button @click="fetchLatestRecoveryCode(currentCreds.email)" :disabled="fetchingRecoveryCode" class="btn btn-xs bg-cyan-600/30 hover:bg-cyan-600/50 text-cyan-300 border border-cyan-500/40 gap-1 font-mono">
+                                <svg class="w-3 h-3" :class="{'animate-spin': fetchingRecoveryCode}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                </svg>
+                                <span x-text="fetchingRecoveryCode ? 'Listening...' : 'Fetch Code'"></span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="text-[11px] text-gray-400 font-mono block mb-1">2SV Backup Codes (Available)</label>
+                        <div class="grid grid-cols-2 gap-2 max-h-44 overflow-y-auto p-2 bg-space-950 rounded-xl border border-space-border">
+                            <template x-for="(code, idx) in currentCreds.backupCodes" :key="idx">
+                                <div class="p-2 bg-space-900 rounded-lg font-mono text-xs text-neon-green flex items-center justify-between border border-neon-green/10">
+                                    <span x-text="code"></span>
+                                    <button @click="copyCred(code, '2SV Code ' + (idx + 1))" class="text-gray-400 hover:text-neon-green text-[10px] px-1.5 py-0.5 rounded bg-space-800">Copy</button>
+                                </div>
+                            </template>
+                            <template x-if="!currentCreds.backupCodes || currentCreds.backupCodes.length === 0">
+                                <div class="col-span-2 text-center text-gray-500 text-xs py-3 font-mono">No 2SV backup codes generated for this identity.</div>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+            </template>
+
+            <div class="mt-6 pt-4 border-t border-space-border flex items-center justify-between gap-2">
+                <button @click="openAdminSecurity(currentCreds.email)" class="btn btn-sm btn-ghost hover:bg-yellow-500/10 text-yellow-400 border border-yellow-500/30 flex items-center gap-1.5 text-xs font-mono" title="Open Google Workspace Admin Security page in your dedicated Super Admin Chrome profile">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                    </svg>
+                    <span>Admin 10-Min Bypass</span>
+                </button>
+                <div class="flex items-center gap-2">
+                    <button @click="autoOnboard(currentCreds.email)" class="btn btn-sm bg-cyan-600/30 hover:bg-cyan-600/50 text-cyan-300 border border-cyan-500/40 flex items-center gap-1.5 text-xs font-mono" title="Run autonomous robot to login, intercept recovery codes, and activate account with zero human clicks">
+                        <span>🤖 Auto-Onboard (Zero-Touch)</span>
+                    </button>
+                    <button @click="openCleanWindow(currentCreds.email)" class="btn btn-sm bg-neon-purple hover:bg-purple-600 text-white font-semibold flex items-center gap-2 border-none">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                        </svg>
+                        <span>Open Clean Window</span>
+                    </button>
+                    <button @click="credentialsModalOpen = false" class="btn btn-sm btn-outline border-space-border text-white">Done</button>
+                </div>
+            </div>
+        </div>
+    </div>
 </div>

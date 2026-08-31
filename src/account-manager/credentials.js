@@ -75,7 +75,7 @@ export async function getTokenForAccount(account, tokenCache, onInvalid, onSave)
     // Get fresh token based on source
     let token;
 
-    if (account.refreshToken?.startsWith('PENDING_AUTH')) {
+    if (account.source === 'service_account' || account.refreshToken?.startsWith('PENDING_AUTH')) {
         try {
             const tokens = await getDelegatedAccessToken(account.email);
             token = tokens.accessToken;
@@ -117,11 +117,16 @@ export async function getTokenForAccount(account, tokenCache, onInvalid, onSave)
         }
     } else if (account.source === 'manual' && account.apiKey) {
         token = account.apiKey;
-    } else {
+    } else if (account.source === 'database' || account.isNative || account.email === 'default@antigravity') {
         // Extract from database
         const dbPath = account.dbPath || ANTIGRAVITY_DB_PATH;
         const authData = getAuthStatus(dbPath);
         token = authData.apiKey;
+    } else {
+        const errorMsg = `No valid credentials configured for ${account.email} (source: ${account.source || 'unknown'})`;
+        logger.error(`[AccountManager] ${errorMsg}`);
+        if (onInvalid) onInvalid(account.email, errorMsg);
+        throw new Error(`AUTH_INVALID: ${account.email}: ${errorMsg}`);
     }
 
     // Cache the token

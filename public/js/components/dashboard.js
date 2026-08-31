@@ -10,7 +10,7 @@ window.Components.dashboard = () => ({
     stats: { total: 0, active: 0, limited: 0, overallHealth: 0, hasTrendData: false },
     hasFilteredTrendData: true,
     charts: { quotaDistribution: null, usageTrend: null },
-    usageStats: { total: 0, today: 0, thisHour: 0 },
+    usageStats: { total: 0, today: 0, thisHour: 0, thisWeek: 0 },
     historyData: {},
     modelTree: {},
     families: [],
@@ -106,13 +106,15 @@ window.Components.dashboard = () => ({
     processHistory(history) {
         // Build model tree from hierarchical data
         const tree = {};
-        let total = 0, today = 0, thisHour = 0;
+        let total = 0, today = 0, thisHour = 0, thisWeek = 0;
 
         const now = new Date();
         const todayStart = new Date(now);
         todayStart.setHours(0, 0, 0, 0);
         const currentHour = new Date(now);
         currentHour.setMinutes(0, 0, 0);
+        const weekStart = new Date(now);
+        weekStart.setDate(now.getDate() - 7);
 
         Object.entries(history).forEach(([iso, hourData]) => {
             const timestamp = new Date(iso);
@@ -141,21 +143,40 @@ window.Components.dashboard = () => ({
             if (timestamp >= todayStart) {
                 today += hourTotal;
             }
+            if (timestamp >= weekStart) {
+                thisWeek += hourTotal;
+            }
             if (timestamp.getTime() === currentHour.getTime()) {
                 thisHour = hourTotal;
             }
         });
 
-        this.usageStats = { total, today, thisHour };
+        this.usageStats = { total, today, thisHour, thisWeek };
 
         // Convert Sets to sorted arrays
         this.modelTree = {};
-        Object.entries(tree).forEach(([family, models]) => {
-            this.modelTree[family] = Array.from(models).sort();
+        Object.entries(tree).forEach(([family, models]) => {                const activeModels = Array.from(models).filter((model) => {
+                    return Object.values(history).some((hourData) => {
+                        const value = hourData?.[family];
+                        return value && typeof value === 'object' && Number(value[model] || 0) > 0;
+                    });
+                }).sort();
+            if (activeModels.length > 0) this.modelTree[family] = activeModels;
         });
+        // Keep the request-volume chart at family level by default; model-level
+        // series are still available when the operator explicitly selects Model.
         this.families = Object.keys(this.modelTree).sort();
 
-        // Auto-select new families/models that haven't been configured
+        // Remove stale saved selections. The chart represents usage in the
+        // selected period, so zero-use catalog entries are not plotted.
+        this.selectedFamilies = this.selectedFamilies.filter((family) => this.families.includes(family));
+        this.selectedModels = Object.fromEntries(Object.entries(this.selectedModels).filter(([family]) => this.families.includes(family)));
+        Object.keys(this.selectedModels).forEach((family) => {
+            this.selectedModels[family] = (this.selectedModels[family] || []).filter((model) => (this.modelTree[family] || []).includes(model));
+        });
+
+        // Select only families/models with activity in the chosen history window.
+        // Zero-use catalog entries do not belong in a usage chart.
         this.autoSelectNew();
 
         this.updateTrendChart();

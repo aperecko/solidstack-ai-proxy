@@ -189,8 +189,14 @@
             <!-- Vault Display -->
             <div class="view-card !p-0">
                 <div class="p-4 border-b border-space-border/30 flex justify-between items-center">
-                    <h3 class="font-bold text-gray-300">Contained Idea Vault</h3>
-                    <button @click="fetchIdeas" class="btn btn-xs btn-ghost text-fuchsia-400 cursor-pointer">Refresh Vault</button>
+                    <h3 class="font-bold text-gray-300 font-mono text-sm">Contained Idea Vault</h3>
+                    <div class="flex items-center gap-2">
+                        <button @click="navigator.clipboard.writeText(JSON.stringify(ideas, null, 2)); if ($store.global?.showToast) $store.global.showToast('Vault exported to clipboard as JSON', 'success');" 
+                                class="btn btn-xs btn-outline border-space-border text-gray-400 hover:text-white font-mono">
+                            Export JSON
+                        </button>
+                        <button @click="fetchIdeas" class="btn btn-xs btn-ghost text-fuchsia-400 font-mono cursor-pointer">Refresh Vault</button>
+                    </div>
                 </div>
                 
                 <div class="overflow-x-auto">

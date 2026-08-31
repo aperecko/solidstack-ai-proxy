@@ -20,15 +20,15 @@
     <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
         <div class="view-card border-l-4 border-l-neon-purple flex flex-col justify-between">
             <div class="text-xs text-gray-500 uppercase font-bold tracking-wider mb-2">Total VMs</div>
-            <div class="text-3xl font-bold font-mono text-white" x-text="vms.length">0</div>
+            <div class="text-3xl font-bold font-mono text-white" x-text="vms.length || (serviceMobility?.summary?.total || 0)">0</div>
         </div>
         <div class="view-card border-l-4 border-l-neon-green flex flex-col justify-between">
-            <div class="text-xs text-gray-500 uppercase font-bold tracking-wider mb-2">Consolidated Modes</div>
-            <div class="text-3xl font-bold font-mono text-white">4</div>
+            <div class="text-xs text-gray-400 uppercase font-bold tracking-wider mb-2 font-mono">Stationary Services</div>
+            <div class="text-3xl font-bold font-mono text-neon-green" x-text="serviceMobility?.summary?.stationary || 4">4</div>
         </div>
         <div class="view-card border-l-4 border-l-yellow-500 flex flex-col justify-between">
-            <div class="text-xs text-gray-500 uppercase font-bold tracking-wider mb-2">Pending Migration</div>
-            <div class="text-3xl font-bold font-mono text-white">2</div>
+            <div class="text-xs text-gray-400 uppercase font-bold tracking-wider mb-2 font-mono">Mobile (Swarm Ready)</div>
+            <div class="text-3xl font-bold font-mono text-yellow-400" x-text="serviceMobility?.summary?.mobile || 2">2</div>
         </div>
     </div>
 
@@ -50,16 +50,16 @@
                         <td class="pl-6 py-4">
                             <div class="w-2 h-2 rounded-full mx-auto" :class="vm.state === 'running' ? 'bg-neon-green shadow-[0_0_8px_rgba(34,197,94,0.6)] animate-pulse' : 'bg-gray-600'"></div>
                         </td>
-                        <td class="py-4 font-mono text-sm text-gray-300" x-text="vm.name"></td>
+                        <td class="py-4 font-mono text-sm text-gray-300 font-bold" x-text="vm.name"></td>
                         <td class="py-4">
-                            <span class="px-2 py-1 text-[10px] font-bold uppercase tracking-wider rounded border"
+                            <span class="px-2 py-1 text-[10px] font-bold uppercase tracking-wider rounded border font-mono"
                                 :class="vm.provider === 'oracle' ? 'bg-red-900/20 text-red-400 border-red-800/30' : 'bg-blue-900/20 text-blue-400 border-blue-800/30'"
                                 x-text="vm.provider"></span>
                         </td>
-                        <td class="py-4 font-mono text-xs text-gray-500" x-text="vm.ip || 'Unassigned'"></td>
+                        <td class="py-4 font-mono text-xs text-neon-cyan" x-text="vm.ip || 'Unassigned'"></td>
                         <td class="py-4 font-mono text-xs text-gray-400" x-text="vm.role"></td>
                         <td class="py-4 pr-6 text-right">
-                            <button class="btn btn-xs btn-ghost text-gray-400 hover:text-white">Manage</button>
+                            <button class="btn btn-xs btn-ghost text-gray-400 hover:text-white font-mono" @click="manageNode(vm)">Inspect</button>
                         </td>
                     </tr>
                 </template>

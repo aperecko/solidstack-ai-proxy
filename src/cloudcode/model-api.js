@@ -30,7 +30,8 @@ const modelCache = {
  */
 function isSupportedModel(modelId) {
     const family = getModelFamily(modelId);
-    return family === 'claude' || family === 'gemini';
+    const lower = (modelId || '').toLowerCase();
+    return family === 'claude' || family === 'gemini' || lower.includes('gpt') || lower.includes('oss') || lower.includes('gemma-4') || lower.includes('turbo') || lower.includes('local');
 }
 
 /**
@@ -55,6 +56,22 @@ export async function listModels(token) {
             owned_by: 'anthropic',
             description: modelData.displayName || modelId
         }));
+
+    // Inject local on-demand models into the model list for Antigravity & clients
+    modelList.push({
+        id: 'gemma-4-26b-a4b-it',
+        object: 'model',
+        created: Math.floor(Date.now() / 1000),
+        owned_by: 'local-turbofieldfare',
+        description: 'Gemma 4 26B-A4B (Local Turbo Fieldfare MoE)'
+    });
+    modelList.push({
+        id: 'gemma-4-26b-a4b',
+        object: 'model',
+        created: Math.floor(Date.now() / 1000),
+        owned_by: 'local-turbofieldfare',
+        description: 'Gemma 4 26B-A4B (Local Turbo Fieldfare MoE)'
+    });
 
     // Warm the model validation cache
     modelCache.validModels = new Set(modelList.map(m => m.id));
@@ -91,7 +108,7 @@ export async function fetchAvailableModels(token, projectId = null) {
                 method: 'POST',
                 headers,
                 body: JSON.stringify(body),
-                signal: AbortSignal.timeout(1500)
+                signal: AbortSignal.timeout(5000)
             });
 
             if (!response.ok) {
@@ -124,25 +141,36 @@ export async function fetchAvailableModels(token, projectId = null) {
  * @param {string} [projectId] - Optional project ID for accurate quota info
  * @returns {Promise<Object>} Map of modelId -> { remainingFraction, resetTime }
  */
-export async function getModelQuotas(token, projectId = null) {
+export async function getModelQuotas(token, projectId = null, tier = null) {
     const data = await fetchAvailableModels(token, projectId);
     if (!data || !data.models) return {};
 
+    const isFreeTier = tier === 'free';
     const quotas = {};
     for (const [modelId, modelData] of Object.entries(data.models)) {
         // Only include Claude and Gemini models
         if (!isSupportedModel(modelId)) continue;
 
+        const isClaude = modelId.toLowerCase().includes('claude');
+        if (isClaude && isFreeTier) {
+            // Free tier accounts cannot generate content with Claude on Cloud Code API
+            quotas[modelId] = {
+                remainingFraction: 0,
+                resetTime: null
+            };
+            continue;
+        }
+
         if (modelData.quotaInfo) {
             quotas[modelId] = {
                 // When remainingFraction is missing but resetTime is present, quota is exhausted (0%)
-                remainingFraction: modelData.quotaInfo.remainingFraction ?? (modelData.quotaInfo.resetTime ? 0 : null),
+                remainingFraction: modelData.quotaInfo.remainingFraction ?? (isClaude ? 1.0 : (modelData.quotaInfo.resetTime ? 0 : null)),
                 resetTime: modelData.quotaInfo.resetTime ?? null
             };
         } else {
             // Fallback for models without explicit quota limits (e.g. free tier or unlimited models)
             quotas[modelId] = {
-                remainingFraction: 1.0,
+                remainingFraction: isClaude ? 0 : 1.0,
                 resetTime: null
             };
         }
@@ -163,11 +191,14 @@ export function parseTierId(tierId) {
     if (lower.includes('ultra')) {
         return 'ultra';
     }
-    if (lower === 'standard-tier') {
-        // standard-tier = "Gemini Code Assist" (paid, project-based)
+    if (lower.includes('pro') || lower.includes('premium')) {
         return 'pro';
     }
-    if (lower.includes('pro') || lower.includes('premium')) {
+    if (lower.includes('plus') || lower.includes('starter') || lower.includes('advanced')) {
+        return 'plus';
+    }
+    if (lower === 'standard-tier') {
+        // standard-tier = "Gemini Code Assist" (paid, project-based)
         return 'pro';
     }
     if (lower === 'free-tier' || lower.includes('free')) {

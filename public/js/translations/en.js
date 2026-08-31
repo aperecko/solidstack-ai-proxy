@@ -217,6 +217,10 @@ window.translations.en = {
     claudeEmpty: "Claude Empty",
     geminiActive: "Gemini Active",
     geminiEmpty: "Gemini Empty",
+    claudePool: "Claude Pool",
+    geminiPool: "Gemini Pool",
+    claudePoolTooltip: "Highest remaining Claude quota across accounts in this pool",
+    geminiPoolTooltip: "Highest remaining Gemini quota across accounts in this pool",
     synced: "SYNCED",
     syncing: "SYNCING...",
     // Time range labels

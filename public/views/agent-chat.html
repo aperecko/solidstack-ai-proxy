@@ -1,0 +1,221 @@
+<div x-data="agentChat" class="view-container h-full flex flex-col pb-6">
+    <!-- Header -->
+    <div class="flex flex-wrap items-center justify-between gap-4 mb-4">
+        <div class="flex flex-wrap items-center gap-3">
+            <h1 class="text-2xl font-bold text-white tracking-tight flex items-center gap-2">
+                <svg class="w-6 h-6 text-neon-purple" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/>
+                </svg>
+                Agent Chat Console
+            </h1>
+            <div class="flex items-center h-6 px-3 rounded-full bg-space-800/80 border border-space-border/50 shadow-sm backdrop-blur-sm">
+                <span class="text-[10px] font-mono text-gray-400 uppercase tracking-wider">
+                    Interactive Multi-Agent Orchestrator
+                </span>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-2">
+            <!-- Agent Switcher Tabs -->
+            <div class="flex bg-space-900 border border-space-border/60 p-1 rounded-xl">
+                <button class="px-3 py-1.5 rounded-lg text-xs font-mono font-medium transition-all flex items-center gap-1.5"
+                        :class="activeAgent === 'tech' ? 'bg-neon-purple text-white shadow-md shadow-neon-purple/30' : 'text-gray-400 hover:text-white'"
+                        @click="switchAgent('tech')">
+                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/>
+                    </svg>
+                    Tech Agent
+                </button>
+                <button class="px-3 py-1.5 rounded-lg text-xs font-mono font-medium transition-all flex items-center gap-1.5"
+                        :class="activeAgent === 'designer' ? 'bg-neon-cyan text-space-950 font-bold shadow-md shadow-neon-cyan/30' : 'text-gray-400 hover:text-white'"
+                        @click="switchAgent('designer')">
+                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01"/>
+                    </svg>
+                    Designer Agent
+                </button>
+                <button class="px-3 py-1.5 rounded-lg text-xs font-mono font-medium transition-all flex items-center gap-1.5"
+                        :class="activeAgent === 'governor' ? 'bg-neon-green text-space-950 font-bold shadow-md shadow-neon-green/30' : 'text-gray-400 hover:text-white'"
+                        @click="switchAgent('governor')">
+                    <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
+                    </svg>
+                    Governor Agent
+                </button>
+            </div>
+
+            <!-- Refresh Button -->
+            <button class="btn btn-xs btn-outline border-space-border text-gray-400 hover:text-white transition-all h-8 px-3" 
+                    @click="fetchConversations()" :disabled="loading">
+                <svg class="w-3.5 h-3.5" :class="{'animate-spin': loading}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- Main Chat Workspace -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 flex-1 min-h-0">
+        <!-- Chat History & Input (2 Cols) -->
+        <div class="lg:col-span-2 flex flex-col bg-space-900 border border-space-border/60 rounded-2xl overflow-hidden shadow-xl">
+            <!-- Session Meta Bar -->
+            <div class="px-4 py-2.5 bg-space-950/60 border-b border-space-border/40 flex items-center justify-between text-xs font-mono">
+                <div class="flex items-center gap-2">
+                    <span class="w-2 h-2 rounded-full" :class="activeAgent === 'tech' ? 'bg-neon-purple shadow-[0_0_6px_rgba(168,85,247,0.8)]' : 'bg-neon-cyan shadow-[0_0_6px_rgba(6,182,212,0.8)]'"></span>
+                    <span class="text-gray-400">Target:</span>
+                    <span class="text-white font-bold" x-text="activeAgent === 'tech' ? 'TECH (Core Architecture / Backend)' : 'DESIGNER (UI / Component Systems)'"></span>
+                </div>
+                <div class="text-gray-500 text-[11px]">
+                    <span x-text="sessionId ? 'Session: ' + sessionId.substring(0, 18) + '...' : 'Session: Auto-Managed'"></span>
+                </div>
+            </div>
+
+            <!-- Messages Container -->
+            <div id="agent-chat-messages-container" class="flex-1 p-4 overflow-y-auto space-y-4 custom-scrollbar min-h-[300px]">
+                <template x-if="messages.length === 0">
+                    <div class="h-full flex flex-col items-center justify-center text-center p-8 text-gray-500 space-y-2">
+                        <div class="w-12 h-12 rounded-2xl bg-space-800 flex items-center justify-center text-gray-400">
+                            <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/>
+                            </svg>
+                        </div>
+                        <div class="text-sm font-medium text-gray-300">No messages in this agent session</div>
+                        <div class="text-xs text-gray-500 max-w-sm">
+                            Direct <span class="text-white font-mono" x-text="activeAgent"></span> with system design questions, architecture requirements, or automated task requests below.
+                        </div>
+                    </div>
+                </template>
+
+                <template x-for="(msg, idx) in messages" :key="idx">
+                    <div class="flex flex-col" :class="msg.role === 'user' ? 'items-end' : 'items-start'">
+                        <div class="flex items-center gap-2 mb-1 px-1 text-[11px] font-mono text-gray-500">
+                            <span x-text="msg.role === 'user' ? 'You' : (activeAgent === 'tech' ? 'Tech Agent' : 'Designer Agent')" 
+                                  :class="msg.role === 'user' ? 'text-gray-400' : (activeAgent === 'tech' ? 'text-neon-purple font-bold' : 'text-neon-cyan font-bold')"></span>
+                            <span x-text="formatTime(msg.timestamp)"></span>
+                        </div>
+                        <div class="max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap font-sans border"
+                             :class="msg.role === 'user' 
+                                ? 'bg-space-800 border-space-border text-gray-100 rounded-tr-none' 
+                                : (activeAgent === 'tech' ? 'bg-space-950/80 border-neon-purple/30 text-gray-200 rounded-tl-none shadow-sm' : 'bg-space-950/80 border-neon-cyan/30 text-gray-200 rounded-tl-none shadow-sm')">
+                            <span x-html="formatMarkdown(msg.content)"></span>
+                        </div>
+                    </div>
+                </template>
+
+                <!-- Loading Bubble -->
+                <div x-show="loading" class="flex flex-col items-start">
+                    <div class="flex items-center gap-2 mb-1 px-1 text-[11px] font-mono text-gray-500">
+                        <span x-text="activeAgent === 'tech' ? 'Tech Agent' : (activeAgent === 'designer' ? 'Designer Agent' : 'Governor Agent')" 
+                              :class="activeAgent === 'tech' ? 'text-neon-purple font-bold' : (activeAgent === 'designer' ? 'text-neon-cyan font-bold' : 'text-neon-green font-bold')"></span>
+                        <span>thinking...</span>
+                    </div>
+                    <div class="rounded-2xl rounded-tl-none px-4 py-3 bg-space-950 border border-space-border/50 flex items-center gap-2">
+                        <div class="w-2 h-2 rounded-full bg-neon-purple animate-bounce"></div>
+                        <div class="w-2 h-2 rounded-full bg-neon-cyan animate-bounce [animation-delay:0.2s]"></div>
+                        <div class="w-2 h-2 rounded-full bg-neon-green animate-bounce [animation-delay:0.4s]"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Input Bar -->
+            <div class="p-3 bg-space-950 border-t border-space-border/50">
+                <form @submit.prevent="sendMessage()" class="flex flex-col gap-2">
+                    <div class="relative">
+                        <textarea x-model="inputMessage" 
+                                  @keydown.enter.prevent="if(!$event.shiftKey) sendMessage()"
+                                  placeholder="Direct agent (e.g., 'Analyze the proxy latency', 'Generate a new component layout')... [Enter to send]"
+                                  rows="2"
+                                  class="w-full bg-space-900 border border-space-border/80 focus:border-neon-purple rounded-xl px-3.5 py-2.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-neon-purple resize-none custom-scrollbar font-sans"></textarea>
+                    </div>
+                    <div class="flex items-center justify-between">
+                        <span class="text-[11px] font-mono text-gray-500">Press <kbd class="px-1 py-0.5 rounded bg-space-800 border border-space-border text-gray-400">Enter</kbd> to send, <kbd class="px-1 py-0.5 rounded bg-space-800 border border-space-border text-gray-400">Shift+Enter</kbd> for newline</span>
+                        <button type="submit" 
+                                :disabled="!inputMessage.trim() || loading"
+                                class="btn btn-sm bg-neon-purple hover:bg-purple-600 border-none text-white px-5 rounded-xl gap-2 font-mono text-xs shadow-lg shadow-neon-purple/20">
+                            <span x-text="loading ? 'Dispatching...' : 'Send Message'"></span>
+                            <svg class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/>
+                            </svg>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+
+        <!-- Action Proposals & Telemetry (1 Col) -->
+        <div class="flex flex-col gap-4">
+            <!-- Proposed Actions Card -->
+            <div class="view-card flex-1 flex flex-col !p-4 bg-space-900 border border-space-border/60">
+                <div class="flex items-center justify-between pb-3 border-b border-space-border/40 mb-3">
+                    <div class="flex items-center gap-2">
+                        <svg class="w-4 h-4 text-neon-green" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                        <h3 class="font-bold text-sm text-white">Proposed Actions</h3>
+                    </div>
+                    <span class="badge badge-xs bg-space-800 text-gray-400 font-mono" x-text="proposedActions.length + ' staged'"></span>
+                </div>
+
+                <div class="flex-1 overflow-y-auto space-y-2 custom-scrollbar min-h-[150px]">
+                    <template x-if="proposedActions.length === 0">
+                        <div class="h-full flex flex-col items-center justify-center text-center p-6 text-gray-500">
+                            <div class="text-xs">No pending execution proposals from agent</div>
+                        </div>
+                    </template>
+
+                    <template x-for="act in proposedActions" :key="act.id">
+                        <label class="flex items-start gap-2.5 p-2.5 rounded-xl bg-space-950 border border-space-border/50 hover:border-space-border transition-colors cursor-pointer">
+                            <input type="checkbox" 
+                                   :checked="selectedActionIds.includes(act.id)"
+                                   @change="toggleAction(act.id)"
+                                   class="checkbox checkbox-xs checkbox-primary mt-0.5">
+                            <div class="flex-1 min-w-0">
+                                <div class="flex items-center gap-2">
+                                    <span class="text-xs font-bold text-white font-mono" x-text="act.kind"></span>
+                                    <span class="text-[10px] text-neon-cyan truncate font-mono" x-text="act.target || 'system'"></span>
+                                </div>
+                                <div class="text-[11px] text-gray-400 font-mono mt-1 break-all bg-space-900/80 p-1.5 rounded border border-space-border/30" x-text="act.command_or_patch_hint || act.description || 'Action blueprint'"></div>
+                            </div>
+                        </label>
+                    </template>
+                </div>
+
+                <div class="pt-3 border-t border-space-border/40 mt-3" x-show="proposedActions.length > 0">
+                    <button class="btn btn-sm w-full bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-400 border border-emerald-500/30 rounded-xl font-mono text-xs gap-2"
+                            :disabled="selectedActionIds.length === 0 || applyingActions"
+                            @click="applyBatchActions()">
+                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                        </svg>
+                        <span x-text="applyingActions ? 'Executing...' : `Apply Selected (${selectedActionIds.length})`"></span>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Evidence & Warnings Card -->
+            <div class="view-card !p-4 bg-space-900 border border-space-border/60" x-show="evidenceRefs.length > 0 || warnings.length > 0">
+                <div class="text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 font-mono">Agent Insights & Evidence</div>
+                
+                <!-- Evidence Refs -->
+                <div class="space-y-1 mb-2" x-show="evidenceRefs.length > 0">
+                    <template x-for="ref in evidenceRefs" :key="ref">
+                        <div class="text-[11px] font-mono text-gray-400 flex items-center gap-1.5 truncate">
+                            <span class="text-neon-cyan">📁</span>
+                            <span x-text="ref"></span>
+                        </div>
+                    </template>
+                </div>
+
+                <!-- Warnings -->
+                <div class="space-y-1" x-show="warnings.length > 0">
+                    <template x-for="warn in warnings" :key="warn">
+                        <div class="text-[11px] font-mono text-amber-400 bg-amber-500/10 border border-amber-500/20 p-1.5 rounded flex items-center gap-1.5">
+                            <span>⚠️</span>
+                            <span x-text="warn"></span>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

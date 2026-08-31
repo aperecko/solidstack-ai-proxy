@@ -115,7 +115,16 @@ const HOME_DIR = os.homedir();
 const CONFIG_DIR = path.join(HOME_DIR, '.antigravity-claude-proxy');
 
 const server = app.listen(PORT, HOST, () => {
+    // Robust connection keep-alive and stream timeouts (prevent socket drop on long agent turns)
+    server.keepAliveTimeout = 120000; // 2 minutes
+    server.headersTimeout = 125000;   // > keepAliveTimeout per Node.js spec
+    server.requestTimeout = 300000;   // 5 minutes for heavy context / multi-step generation
+    server.timeout = 300000;
+
     // Auto-align ~/.claude/settings.json to point ANTHROPIC_BASE_URL to canonical port 1987
+    // PM2 Zero-Downtime Cluster Ready Signal (must fire unconditionally)
+    if (process.send) process.send("ready");
+
     try {
         const claudeSettingsPath = path.join(HOME_DIR, '.claude', 'settings.json');
         if (fs.existsSync(claudeSettingsPath)) {
@@ -176,7 +185,7 @@ const server = app.listen(PORT, HOST, () => {
     }
 
     const environmentSection = `║  Environment Variables:                                      ║
-║    PORT                Server port (default: 8080)           ║
+║    PORT                Server port (default: 1987)           ║
 ║    HOST                Bind address (default: 0.0.0.0)       ║
 ║    HTTP_PROXY          Route requests through a proxy        ║
 ║    CLAUDE_CONFIG_PATH  Path to .claude dir (for systemd)     ║
@@ -224,20 +233,23 @@ ${environmentSection}
     }
 });
 
-// Graceful shutdown
-const shutdown = () => {
-    logger.info('Shutting down server...');
+// Graceful shutdown (works for both launchd and PM2)
+let isShuttingDown = false;
+const DRAIN_TIMEOUT_MS = Number(process.env.KILL_TIMEOUT || process.env.STREAM_DRAIN_TIMEOUT_MS || 10000);
+
+function gracefulShutdown(signal) {
+    if (isShuttingDown) return; // prevent duplicate handlers from double-firing
+    isShuttingDown = true;
+    logger.info(`[Shutdown] Received ${signal}. Entering drain mode (refusing new connections, up to ${DRAIN_TIMEOUT_MS}ms)...`);
     server.close(() => {
-        logger.success('Server stopped');
+        logger.info(`[Shutdown] All active streams finished. Exiting.`);
         process.exit(0);
     });
-
-    // Force close if it takes too long
+    // Force kill if drain takes too long
     setTimeout(() => {
-        logger.error('Could not close connections in time, forcefully shutting down');
+        logger.error('[Shutdown] Could not drain connections in time, forcefully shutting down');
         process.exit(1);
-    }, 10000);
-};
-
-process.on('SIGTERM', shutdown);
-process.on('SIGINT', shutdown);
+    }, DRAIN_TIMEOUT_MS);
+}
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));

@@ -108,6 +108,42 @@ export async function resolveActiveLocalEngine() {
 import { exec } from 'child_process';
 import path from 'path';
 
+let idleShutdownTimer = null;
+const IDLE_SHUTDOWN_TIMEOUT_MS = Number(process.env.LOCAL_ENGINE_IDLE_TIMEOUT_MS || 5 * 60 * 1000); // 5 minutes default
+
+/**
+ * Check if a requested model ID is a local engine model.
+ * @param {string} modelId
+ * @returns {boolean}
+ */
+export function isLocalModel(modelId) {
+    if (!modelId) return false;
+    const lower = modelId.toLowerCase();
+    return lower.includes('gemma-4') || 
+           lower.includes('turbo-fieldfare') || 
+           lower.includes('turbofieldfare') || 
+           lower.startsWith('local/');
+}
+
+/**
+ * Touch local engine usage to postpone auto-shutdown.
+ */
+export function touchLocalEngineUsage() {
+    if (idleShutdownTimer) {
+        clearTimeout(idleShutdownTimer);
+    }
+    idleShutdownTimer = setTimeout(async () => {
+        try {
+            logger.info(`[LocalEngineFallback] Idle timeout (${IDLE_SHUTDOWN_TIMEOUT_MS / 1000}s) reached. Stopping Turbo Fieldfare to free system RAM...`);
+            const scriptPath = path.resolve(process.cwd(), 'bin/ss-local-engine');
+            exec(`"${scriptPath}" stop turbo`);
+            cachedEngineStatus = null;
+        } catch (e) {
+            logger.warn(`[LocalEngineFallback] Idle shutdown error: ${e.message}`);
+        }
+    }, IDLE_SHUTDOWN_TIMEOUT_MS);
+}
+
 /**
  * Attempt to auto-start local engines via bin/ss-local-engine if autoStart is enabled.
  */
@@ -115,8 +151,9 @@ async function autoStartLocalEngines() {
     if (config?.localEngine?.autoStart === false) return;
     try {
         const scriptPath = path.resolve(process.cwd(), 'bin/ss-local-engine');
-        exec(`"${scriptPath}" start all`);
-        await new Promise(r => setTimeout(r, 1000));
+        exec(`"${scriptPath}" start turbo`);
+        await new Promise(r => setTimeout(r, 1200));
+        touchLocalEngineUsage();
     } catch (e) {
         logger.warn(`[LocalEngineFallback] Auto-start attempt failed: ${e.message}`);
     }
@@ -158,7 +195,12 @@ export async function isLocalEngineAvailable() {
  * @returns {Promise<Object>} Anthropic-formatted response
  */
 export async function sendLocalEngineRequest(anthropicRequest, targetModel) {
-    const active = await resolveActiveLocalEngine();
+    touchLocalEngineUsage();
+    let active = await resolveActiveLocalEngine();
+    if (!active && config?.localEngine?.autoStart !== false) {
+        await autoStartLocalEngines();
+        active = await resolveActiveLocalEngine();
+    }
     if (!active) {
         throw new Error('No local engine (Turbo Fieldfare or Ollama) available.');
     }
@@ -202,7 +244,12 @@ export async function sendLocalEngineRequest(anthropicRequest, targetModel) {
  * @returns {AsyncGenerator} SSE stream generator
  */
 export async function* sendLocalEngineStream(anthropicRequest, targetModel) {
-    const active = await resolveActiveLocalEngine();
+    touchLocalEngineUsage();
+    let active = await resolveActiveLocalEngine();
+    if (!active && config?.localEngine?.autoStart !== false) {
+        await autoStartLocalEngines();
+        active = await resolveActiveLocalEngine();
+    }
     if (!active) {
         throw new Error('No local engine (Turbo Fieldfare or Ollama) available for streaming.');
     }

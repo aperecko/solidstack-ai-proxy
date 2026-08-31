@@ -10,13 +10,14 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import crypto from 'crypto';
+import { createRequire } from 'module';
 import https from 'https';
 import { Transform } from 'stream';
 import { fileURLToPath } from 'url';
 import { createProxyMiddleware } from 'http-proxy-middleware';
 import { sendMessage, sendMessageStream, listModels, fetchAvailableModels, getModelQuotas, getSubscriptionTier, isValidModel } from './cloudcode/index.js';
 import { parseResetTime } from './cloudcode/rate-limit-parser.js';
-import { buildFallbackMap, buildPresets } from './constants.js';
+import { buildFallbackMap, buildPresets, getModelFamily } from './constants.js';
 import { initFallbackMap, getFallbackChain } from './fallback-config.js';
 import { logRoutingTelemetry } from './cloudcode/routing-logger.js';
 import { mountWebUI } from './webui/index.js';
@@ -24,9 +25,11 @@ import { config } from './config.js';
 import { globalThrottle } from './utils/throttle.js';
 import { recordRequest, getQuotaStatus } from './account-manager/quota-store.js';
 import { isAuthError, isRateLimitError, isCapacityExhaustedError, isAccountForbiddenError } from './errors.js';
+import { quotaRefreshSoon, setQuotaRefreshImpl } from './utils/quota-refresh.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const require = createRequire(import.meta.url);
 import { forceRefresh } from './auth/token-extractor.js';
 import { resolveTokenToEmail } from './auth/token-resolver.js';
 import { REQUEST_BODY_LIMIT } from './constants.js';
@@ -118,6 +121,13 @@ function getOrCreateHandoverAdvisory(conversationId, requestBodyObj, fallbackMod
 }
 
 const app = express();
+
+// Keep health and diagnostics responsive even while account/quota initialization
+// or an upstream generation request is slow. These routes must not wait on the
+// account manager or Google services.
+app.get('/health', (_req, res) => {
+    res.status(200).json({ status: 'ok', service: 'ai-proxy', pid: process.pid });
+});
 
 // ─── Error classification helpers ─────────────────────────────────────────────
 
@@ -240,6 +250,10 @@ async function ensureInitialized() {
             initDynamicModelConfig().catch(err => {
                 logger.warn(`[Server] Dynamic model config init failed (non-fatal): ${err.message}`);
             });
+
+            // Prime quota state on boot so the pool isn't selectable-blind until
+            // the first backstop/on-demand sweep fires. Non-blocking.
+            refreshAllQuotas().catch(() => {});
         } catch (error) {
             initError = error;
             initPromise = null; // Allow retry on failure
@@ -264,7 +278,10 @@ function readRequestBody(req, maxBytes = MAX_INTERCEPT_BODY_BYTES) {
     return new Promise((resolve, reject) => {
         let total = 0;
         const chunks = [];
-        const timer = setTimeout(() => req.destroy(new Error('Request Timeout')), 30000);
+        const timer = setTimeout(() => {
+            logger.warn(`[GUI Interceptor] Request body timeout: ${req.method} ${req.originalUrl || req.url}`);
+            req.destroy(new Error('Request Timeout'));
+        }, 30000);
         req.on('data', (chunk) => {
             total += chunk.length;
             if (total > maxBytes) {
@@ -368,10 +385,15 @@ function forwardToGoogle(hostName, req, res, bodyText, account = null, model = n
         method: req.method,
         path: req.url || req.originalUrl || '/',
         headers,
+        timeout: 15000,
     }, (proxyRes) => {
         const statusCode = proxyRes.statusCode;
 
         if (statusCode === 200) {
+            if (res.headersSent || res.writableEnded) {
+                proxyRes.resume();
+                return;
+            }
             if (account && model) {
                 accountManager.notifySuccess(account, model);
             }
@@ -442,6 +464,10 @@ function forwardToGoogle(hostName, req, res, bodyText, account = null, model = n
                     accountManager.markRateLimited(account.email, resetMs, model);
                     logger.warn(`[GUI Interceptor] ⚠️ Account ${account.email} 429 rate-limited / quota exhausted on ${model} (cooldown: ${Math.round(resetMs/1000)}s).`);
                 }
+                // Quota state just changed (cooldown/capacity event): schedule an on-demand
+                // sweep so the next selection sees fresh remainingFraction data. Throttled
+                // inside quotaRefreshSoon() so a 429 cascade can't become a probe cascade.
+                quotaRefreshSoon();
 
                 // Auto-retry with next available account from the pool.
                 // Accumulate the failed account into the shared exclusion set so
@@ -589,11 +615,16 @@ function forwardToGoogle(hostName, req, res, bodyText, account = null, model = n
         if (!res.writableFinished) proxyReq.destroy();
     });
 
+    proxyReq.on('timeout', () => {
+        logger.warn(`[GUI Interceptor] Upstream connection timeout to ${hostName}`);
+        proxyReq.destroy(new Error('Upstream connection timeout'));
+    });
+
     proxyReq.on('error', (err) => {
         logger.error(`[GUI Interceptor] Forward error to ${hostName}: ${err.message}`);
-        if (!res.headersSent) {
+        if (!res.headersSent && !res.writableEnded) {
             res.status(502).json({ error: `Bad Gateway (${hostName})` });
-        } else {
+        } else if (!res.writableEnded) {
             res.destroy();
         }
     });
@@ -888,6 +919,16 @@ function forwardAndNeutralizeQuota(hostName, req, res, bodyText) {
                         }
                     }
 
+                    // Inject local on-demand MoE models into Antigravity IDE model picker
+                    data.models['gemma-4-26b-a4b-it'] = {
+                        displayName: 'Gemma 4 26B-A4B (Local Turbo Fieldfare)',
+                        quotaInfo: { remainingFraction: 1.0 }
+                    };
+                    data.models['gemma-4-26b-a4b'] = {
+                        displayName: 'Gemma 4 26B-A4B (Local)',
+                        quotaInfo: { remainingFraction: 1.0 }
+                    };
+
                     out = Buffer.from(JSON.stringify(data));
                     neutralized = true;
                 }
@@ -907,11 +948,16 @@ function forwardAndNeutralizeQuota(hostName, req, res, bodyText) {
         if (!res.writableFinished) proxyReq.destroy();
     });
 
+    proxyReq.on('timeout', () => {
+        logger.warn(`[GUI Interceptor] Upstream connection timeout to ${hostName}`);
+        proxyReq.destroy(new Error('Upstream connection timeout'));
+    });
+
     proxyReq.on('error', (err) => {
         logger.error(`[GUI Interceptor] Forward error to ${hostName}: ${err.message}`);
-        if (!res.headersSent) {
+        if (!res.headersSent && !res.writableEnded) {
             res.status(502).json({ error: `Bad Gateway (${hostName})` });
-        } else {
+        } else if (!res.writableEnded) {
             res.destroy();
         }
     });
@@ -1062,7 +1108,20 @@ app.use(async (req, res, next) => {
             let handoverAdvisoryText = null;
             if (!account && isAIRequest && requestedModel) {
                 if (isMidSession) {
+                    // GUI/IDE requests are ALWAYS Gemini-native payloads (contents/parts
+                    // schema) that get forwarded verbatim to the Gemini streamGenerateContent
+                    // endpoint with only the model name swapped. Falling back to a Claude
+                    // model name (e.g. the dynamic cross-family map in buildFallbackMap can
+                    // route gemini-3.7-flash-high -> claude-sonnet-4-6) makes Google reject
+                    // the mismatched model/schema combo with 400 INVALID_ARGUMENT
+                    // ("Request contains an invalid argument."). Restrict GUI fallback to
+                    // same-family models only.
+                    const requestedFamily = getModelFamily(requestedModel);
                     for (const fb of getFallbackChain(requestedModel)) {
+                        if (getModelFamily(fb) !== requestedFamily) {
+                            logger.warn(`[GUI Interceptor] Skipping cross-family fallback ${fb} for ${requestedModel} (would be rejected by Gemini backend)`);
+                            continue;
+                        }
                         const fbResult = accountManager.selectAccount(fb, {
                             apiProfile: req?.apiProfile,
                             incomingTokenEmail,
@@ -1112,6 +1171,7 @@ app.use(async (req, res, next) => {
                         reason: 'No accounts available in pool and no fallback model available',
                     });
                     logger.warn(`[GUI Interceptor] No accounts available for AI request to ${reqPath}`);
+                    quotaRefreshSoon();
                     return res.status(503).json({ error: 'No accounts available in pool' });
                 }
             } else {
@@ -1352,23 +1412,81 @@ async function initDynamicModelConfig() {
     }
 }
 
-// Refresh dynamic model config periodically (every 5 minutes)
+// Refresh dynamic model config periodically — LONG interval (60 min) is plenty;
+// the /webui/api/dynamic-presets route already regenerates on-demand.
 setInterval(() => {
     if (isInitialized) {
         initDynamicModelConfig().catch(() => {});
     }
-}, 5 * 60 * 1000);
+}, 60 * 60 * 1000);
 
-// Periodic background quota refresh (every 2 minutes) — keeps account.quota.models
-// in sync with live Google API data so getAvailableAccounts() and the UI dashboard
-// never fall behind due to stale accounts.json values.
+// Background quota refresh — LONG idle backstop (15 min) instead of the former
+// 2-minute loop. The 2-min sweep probed every valid account (~720 token-authenticated
+// Google calls/hour while idle) — excessive and self-harming. Quota truth is now
+// fetched on-demand via quotaRefreshSoon() at account-decision events (429 /
+// capacity-exhaustion / empty-pool 503); this slow backstop only keeps idle state
+// from going stale. Additionally, accounts whose models are all exhausted with a
+// KNOWN future resetTime are SKIPPED until just before that reset (probing them
+// sooner is provably wasted work), and a one-shot wake timer re-sweeps the pool
+// exactly when the earliest reset opens.
+const RESET_FRESHNESS_MARGIN_MS = 2 * 60 * 1000;
+const MAX_RESET_WAKE_DELAY_MS = 24 * 60 * 60 * 1000;
+let _resetWakeTimer = null;
+let _nextResetWakeAt = 0;
+
+// If the account can't gain any quota before a known future reset, return the
+// earliest safe re-probe time (~2 min before that reset); else null (= probe now).
+// Only returns a deferral when EVERY tracked model is exhausted with a future
+// reset — any availability, unknown quota, or already-due reset means probe.
+function accountNextResetMs(account) {
+    const models = account?.quota?.models;
+    if (!models || typeof models !== 'object') return null;
+    const entries = Object.entries(models);
+    if (entries.length === 0) return null;
+    const now = Date.now();
+    let earliest = null;
+    for (const [, q] of entries) {
+        const frac = q?.remainingFraction;
+        if (frac === null || frac === undefined) return null;   // unknown → keep probing
+        if (frac > 0.05) return null;                            // real availability → track it
+        const resetMs = q?.resetTime ? new Date(q.resetTime).getTime() : NaN;
+        if (isNaN(resetMs) || resetMs <= now) return null;       // reset due/soon → probe now
+        if (earliest === null || resetMs < earliest) earliest = resetMs;
+    }
+    return earliest - RESET_FRESHNESS_MARGIN_MS;
+}
+
+function scheduleResetWake(wakeAt) {
+    if (_resetWakeTimer) {
+        clearTimeout(_resetWakeTimer);
+        _resetWakeTimer = null;
+    }
+    _nextResetWakeAt = wakeAt;
+    const delay = Math.min(Math.max(wakeAt - Date.now(), 1000), MAX_RESET_WAKE_DELAY_MS);
+    _resetWakeTimer = setTimeout(() => {
+        _resetWakeTimer = null;
+        refreshAllQuotas().catch(() => {});
+    }, delay);
+}
+
 async function refreshAllQuotas() {
     if (!isInitialized) return;
     try {
         const allAccts = accountManager.getAllAccounts();
         const active = allAccts.filter(a => !a.isInvalid && a.enabled !== false);
+        let nextWakeAt = 0;
+        let probed = 0;
+        let deferred = 0;
         await Promise.allSettled(active.map(async (account) => {
             try {
+                // Reset-aware skip: known-locked accounts are deferred, not probed.
+                const deferUntil = accountNextResetMs(account);
+                if (deferUntil !== null && deferUntil > Date.now()) {
+                    if (nextWakeAt === 0 || deferUntil < nextWakeAt) nextWakeAt = deferUntil;
+                    deferred++;
+                    return;
+                }
+                probed++;
                 const token = await accountManager.getTokenForAccount(account);
                 const projectId = account.subscription?.projectId || null;
                 const quotas = await getModelQuotas(token, projectId);
@@ -1394,13 +1512,21 @@ async function refreshAllQuotas() {
                 // Per-account failure is non-fatal
             }
         }));
+        // Wake once when the earliest deferred account's reset opens.
+        if (nextWakeAt > 0 && (_resetWakeTimer === null || nextWakeAt < _nextResetWakeAt)) {
+            scheduleResetWake(nextWakeAt);
+        }
+        if (probed > 0 || deferred > 0) {
+            logger.info(`[Server] Quota sweep: ${probed} probed, ${deferred} deferred (known future reset)`);
+        }
     } catch (e) {
         logger.warn(`[Server] Background quota refresh error: ${e.message}`);
     }
 }
 setInterval(() => {
     refreshAllQuotas().catch(() => {});
-}, 2 * 60 * 1000);
+}, 15 * 60 * 1000);
+setQuotaRefreshImpl(refreshAllQuotas);
 
 /**
  * API: Get dynamically generated presets

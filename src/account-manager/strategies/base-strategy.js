@@ -90,6 +90,35 @@ export class BaseStrategy {
             }
         }
 
+        // Claude models require a CloudCode OAuth account with Pro/Plus/Ultra tier (API keys and free accounts cannot serve Claude)
+        if (modelId && modelId.toLowerCase().includes('claude')) {
+            if (account.type === 'apikey' || account.email?.includes('virtual-gemini-key')) {
+                return false;
+            }
+            const tier = (account.subscription?.tier || account.tier || '').toLowerCase();
+            if (tier === 'free') {
+                return false;
+            }
+        }
+
+        // Exclude an account when the requested model's quota is explicitly
+        // exhausted with an active future reset. Mirrors the per-model check that
+        // used to be Claude-only, now applied to ALL models (including Gemini).
+        // This is checked directly against the account's quota (no staleness guard)
+        // so an account whose quota is genuinely spent is never selected, even when
+        // its quota record is older than the QuotaTracker's 5-minute trust window.
+        // Without this, exhausted free-tier accounts keep winning Gemini selection
+        // over healthy paid accounts on every new request.
+        if (modelId) {
+            const q = account.quota?.models?.[modelId];
+            if (q && typeof q.remainingFraction === 'number' && q.remainingFraction <= 0.05 && q.resetTime) {
+                const resetMs = new Date(q.resetTime).getTime();
+                if (!isNaN(resetMs) && resetMs > Date.now()) {
+                    return false;
+                }
+            }
+        }
+
         return true;
     }
 

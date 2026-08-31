@@ -196,6 +196,10 @@ window.translations.pt = {
     claudeEmpty: "Claude Vazio",
     geminiActive: "Gemini Ativo",
     geminiEmpty: "Gemini Vazio",
+    claudePool: "Claude Pool",
+    geminiPool: "Gemini Pool",
+    claudePoolTooltip: "Maior cota restante do Claude entre as contas deste pool",
+    geminiPoolTooltip: "Maior cota restante do Gemini entre as contas deste pool",
     synced: "SINCRONIZADO",
     syncing: "SINCRONIZANDO...",
     // Time range labels

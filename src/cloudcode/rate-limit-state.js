@@ -212,11 +212,19 @@ export function calculateSmartBackoff(errorText, serverResetMs, consecutiveFailu
 }
 
 // Periodically clean up stale rate limit state (every 60 seconds)
-setInterval(() => {
-    const cutoff = Date.now() - RATE_LIMIT_STATE_RESET_MS;
-    for (const [key, state] of rateLimitStateByAccountModel.entries()) {
-        if (state.lastAt < cutoff) {
-            rateLimitStateByAccountModel.delete(key);
+const gcInterval = setInterval(() => {
+    try {
+        const cutoff = Date.now() - RATE_LIMIT_STATE_RESET_MS;
+        for (const [key, state] of rateLimitStateByAccountModel.entries()) {
+            if (state && state.lastAt < cutoff) {
+                rateLimitStateByAccountModel.delete(key);
+            }
         }
+    } catch (e) {
+        console.error('[RateLimitState] GC Interval error:', e);
     }
 }, 60000);
+
+if (gcInterval.unref) {
+    gcInterval.unref();
+}

@@ -7,45 +7,73 @@
  */
 
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
+import os from 'os';
 
+const SESSION_DIR = path.join(os.homedir(), '.solidstack', 'sessions');
+const SESSION_FILE = path.join(SESSION_DIR, 'cloudcode-sessions.json');
 
 // Runtime storage for session IDs (per account)
-// This mimics the behavior of the binary which generates a session ID at startup
-// and keeps it for the process lifetime.
 // Key: accountEmail, Value: sessionId
 const runtimeSessionStore = new Map();
+
+function loadSessionsFromDisk() {
+    try {
+        if (fs.existsSync(SESSION_FILE)) {
+            const data = JSON.parse(fs.readFileSync(SESSION_FILE, 'utf8'));
+            if (data && typeof data === 'object') {
+                for (const [k, v] of Object.entries(data)) {
+                    if (typeof v === 'string') {
+                        runtimeSessionStore.set(k, v);
+                    }
+                }
+            }
+        }
+    } catch (e) {
+        // Non-fatal fallback
+    }
+}
+
+function saveSessionsToDisk() {
+    try {
+        if (!fs.existsSync(SESSION_DIR)) {
+            fs.mkdirSync(SESSION_DIR, { recursive: true });
+        }
+        const obj = Object.fromEntries(runtimeSessionStore);
+        const tmpFile = `${SESSION_FILE}.tmp.${Date.now()}`;
+        fs.writeFileSync(tmpFile, JSON.stringify(obj, null, 2), 'utf8');
+        fs.renameSync(tmpFile, SESSION_FILE);
+    } catch (e) {
+        // Non-fatal fallback
+    }
+}
+
+// Load existing active sessions on module load
+loadSessionsFromDisk();
 
 /**
  * Get or create a session ID for the given account.
  * 
- * The binary generates a session ID once at startup: `p.sessionID = rs() + Date.now()`.
- * Since our proxy is long-running, we simulate this "per-launch" behavior by storing
- * a generated ID in memory for each account.
+ * Stored persistently across proxy restarts to ensure prompt caching
+ * continuity with upstream providers (Google Cloud Code / Gemini / Anthropic).
  *
- * - If the proxy restarts, the ID changes (matching binary/VS Code restart behavior).
- * - Within a running proxy instance, the ID is stable for that account.
- * - This enables prompt caching while using the EXACT random logic of the binary.
- *
- * @param {Object} anthropicRequest - The Anthropic-format request (unused for ID generation now)
+ * @param {Object} anthropicRequest - The Anthropic-format request
  * @param {string} accountEmail - The account email to scope the session ID
  * @returns {string} A stable session ID string matching binary format
  */
 export function deriveSessionId(anthropicRequest, accountEmail) {
     if (!accountEmail) {
-        // Fallback for requests without an account (should differ every time)
         return generateBinaryStyleId();
     }
 
-    // Check if we already have a session ID for this account in this process run
     if (runtimeSessionStore.has(accountEmail)) {
         return runtimeSessionStore.get(accountEmail);
     }
 
-    // Generate a new ID using the binary's exact logic
     const newSessionId = generateBinaryStyleId();
-
-    // Store it for future requests from this account
     runtimeSessionStore.set(accountEmail, newSessionId);
+    saveSessionsToDisk();
 
     return newSessionId;
 }
@@ -63,4 +91,5 @@ function generateBinaryStyleId() {
  */
 export function clearSessionStore() {
     runtimeSessionStore.clear();
+    saveSessionsToDisk();
 }
