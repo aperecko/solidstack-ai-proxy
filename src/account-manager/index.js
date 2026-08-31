@@ -46,12 +46,9 @@ import { createStrategy, getStrategyLabel, DEFAULT_STRATEGY } from './strategies
 import { logger } from '../utils/logger.js';
 import { logRoutingDecision, logRoutingTelemetry } from '../cloudcode/routing-logger.js';
 import { getAntigravityAppEmail } from '../auth/database.js';
+import { getDrainRate } from './quota-store.js';
 
-// Phase 2 (Identity Anchor): the primary contextual identity is pinned to a
-// single account so generic pooled accounts (and stale Antigravity SQLite DB
-// records) can never overwrite the account used for routing decisions.
-const PRIMARY_NATIVE_ACCOUNT = 'adamtechnicalsolutions@gmail.com';
-const DB_NATIVE_REATTRIBUTION_ENABLED = false;
+const DB_NATIVE_REATTRIBUTION_ENABLED = true;
 
 export class AccountManager {
     #accounts = [];
@@ -156,7 +153,24 @@ export class AccountManager {
                     const opQuery = i === 1
                         ? 'op read "op://SolidStack/gemini-key-prod-1/password" 2>/dev/null || op read "op://SolidStack/gemini-key-prod/apikey" 2>/dev/null'
                         : `op read "op://SolidStack/gemini-key-prod-${i}/password" 2>/dev/null`;
-                    const opResult = execSync(opQuery, { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }).trim();
+                    let extraEnv = {};
+                    try {
+                        const envContent = fs.readFileSync(path.join(SOLIDSTACK_BASE_DIR, '.env'), 'utf8');
+                        const match = envContent.match(/^OP_GLOBAL_TOKEN=(.+)$/m);
+                        if (match) {
+                            extraEnv.OP_SERVICE_ACCOUNT_TOKEN = match[1].trim();
+                        }
+                    } catch (e) {}
+                    
+                    const opResult = execSync(opQuery, {
+                        encoding: 'utf8',
+                        stdio: ['pipe', 'pipe', 'ignore'],
+                        env: { ...process.env, ...extraEnv },
+                        // 1Password CLI can hang waiting for an unlock/vault prompt.
+                        // Fail fast so a locked 1Password never blocks the event loop.
+                        timeout: 2000,
+                        killSignal: 'SIGKILL'
+                    }).trim();
                     if (opResult) {
                         key = opResult;
                         process.env[`GEMINI_API_KEY_${i}`] = key;
@@ -212,9 +226,15 @@ export class AccountManager {
      * Useful when accounts.json is modified externally (e.g., by WebUI)
      */
     async reload() {
+        const wasInitialized = this.#initialized;
         this.#initialized = false;
-        await this.initialize();
-        logger.info('[AccountManager] Accounts reloaded from disk');
+        try {
+            await this.initialize();
+            logger.info('[AccountManager] Accounts reloaded from disk');
+        } catch (error) {
+            this.#initialized = wasInitialized;
+            logger.error('[AccountManager] FATAL ERROR during reload. Keeping existing tokens in memory. Error:', error.message);
+        }
     }
 
     /**
@@ -330,33 +350,16 @@ export class AccountManager {
     getNativeIdeAccount() {
         const now = Date.now();
 
-        // 0. PHASE 2 PIN — the native account ALWAYS resolves to the pinned
-        //    primary contextual identity. This short-circuits the incoming
-        //    token override and the antigravity-database reattribution below;
-        //    the later steps are only fallbacks if the pinned account is not
-        //    present in the account pool.
-        const pinnedAcc = this.#accounts.find(a => a.email === PRIMARY_NATIVE_ACCOUNT && a.enabled !== false);
-        if (pinnedAcc) {
-            if (this.#cachedNativeEmail !== PRIMARY_NATIVE_ACCOUNT) {
-                this.#cachedNativeEmail = PRIMARY_NATIVE_ACCOUNT;
-                logger.info(`[AccountManager] Native IDE account pinned to ${PRIMARY_NATIVE_ACCOUNT}`);
-            }
-            return pinnedAcc;
-        }
-
-        // Live override from the incoming request token (authoritative).
-        //    The SQLite auth record can be stale; the token AG actually sends is not.
+        // 1. Live override from the incoming request token (authoritative live truth).
+        //    The SQLite auth record can be stale; the Bearer token AG actually sends is not.
         if (this.#nativeEmailOverride) {
             const acc = this.#accounts.find(a => a.email === this.#nativeEmailOverride && a.enabled !== false);
             if (acc) return acc;
-            // Override account not in the pool — fall through to DB/last-resort
-            // routing, but keep the override so the penalty still targets it.
+            // Return synthetic account object for penalty scoring if not in explicit pool
+            return { email: this.#nativeEmailOverride, enabled: true, source: 'token-override' };
         }
 
-        // 1. Primary: Read from Antigravity app's SQLite database (live truth)
-        //    Cached with TTL to avoid reading the DB on every request.
-        //    DISABLED in Phase 2 — automatic DB reattribution would let a
-        //    generic pooled account overwrite the pinned identity.
+        // 2. Read from Antigravity app's SQLite database (live local IDE auth)
         if (DB_NATIVE_REATTRIBUTION_ENABLED && now - this.#nativeEmailCheckedAt > AccountManager.NATIVE_EMAIL_TTL_MS) {
             this.#nativeEmailCheckedAt = now;
             try {
@@ -385,7 +388,7 @@ export class AccountManager {
             if (acc) return acc;
         }
 
-        // 2. Fallback: Check routing-mode.json (static config, survives restarts)
+        // 3. Fallback: Check routing-mode.json (static config, survives restarts)
         try {
             const routingModeFile = path.join(SOLIDSTACK_BASE_DIR, '.logs', 'routing-mode.json');
             if (fs.existsSync(routingModeFile)) {
@@ -400,7 +403,7 @@ export class AccountManager {
             }
         } catch (e) {}
 
-        // 3. Last resort: Most recently used OAuth account
+        // 4. Last resort: Most recently used OAuth account
         const oauthAccounts = this.#accounts.filter(a => a.type !== 'apikey' && a.enabled !== false);
         if (oauthAccounts.length > 0) {
             oauthAccounts.sort((a, b) => {
@@ -419,14 +422,8 @@ export class AccountManager {
      * @private
      */
     #persistNativeEmail(email, source = 'antigravity-database') {
+        if (!email) return;
         try {
-            // Phase 2: never let a generic pooled account overwrite the pinned
-            // primary identity in routing-mode.json. Only the pinned account is
-            // honored; anything else is reported but not persisted.
-            const effectiveEmail = email === PRIMARY_NATIVE_ACCOUNT ? email : PRIMARY_NATIVE_ACCOUNT;
-            if (email && email !== effectiveEmail) {
-                logger.info(`[AccountManager] Blocked persist of native account ${email}; keeping pinned ${effectiveEmail}`);
-            }
             const routingModeFile = path.join(SOLIDSTACK_BASE_DIR, '.logs', 'routing-mode.json');
             let modeData = { mode: this.#routingMode };
             if (fs.existsSync(routingModeFile)) {
@@ -434,7 +431,7 @@ export class AccountManager {
             } else {
                 fs.mkdirSync(path.join(SOLIDSTACK_BASE_DIR, '.logs'), { recursive: true });
             }
-            modeData.nativeAccount = effectiveEmail;
+            modeData.nativeAccount = email;
             modeData.detectedAt = new Date().toISOString();
             modeData.source = source;
             fs.writeFileSync(routingModeFile, JSON.stringify(modeData, null, 2));
@@ -485,11 +482,25 @@ export class AccountManager {
         // Inject native account email so strategies can deprioritize it.
         // Accepts incomingTokenEmail (resolved from HTTP request header) as highest priority.
         const nativeAcc = this.getNativeIdeAccount();
+
+        // Compute drain rates for all enabled accounts so strategies can
+        // perform pre-emptive rotation before accounts hit 429s.
+        const drainRates = {};
+        if (modelId) {
+            const app = options?.app || 'antigravity';
+            for (const acc of this.#accounts) {
+                if (acc.enabled !== false) {
+                    drainRates[acc.email] = getDrainRate(app, acc.email, modelId);
+                }
+            }
+        }
+
         const strategyOptions = {
             currentIndex: this.#currentIndex,
             onSave: () => this.saveToDisk(),
             ...options,
             nativeAccountEmail: options.incomingTokenEmail || nativeAcc?.email || null,
+            drainRates,
         };
 
         const result = this.#strategy.selectAccount(this.#accounts, modelId, strategyOptions);
@@ -858,6 +869,24 @@ export class AccountManager {
                 modelQuotaThresholds: a.modelQuotaThresholds || {}
             }))
         };
+    }
+
+    /**
+     * Get drain rates for all enabled accounts for a specific model.
+     * Useful for debugging/API health endpoints.
+     * @param {string} modelId - Model ID to check drain rates for
+     * @returns {Object} Map of email → drain rate metrics
+     */
+    getDrainRates(modelId) {
+        if (!modelId) return {};
+        const app = 'antigravity';
+        const rates = {};
+        for (const acc of this.#accounts) {
+            if (acc.enabled !== false) {
+                rates[acc.email] = getDrainRate(app, acc.email, modelId);
+            }
+        }
+        return rates;
     }
 
     /**
