@@ -59,6 +59,14 @@ window.Components.logsViewer = () => ({
             if (val) this.scrollToBottom();
         });
 
+        // Check URL hash for process filter
+        if (window.location.hash.includes('process=')) {
+            const match = window.location.hash.match(/process=([^&]+)/);
+            if (match && match[1]) {
+                this.searchQuery = decodeURIComponent(match[1]);
+            }
+        }
+
         // Watch filters to maintain auto-scroll if enabled
         this.$watch('searchQuery', () => { if(this.isAutoScroll) this.$nextTick(() => this.scrollToBottom()) });
         this.$watch('filters', () => { if(this.isAutoScroll) this.$nextTick(() => this.scrollToBottom()) });

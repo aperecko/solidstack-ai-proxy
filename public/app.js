@@ -25,6 +25,7 @@ document.addEventListener('alpine:init', () => {
     Alpine.data('economics', window.Components.economics);
     Alpine.data('uad', window.Components.uad);
     Alpine.data('workflow', window.Components.workflow);
+    Alpine.data('aiCopilot', window.Components.aiCopilot);
 
     // View Loader Directive
     Alpine.directive('load-view', (el, { expression }, { evaluate }) => {

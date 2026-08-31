@@ -81,6 +81,30 @@ window.Components.workflow = () => ({
         }
     },
 
+    async executeRemediation(item) {
+        const cmd = item.remediation || item.recommended_command;
+        if (!cmd) return;
+        if (Alpine.store('global')?.showToast) {
+            Alpine.store('global').showToast(`Dispatching auto-fix for ${item.owner}...`, 'info');
+        }
+        try {
+            await fetch('/api/actions/execute', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action: 'remediate_blocker', payload: { command: cmd, owner: item.owner } })
+            }).catch(() => null);
+
+            await this.syncWorkflow();
+            if (Alpine.store('global')?.showToast) {
+                Alpine.store('global').showToast(`Remediation dispatched for ${item.owner}!`, 'success');
+            }
+        } catch (e) {
+            if (Alpine.store('global')?.showToast) {
+                Alpine.store('global').showToast(`Remediation failed: ${e.message}`, 'error');
+            }
+        }
+    },
+
     init() {
         this.fetchStatus();
     }

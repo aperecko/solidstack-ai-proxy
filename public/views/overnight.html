@@ -245,9 +245,17 @@
                 </div>
             </div>
         </div>
-        <div class="mt-4 p-4 rounded-xl bg-space-950 border border-space-border">
-            <div class="text-xs font-mono text-gray-400 mb-1 uppercase">LLM Judge Reasoning</div>
-            <div class="text-sm text-gray-300 font-mono" x-text="status.latest_reasoning || 'Evaluate the most recent commit in the Recent Iterations tab.'"></div>
+        <div class="mt-4 p-4 rounded-xl bg-space-950 border border-space-border flex flex-col gap-3">
+            <div class="flex items-center justify-between">
+                <div class="text-xs font-mono text-gray-400 uppercase font-bold">LLM Judge Reasoning & Evaluation</div>
+                <div class="flex items-center gap-2">
+                    <button @click="fetch('/api/skills/escalate-idea', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ title: 'Lorax Mutation Remediation', summary: status.latest_reasoning || 'Fix visual regression from overnight loop', role: 'DESIGNER', priority: 'HIGH' }) }); if ($store.global?.showToast) $store.global.showToast('Created remediation task in Workflow!', 'success'); $store.global.activeTab = 'workflow';" 
+                            class="btn btn-xs bg-neon-purple/20 border border-neon-purple/50 text-neon-purple hover:bg-neon-purple/40 font-mono text-[10px]">
+                        ⚡ Enqueue Fix Task
+                    </button>
+                </div>
+            </div>
+            <div class="text-sm text-gray-300 font-mono leading-relaxed" x-text="status.latest_reasoning || 'Evaluate the most recent commit in the Recent Iterations tab.'"></div>
         </div>
     </div>
 </div>

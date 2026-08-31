@@ -119,10 +119,37 @@ window.Components.agentSkills = () => ({
         }
     },
 
+    async escalateIdeaToTask(idea) {
+        try {
+            const payload = {
+                title: idea.title,
+                summary: idea.description || idea.title,
+                role: (idea.mainAgent || 'TECH').toUpperCase(),
+                priority: idea.energy === 'High' ? 'HIGH' : 'NORMAL'
+            };
+            const res = await fetch('/api/skills/escalate-idea', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            }).catch(() => null);
+
+            if (Alpine.store('global')?.showToast) {
+                Alpine.store('global').showToast(`Escalated "${idea.title}" to Workflow Task Queue!`, 'success');
+            }
+            // Navigate to Workflow
+            Alpine.store('global').activeTab = 'workflow';
+        } catch (e) {
+            console.error('Escalation failed:', e);
+        }
+    },
+
     // --- Executive Focus ---
     saveNextStep() {
         this.savedNextStep = this.nextStep.trim();
         localStorage.setItem('solidstack_focus_step', this.savedNextStep);
+        if (Alpine.store('global')?.setActiveFocusTarget) {
+            Alpine.store('global').setActiveFocusTarget(this.savedNextStep);
+        }
         window.Alpine.store('global').showToast('Focus Next Step locked in.', 'success');
     },
 
@@ -130,6 +157,9 @@ window.Components.agentSkills = () => ({
         this.nextStep = '';
         this.savedNextStep = '';
         localStorage.removeItem('solidstack_focus_step');
+        if (Alpine.store('global')?.setActiveFocusTarget) {
+            Alpine.store('global').setActiveFocusTarget('');
+        }
     },
 
     startTimer() {

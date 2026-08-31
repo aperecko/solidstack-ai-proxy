@@ -245,16 +245,21 @@
                                         <div class="text-gray-600 mt-1" x-text="new Date(idea.timestamp * 1000).toLocaleDateString()"></div>
                                     </td>
                                     <td class="text-right">
-                                        <div class="flex justify-end gap-1">
+                                        <div class="flex justify-end gap-1.5 flex-wrap">
+                                            <button @click="escalateIdeaToTask(idea)"
+                                                class="btn btn-xs bg-neon-purple/20 border border-neon-purple/50 text-neon-purple hover:bg-neon-purple/40 font-mono text-[10px] cursor-pointer"
+                                                title="Escalate idea to an active Workflow Kanban task">
+                                                ⚡ Task
+                                            </button>
                                             <button x-show="idea.status === 'active'" @click="archiveIdea(idea.filename)"
-                                                class="btn btn-xs btn-outline border-fuchsia-500/20 text-fuchsia-400 hover:bg-fuchsia-500/10 cursor-pointer"
+                                                class="btn btn-xs btn-outline border-fuchsia-500/20 text-fuchsia-400 hover:bg-fuchsia-500/10 cursor-pointer font-mono text-[10px]"
                                                 title="Archive to vault">
                                                 Archive
                                             </button>
                                             <button @click="deleteIdea(idea.filename)"
-                                                class="btn btn-xs btn-ghost text-red-400 hover:text-red-300 cursor-pointer"
+                                                class="btn btn-xs btn-ghost text-red-400 hover:text-red-300 cursor-pointer font-mono text-[10px]"
                                                 title="Delete permanently">
-                                                Delete
+                                                ✕
                                             </button>
                                         </div>
                                     </td>

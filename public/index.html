@@ -97,16 +97,37 @@
             </button>
         </div>
 
-        <div class="flex items-center gap-3">
+        <div class="flex items-center gap-2.5">
+            <!-- Active Focus Target Badge -->
+            <div x-show="$store.global.activeFocusTarget" 
+                 @click="$store.global.activeTab = 'skills'"
+                 class="hidden 2xl:flex items-center gap-2 px-3 py-1 rounded-full text-xs font-mono bg-fuchsia-950/40 border border-fuchsia-500/30 text-fuchsia-300 hover:border-fuchsia-400/60 transition-all cursor-pointer shadow-[0_0_10px_rgba(217,70,239,0.15)]"
+                 title="Active attention target — click to manage in Skills">
+                <span class="w-1.5 h-1.5 rounded-full bg-fuchsia-400 animate-pulse"></span>
+                <span class="text-[10px] text-fuchsia-500 uppercase font-bold">Focus:</span>
+                <span class="max-w-[160px] truncate" x-text="$store.global.activeFocusTarget"></span>
+            </div>
+
+            <!-- Cognitive Lens Selector Pill -->
+            <button @click="$store.global.activeTab = 'philosophy'" 
+                    class="hidden xl:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono bg-emerald-950/40 border border-emerald-500/30 text-emerald-300 hover:border-emerald-400 transition-all cursor-pointer"
+                    title="Active Cognitive Lens — click to switch craft in Philosophy">
+                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                <span class="text-[10px] text-emerald-500 uppercase font-bold">Lens:</span>
+                <span class="uppercase font-bold" x-text="$store.global.cognitiveLens"></span>
+            </button>
+
             <!-- Account Fleet Summary Pill -->
-            <div class="hidden sm:flex items-center gap-2 px-2.5 py-1 rounded-full text-xs font-mono bg-space-800/80 border border-space-border/60 text-gray-300">
+            <div class="hidden sm:flex items-center gap-2 px-2.5 py-1 rounded-full text-xs font-mono bg-space-800/80 border border-space-border/60 text-gray-300 cursor-pointer hover:border-space-border transition-colors"
+                 @click="$store.global.activeTab = 'accounts'">
                 <span class="w-1.5 h-1.5 rounded-full bg-neon-green"></span>
                 <span x-text="`${$store.data.accounts.filter(a => a.enabled !== false && !a.isInvalid).length} / ${$store.data.accounts.length} Active`"></span>
             </div>
 
             <!-- Routing Status Pill -->
             <template x-if="connectionStatus === 'connected'">
-                <div class="flex items-center gap-2 px-3 py-1 rounded-full text-xs font-mono border transition-all duration-300"
+                <div class="flex items-center gap-2 px-3 py-1 rounded-full text-xs font-mono border transition-all duration-300 cursor-pointer"
+                    @click="$store.global.activeTab = 'models'"
                     :class="$store.data.routingMode === 'load_balancer' 
                         ? ($store.data.accounts.filter(a => !a.isInvalid).length > 0 
                             ? 'bg-neon-purple/10 border-neon-purple/20 text-neon-purple' 
@@ -136,6 +157,18 @@
                 <span
                     x-text="connectionStatus === 'connected' ? $store.global.t('online') : (connectionStatus === 'disconnected' ? $store.global.t('offline') : $store.global.t('connecting'))"></span>
             </div>
+
+            <!-- Lorax Mind Copilot Button (⌘J) -->
+            <button @click="$store.global.toggleCopilot()"
+                    type="button"
+                    class="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-neon-purple/20 border border-neon-purple/60 hover:bg-neon-purple/30 text-white transition-all text-xs font-mono font-bold shadow-[0_0_12px_rgba(168,85,247,0.3)] hover:scale-105"
+                    title="Toggle Lorax Mind AI Copilot (⌘J)">
+                <svg class="w-3.5 h-3.5 text-neon-purple animate-pulse" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+                <span>AI Copilot</span>
+                <kbd class="hidden md:inline-block px-1 py-0.2 rounded bg-black/40 text-[9px] text-gray-300 font-sans">⌘J</kbd>
+            </button>
 
             <div class="h-4 w-px bg-space-border"></div>
 
@@ -692,6 +725,140 @@
         </div>
     </div>
 
+    <!-- Lorax Mind AI Copilot Slide-Over Drawer (⌘J) -->
+    <div x-data="aiCopilot" 
+         x-show="$store.global.showCopilotDrawer"
+         x-transition:enter="transition ease-out duration-200"
+         x-transition:enter-start="opacity-0 translate-x-full"
+         x-transition:enter-end="opacity-100 translate-x-0"
+         x-transition:leave="transition ease-in duration-150"
+         x-transition:leave-start="opacity-100 translate-x-0"
+         x-transition:leave-end="opacity-0 translate-x-full"
+         @keydown.window.escape="$store.global.showCopilotDrawer = false"
+         @keydown.window.cmd.j.prevent="$store.global.toggleCopilot()"
+         @keydown.window.ctrl.j.prevent="$store.global.toggleCopilot()"
+         class="fixed top-0 right-0 bottom-0 w-full max-w-md bg-space-900 border-l border-space-border shadow-2xl z-[9998] flex flex-col"
+         style="display: none;">
+        
+        <!-- Copilot Header -->
+        <div class="p-4 border-b border-space-border bg-space-950/90 flex items-center justify-between">
+            <div class="flex items-center gap-2.5">
+                <div class="w-8 h-8 rounded-xl bg-gradient-to-br from-neon-purple to-neon-cyan flex items-center justify-center text-white font-bold shadow-[0_0_15px_rgba(168,85,247,0.4)]">
+                    <svg class="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                </div>
+                <div>
+                    <h3 class="text-sm font-bold text-white font-mono flex items-center gap-2">
+                        Lorax Mind Copilot
+                    </h3>
+                    <div class="flex items-center gap-1.5 text-[10px] font-mono text-gray-400">
+                        <span>Context:</span>
+                        <span class="text-neon-cyan font-bold uppercase" x-text="$store.global.activeTab"></span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-1.5">
+                <button @click="runConsensusAudit()" 
+                        :disabled="auditingPatch"
+                        class="btn btn-xs bg-neon-purple/20 hover:bg-neon-purple/30 text-neon-purple border border-neon-purple/40 font-mono text-[10px] gap-1"
+                        title="Run Dual-Model (Gemini Pro + Claude Sonnet) Consensus Audit">
+                    <svg class="w-3 h-3" :class="{'animate-spin': auditingPatch}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
+                    </svg>
+                    <span>Consensus</span>
+                </button>
+                <button @click="clearChat()" class="text-gray-400 hover:text-white p-1 text-xs font-mono" title="Clear chat history">Clear</button>
+                <button @click="$store.global.showCopilotDrawer = false" class="text-gray-400 hover:text-white p-1 ml-1 text-base">✕</button>
+            </div>
+        </div>
+
+        <!-- Consensus Audit Banner (when triggered) -->
+        <template x-if="consensusResult">
+            <div class="p-3.5 bg-space-950 border-b border-neon-purple/30 text-xs font-mono space-y-2 animate-scale-in">
+                <div class="flex items-center justify-between">
+                    <span class="font-bold text-neon-purple flex items-center gap-1.5">
+                        <span class="w-2 h-2 rounded-full bg-neon-green"></span>
+                        Dual-Model Consensus Verdict
+                    </span>
+                    <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-neon-green/20 text-neon-green border border-neon-green/40">
+                        APPROVED
+                    </span>
+                </div>
+                <div class="text-[11px] text-gray-300 space-y-1">
+                    <div><span class="text-neon-cyan font-bold">Gemini 3.1 Pro:</span> <span x-text="consensusResult.gemini_verdict"></span></div>
+                    <div><span class="text-neon-purple font-bold">Claude 3.7 Sonnet:</span> <span x-text="consensusResult.claude_verdict"></span></div>
+                </div>
+            </div>
+        </template>
+
+        <!-- Quick Action Prompts Carousel -->
+        <div class="px-4 py-2.5 bg-space-950/60 border-b border-space-border/40 overflow-x-auto custom-scrollbar flex gap-2 shrink-0">
+            <template x-for="(qp, idx) in quickPrompts" :key="idx">
+                <button @click="runPrompt(qp.prompt)" 
+                        class="px-2.5 py-1 rounded-lg bg-space-900 border border-space-border hover:border-neon-purple/50 text-[11px] font-mono text-gray-300 hover:text-white transition-all whitespace-nowrap shrink-0 shadow-sm"
+                        x-text="qp.label">
+                </button>
+            </template>
+        </div>
+
+        <!-- Messages Container -->
+        <div id="copilot-messages-container" class="flex-1 p-4 overflow-y-auto space-y-4 custom-scrollbar bg-space-950/30">
+            <template x-if="messages.length === 0">
+                <div class="h-full flex flex-col items-center justify-center text-center p-6 text-gray-500 space-y-3">
+                    <div class="w-12 h-12 rounded-2xl bg-space-800 flex items-center justify-center text-neon-purple">
+                        <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                        </svg>
+                    </div>
+                    <div class="text-sm font-bold text-white font-mono">Lorax Mind Active</div>
+                    <p class="text-xs text-gray-400 leading-relaxed max-w-xs">
+                        Select a quick action above or enter a question to synthesize telemetry for the <code class="text-neon-cyan uppercase" x-text="$store.global.activeTab"></code> view.
+                    </p>
+                </div>
+            </template>
+
+            <template x-for="(msg, idx) in messages" :key="idx">
+                <div class="flex flex-col" :class="msg.role === 'user' ? 'items-end' : 'items-start'">
+                    <div class="flex items-center gap-1.5 mb-1 px-1 text-[10px] font-mono text-gray-500">
+                        <span x-text="msg.role === 'user' ? 'Operator' : 'Lorax Mind'" :class="msg.role === 'user' ? 'text-gray-400' : 'text-neon-purple font-bold'"></span>
+                        <span class="text-gray-600" x-text="msg.tab"></span>
+                    </div>
+                    <div class="max-w-[90%] rounded-2xl px-4 py-2.5 text-xs leading-relaxed font-sans border shadow-md"
+                         :class="msg.role === 'user' ? 'bg-space-800 border-space-border text-white rounded-tr-none' : 'bg-space-950 border-neon-purple/30 text-gray-200 rounded-tl-none'">
+                        <div x-html="formatMarkdown(msg.content)"></div>
+                    </div>
+                </div>
+            </template>
+
+            <div x-show="isLoading" class="flex flex-col items-start space-y-1">
+                <span class="text-[10px] font-mono text-neon-purple font-bold px-1">Lorax Mind</span>
+                <div class="bg-space-950 border border-neon-purple/30 rounded-2xl rounded-tl-none px-4 py-2 text-xs text-gray-400 flex items-center gap-2">
+                    <span class="w-2 h-2 rounded-full bg-neon-purple animate-ping"></span>
+                    <span>Synthesizing system state...</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Input Bar -->
+        <div class="p-3 border-t border-space-border bg-space-950">
+            <form @submit.prevent="sendMessage()" class="flex items-center gap-2">
+                <input type="text" 
+                       x-model="queryText"
+                       placeholder="Ask Lorax Copilot about active view..." 
+                       class="flex-1 bg-space-900 border border-space-border rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-neon-purple transition-all placeholder-gray-600">
+                <button type="submit" 
+                        :disabled="!queryText.trim() || isLoading"
+                        class="p-2 rounded-xl bg-neon-purple text-white hover:bg-purple-600 disabled:opacity-40 transition-all">
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/>
+                    </svg>
+                </button>
+            </form>
+        </div>
+    </div>
+
     <!-- Scripts - Loading Order Matters! -->
     <!-- 1. Config & Utils (global helpers) -->
     <script src="js/config/constants.js"></script>
@@ -732,6 +899,7 @@
     <script src="js/components/philosophy.js"></script>
     <script src="js/components/agent-chat.js"></script>
     <script src="js/components/overnight.js"></script>
+    <script src="js/components/ai-copilot.js"></script>
 
     <script src="js/components/uad.js"></script>
     <script src="js/components/workflow.js"></script>

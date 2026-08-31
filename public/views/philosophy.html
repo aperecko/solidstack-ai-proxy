@@ -21,10 +21,10 @@
         </div>
         <div class="flex flex-wrap gap-2">
             <template x-for="domain in domains" :key="domain.id">
-                <button @click="selectedDomain = domain" 
+                <button @click="selectedDomain = domain; if ($store.global?.setCognitiveLens) $store.global.setCognitiveLens(domain.id)" 
                         class="px-4 py-2 rounded-xl text-sm font-medium border transition-all flex items-center gap-2"
                         :class="selectedDomain.id === domain.id 
-                            ? 'bg-emerald-500/20 border-emerald-500/60 text-emerald-300 shadow-md shadow-emerald-500/10 scale-105' 
+                            ? 'bg-emerald-500/20 border-emerald-500/60 text-emerald-300 shadow-md shadow-emerald-500/10 scale-105 font-bold' 
                             : 'bg-space-900 border-space-border text-gray-400 hover:text-white hover:border-gray-600'">
                     <span x-text="domain.icon"></span>
                     <span x-text="domain.name"></span>

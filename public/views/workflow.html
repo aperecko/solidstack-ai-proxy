@@ -137,7 +137,12 @@
                             <tr class="border-b border-space-border/30 hover:bg-white/5 transition-colors">
                                 <td class="pl-4 py-3 font-mono text-xs text-neon-cyan font-bold" x-text="item.owner"></td>
                                 <td class="py-3 text-xs text-gray-300 pr-2" x-text="item.rationale || item.title"></td>
-                                <td class="py-3 pr-4 text-right">
+                                <td class="py-3 pr-4 text-right space-x-1.5 whitespace-nowrap">
+                                    <button class="btn btn-xs bg-neon-green/20 border border-neon-green/40 hover:bg-neon-green/30 text-neon-green text-[10px] font-mono" 
+                                            @click="executeRemediation(item)"
+                                            title="Auto-dispatch remediation command via UAD">
+                                        ⚡ Auto-Fix
+                                    </button>
                                     <button class="btn btn-xs bg-space-950 border border-space-border/60 hover:border-neon-green hover:text-neon-green text-[10px] text-gray-300 font-mono" 
                                             @click="copyRemediation(item.remediation || item.recommended_command)">Copy</button>
                                 </td>
