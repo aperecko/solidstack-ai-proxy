@@ -10,6 +10,7 @@ window.Components.aiCopilot = () => ({
     messages: [],
     consensusResult: null,
     auditingPatch: false,
+    selectedModel: 'auto', // Defaults to AI Proxy Swarm Load Balancer
 
     // Contextual Quick Actions per Active Tab
     get quickPrompts() {
@@ -87,7 +88,7 @@ window.Components.aiCopilot = () => ({
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    model: 'claude-3-7-sonnet',
+                    model: this.selectedModel,
                     messages: [
                         {
                             role: 'system',

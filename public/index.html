@@ -752,9 +752,19 @@
                     <h3 class="text-sm font-bold text-white font-mono flex items-center gap-2">
                         Lorax Mind Copilot
                     </h3>
-                    <div class="flex items-center gap-1.5 text-[10px] font-mono text-gray-400">
-                        <span>Context:</span>
-                        <span class="text-neon-cyan font-bold uppercase" x-text="$store.global.activeTab"></span>
+                    <div class="flex items-center gap-2 mt-1">
+                        <div class="flex items-center gap-1.5 text-[10px] font-mono text-gray-400">
+                            <span>Context:</span>
+                            <span class="text-neon-cyan font-bold uppercase" x-text="$store.global.activeTab"></span>
+                        </div>
+                        <div class="w-px h-3 bg-space-border/60"></div>
+                        <select x-model="selectedModel" class="bg-space-950 border border-space-border/60 rounded px-1.5 py-0.5 text-[9px] font-mono text-gray-400 hover:text-gray-300 focus:outline-none focus:border-neon-purple/50 cursor-pointer transition-colors shadow-inner">
+                            <option value="auto">Smart Pool (Auto)</option>
+                            <option value="claude-3-7-sonnet">Claude 3.7 Sonnet</option>
+                            <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
+                            <option value="gemini-2.5-flash">Gemini 2.5 Flash</option>
+                            <option value="ollama-local">Local Ollama</option>
+                        </select>
                     </div>
                 </div>
             </div>
