@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { logger } from '../utils/logger.js';
+import proficiencyTracker from '../modules/proficiency-tracker.js';
 
 // Resolve the solidstack repo root (NOT process.cwd()) so telemetry lands in
 // the unified `.logs` directory even when launchd spawns the service with cwd=/.
@@ -144,7 +145,21 @@ export function recordTokenUsage(usage = {}) {
  */
 export function logRoutingDecision(model, email, score, status, details = {}) {
     totalRequests++;
-    if (status === 'success' || status === 'local_fallback' || status === 'native_bypass') {
+    
+    // 1. Record in proficiency tracker
+    const family = getModelFamily(model);
+    const isSuccess = status === 'success' || status === 'local_fallback' || status === 'native_bypass';
+    if (details.prompt_content) {
+        const taskType = proficiencyTracker.classifyTaskType(details.prompt_content);
+        proficiencyTracker.record(model, taskType, {
+            latency_ms: details.latency || 0,
+            success: isSuccess,
+            tokens_in: details.tokens?.input || 0,
+            tokens_out: details.tokens?.output || 0
+        });
+    }
+
+    if (isSuccess) {
         successCount++;
     } else if (status === 'rate_limit') {
         rateLimitCount++;
@@ -165,7 +180,6 @@ export function logRoutingDecision(model, email, score, status, details = {}) {
     }
 
     // Model family tracking
-    const family = getModelFamily(model);
     if (requestCountByModelFamily[family]) {
         requestCountByModelFamily[family].total++;
         if (status === 'success' || status === 'local_fallback' || status === 'native_bypass') {

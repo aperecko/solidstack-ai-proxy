@@ -36,6 +36,8 @@ import { getFallbackChain } from '../fallback-config.js';
 import { logRoutingTelemetry } from './routing-logger.js';
 import { sendGeminiDirectStream } from './gemini-direct.js';
 import { isLocalEngineAvailable, sendLocalEngineStream, isLocalModel } from './local-engine-fallback.js';
+import { isNimEligible, sendNimStream } from '../providers/nvidia-nim.js';
+import { keyringManager } from '../providers/keyring-manager.js';
 import {
     getRateLimitBackoff,
     clearRateLimitState,
@@ -85,6 +87,19 @@ export async function* sendMessageStream(anthropicRequest, accountManager, fallb
         }
     }
 
+    // Tier 0: NVIDIA NIM & Free Keyring dispatch
+    if (isNimEligible(currentModel, anthropicRequest.taskTier)) {
+        if (keyringManager.isProviderAvailable('nvidia') || keyringManager.isProviderAvailable('openrouter')) {
+            try {
+                logger.info(`[CloudCode] Tier 0 Keyring: Routing stream for ${currentModel} (tier: ${anthropicRequest.taskTier || 'normal'}) to NVIDIA NIM...`);
+                yield* sendNimStream(anthropicRequest, currentModel);
+                return;
+            } catch (e) {
+                logger.warn(`[CloudCode] Tier 0 NIM stream failed (${e.message}), falling back to cloud pool.`);
+            }
+        }
+    }
+
     // O2: Pre-resolve fallback cascade inline without recursion
     function rewriteToFallback(reason) {
         if (!fallbackEnabled) return false;
@@ -121,6 +136,18 @@ export async function* sendMessageStream(anthropicRequest, accountManager, fallb
         });
         return false;
     }
+
+    const requestStartTime = Date.now();
+    const promptContent = Array.isArray(anthropicRequest.messages)
+        ? anthropicRequest.messages
+            .filter(m => m.role === 'user')
+            .map(m => {
+                if (typeof m.content === 'string') return m.content;
+                if (Array.isArray(m.content)) return m.content.map(b => b.text || '').join('');
+                return '';
+            })
+            .join('\n').slice(0, 500)
+        : '';
 
     // O1: Bound retry amplification (wrapped in outer loop to allow fallback restart)
     outerLoop: while (true) {
@@ -226,10 +253,16 @@ export async function* sendMessageStream(anthropicRequest, accountManager, fallb
             if (account.type === 'apikey') {
                 try {
                     yield* sendGeminiDirectStream(anthropicRequest, token);
-                    accountManager.notifySuccess(account, currentModel);
+                    const telemetryDetails = { prompt_content: promptContent, latency: Date.now() - requestStartTime };
+                        accountManager.notifySuccess(account, currentModel, telemetryDetails);
                     return;
                 } catch (err) {
                     logger.error(`[CloudCode] Gemini direct stream failed for ${account.email}: ${err.message}`);
+                    if (isRateLimitError(err) || err.message?.includes('429') || err.message?.includes('RESOURCE_EXHAUSTED') || err.message?.includes('prepayment credits are depleted')) {
+                        accountManager.markRateLimited(account.email, 3600000, currentModel);
+                    } else if (isAuthError(err) || err.message?.includes('API_KEY_INVALID') || err.message?.includes('401') || err.message?.includes('403')) {
+                        accountManager.markInvalid(account.email, err.message);
+                    }
                     throw err;
                 }
             }
@@ -452,7 +485,8 @@ export async function* sendMessageStream(anthropicRequest, accountManager, fallb
                             logger.debug('[CloudCode] Stream completed');
                             // Clear rate limit state on success
                             clearRateLimitState(account.email, currentModel);
-                            accountManager.notifySuccess(account, currentModel);
+                            const telemetryDetails = { prompt_content: promptContent, latency: Date.now() - requestStartTime };
+                        accountManager.notifySuccess(account, currentModel, telemetryDetails);
                             return;
                         } catch (streamError) {
                             // Only retry on EmptyResponseError
@@ -576,14 +610,18 @@ export async function* sendMessageStream(anthropicRequest, accountManager, fallb
             if (isRetryableRotateError(error)) {
                 // Retryable failure (429 / 503 capacity): cooldown already set via
                 // quota-store + accountManager; re-issue against the chosen target.
-                accountManager.notifyFailure(account, currentModel);
+                const telemetryDetails = { prompt_content: promptContent, latency: Date.now() - requestStartTime };
+                accountManager.notifyFailure(account, currentModel, telemetryDetails);
                 logger.info(`[CloudCode] Account ${account.email} retryable failure (${error.statusCode})${error.targetAccountId ? `, rotating to ${error.targetAccountId}` : ''}`);
                 rotationTargetEmail = error.targetAccountId || null;
                 continue;
             }
             if (isRateLimitError(error)) {
-                // Rate limited - already marked, notify strategy and continue to next account
-                accountManager.notifyRateLimit(account, currentModel);
+                if (!accountManager.isRateLimited(account.email, currentModel)) {
+                    accountManager.markRateLimited(account.email, 60000, currentModel);
+                }
+                const telemetryDetails = { prompt_content: promptContent, latency: Date.now() - requestStartTime };
+                accountManager.notifyRateLimit(account, currentModel, telemetryDetails);
                 logger.info(`[CloudCode] Account ${account.email} rate-limited, trying next...`);
 
                 // CRITICAL FIX: If this is a duplicate rate limit (account was already known to be
@@ -603,13 +641,15 @@ export async function* sendMessageStream(anthropicRequest, accountManager, fallb
             if (isAccountForbiddenError(error)) {
                 // 403 VALIDATION_REQUIRED / PERMISSION_DENIED - account-level error
                 // Already marked with cooldown, notify strategy and rotate to next account
-                accountManager.notifyFailure(account, currentModel);
+                const telemetryDetails = { prompt_content: promptContent, latency: Date.now() - requestStartTime };
+                accountManager.notifyFailure(account, currentModel, telemetryDetails);
                 logger.warn(`[CloudCode] Account ${account.email} forbidden (403 VALIDATION_REQUIRED), trying next...`);
                 continue;
             }
             // Handle 5xx errors
             if (error.message.includes('API error 5') || error.message.includes('500') || error.message.includes('503')) {
-                accountManager.notifyFailure(account, currentModel);
+                const telemetryDetails = { prompt_content: promptContent, latency: Date.now() - requestStartTime };
+                accountManager.notifyFailure(account, currentModel, telemetryDetails);
 
                 // Track 5xx errors for extended cooldown
                 // Note: markRateLimited already increments consecutiveFailures internally
@@ -625,7 +665,8 @@ export async function* sendMessageStream(anthropicRequest, accountManager, fallb
             }
 
             if (isNetworkError(error)) {
-                accountManager.notifyFailure(account, currentModel);
+                const telemetryDetails = { prompt_content: promptContent, latency: Date.now() - requestStartTime };
+                accountManager.notifyFailure(account, currentModel, telemetryDetails);
 
                 // Track network errors for extended cooldown
                 // Note: markRateLimited already increments consecutiveFailures internally

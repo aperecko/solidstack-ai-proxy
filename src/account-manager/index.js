@@ -513,39 +513,42 @@ export class AccountManager {
      * Notify the strategy of a successful request
      * @param {Object} account - The account that was used
      * @param {string} modelId - The model ID that was used
+     * @param {Object} [details={}] - Additional telemetry details
      */
-    notifySuccess(account, modelId) {
+    notifySuccess(account, modelId, details = {}) {
         if (this.#strategy) {
             this.#strategy.onSuccess(account, modelId);
         }
         if (account?.email) {
             resetFailures(this.#accounts, account.email);
         }
-        logRoutingDecision(modelId, account?.email, account?.lastScore, 'success');
+        logRoutingDecision(modelId, account?.email, account?.lastScore, 'success', details);
     }
 
     /**
      * Notify the strategy of a rate limit
      * @param {Object} account - The account that was rate-limited
      * @param {string} modelId - The model ID that was rate-limited
+     * @param {Object} [details={}] - Additional telemetry details
      */
-    notifyRateLimit(account, modelId) {
+    notifyRateLimit(account, modelId, details = {}) {
         if (this.#strategy) {
             this.#strategy.onRateLimit(account, modelId);
         }
-        logRoutingDecision(modelId, account?.email, account?.lastScore, 'rate_limit');
+        logRoutingDecision(modelId, account?.email, account?.lastScore, 'rate_limit', details);
     }
 
     /**
      * Notify the strategy of a failure
      * @param {Object} account - The account that failed
      * @param {string} modelId - The model ID that failed
+     * @param {Object} [details={}] - Additional telemetry details
      */
-    notifyFailure(account, modelId) {
+    notifyFailure(account, modelId, details = {}) {
         if (this.#strategy) {
             this.#strategy.onFailure(account, modelId);
         }
-        logRoutingDecision(modelId, account?.email, account?.lastScore, 'error');
+        logRoutingDecision(modelId, account?.email, account?.lastScore, 'error', details);
     }
 
 
@@ -659,6 +662,16 @@ export class AccountManager {
      */
     getRateLimitInfo(email, modelId) {
         return getLimitInfo(this.#accounts, email, modelId);
+    }
+
+    /**
+     * Check if an account is currently rate-limited for a model
+     * @param {string} email - Email of the account
+     * @param {string} modelId - Model ID
+     * @returns {boolean}
+     */
+    isRateLimited(email, modelId) {
+        return this.getRateLimitInfo(email, modelId).isRateLimited;
     }
 
     // ============================================================================

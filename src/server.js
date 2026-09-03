@@ -17,7 +17,7 @@ import { fileURLToPath } from 'url';
 import { createProxyMiddleware } from 'http-proxy-middleware';
 import { sendMessage, sendMessageStream, listModels, fetchAvailableModels, getModelQuotas, getSubscriptionTier, isValidModel } from './cloudcode/index.js';
 import { parseResetTime } from './cloudcode/rate-limit-parser.js';
-import { buildFallbackMap, buildPresets, getModelFamily } from './constants.js';
+import { buildFallbackMap, buildPresets, getModelFamily, GEMINI_SKIP_SIGNATURE } from './constants.js';
 import { initFallbackMap, getFallbackChain } from './fallback-config.js';
 import { logRoutingTelemetry } from './cloudcode/routing-logger.js';
 import { mountWebUI } from './webui/index.js';
@@ -37,6 +37,8 @@ import { AccountManager } from './account-manager/index.js';
 import { clearThinkingSignatureCache, getCachedSignatureFamily } from './format/signature-cache.js';
 import { formatDuration } from './utils/helpers.js';
 import { logger } from './utils/logger.js';
+import { readNetworkGate, sendNetworkUnavailable } from './utils/network-gate.js';
+import proficiencyTracker from './modules/proficiency-tracker.js';
 import usageStats from './modules/usage-stats.js';
 import { mountOpenAICompat, mountResponsesCompat } from './openai-compat.js';
 import { createCommanderRouter } from './commander-api.js';
@@ -122,6 +124,9 @@ function getOrCreateHandoverAdvisory(conversationId, requestBodyObj, fallbackMod
 
 const app = express();
 
+// The network watchdog writes this gate before changing tunnel state. Keep the
+// check synchronous and local so generation fails fast without waiting for the
+// account pool or Google while protected traffic is held.
 // Keep health and diagnostics responsive even while account/quota initialization
 // or an upstream generation request is slow. These routes must not wait on the
 // account manager or Google services.
@@ -197,6 +202,29 @@ function parseError(error) {
 
 // ─── Pre-create stable Google API proxy middleware instances ──────────────────
 // http-proxy-middleware must be instantiated once at startup, not per-request.
+export function safeProxyErrorResponse(res, statusCode = 502, payload = { error: 'Bad Gateway' }) {
+    if (!res) return;
+    try {
+        if (res.headersSent || res.writableEnded || res.destroyed) return;
+        if (typeof res.status === 'function' && typeof res.json === 'function') {
+            res.status(statusCode).json(payload);
+        } else if (typeof res.writeHead === 'function') {
+            const body = JSON.stringify(payload);
+            res.writeHead(statusCode, {
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(body)
+            });
+            res.end(body);
+        } else if (typeof res.end === 'function') {
+            res.end();
+        } else if (typeof res.destroy === 'function') {
+            res.destroy();
+        }
+    } catch (e) {
+        logger.error(`[Proxy] Error writing error response: ${e.message}`);
+    }
+}
+
 // We create one proxy for each Google Cloud Code host we intercept.
 const GOOGLE_PROXY_HOSTS = [
     'cloudcode-pa.googleapis.com',
@@ -208,12 +236,12 @@ for (const googleHost of GOOGLE_PROXY_HOSTS) {
         target: `https://${googleHost}`,
         changeOrigin: true,
         secure: true,
+        proxyTimeout: 120000,
+        timeout: 120000,
         on: {
             error: (err, req, res) => {
                 logger.error(`[GUI Interceptor] Proxy error for ${googleHost}: ${err.message}`);
-                if (!res.headersSent) {
-                    res.status(502).json({ error: `Bad Gateway (${googleHost})` });
-                }
+                safeProxyErrorResponse(res, 502, { error: `Bad Gateway (${googleHost})` });
             }
         }
     });
@@ -281,7 +309,7 @@ function readRequestBody(req, maxBytes = MAX_INTERCEPT_BODY_BYTES) {
         const timer = setTimeout(() => {
             logger.warn(`[GUI Interceptor] Request body timeout: ${req.method} ${req.originalUrl || req.url}`);
             req.destroy(new Error('Request Timeout'));
-        }, 30000);
+        }, 60000);
         req.on('data', (chunk) => {
             total += chunk.length;
             if (total > maxBytes) {
@@ -339,6 +367,79 @@ function sanitizeThoughtPartsForClaude(modelName, bodyText) {
     }
 }
 
+// Gemini-native thought-signature guard for raw-forwarded Google-format bodies.
+// The GUI Interceptor forwards the IDE's Gemini payload verbatim (no
+// convertAnthropicToGoogle), so any tool_use/functionCall part that lacks a
+// thoughtSignature passes through untouched — and Gemini 3+ rejects the whole
+// request with 400 "Function call is missing a thought_signature". This happens
+// with long mid-session replays (e.g. a Google built-in tool like
+// default_api:manage_subagents persisted without its signature). Mirror the
+// Gemini-side injection in content-converter.js: for every functionCall part
+// missing a thoughtSignature, stamp it with GEMINI_SKIP_SIGNATURE (the same
+// sentinel Google already accepts on the converted path). Safe for Gemini
+// targets only; no-op when nothing needs it.
+function injectThoughtSignaturesForGemini(modelName, bodyText) {
+    try {
+        if (!modelName || modelName.toLowerCase().includes('claude')) return bodyText;
+        let body;
+        try { body = JSON.parse(bodyText); } catch { return bodyText; }
+
+        let modified = false;
+
+        const contentList = Array.isArray(body?.contents)
+            ? body.contents
+            : (Array.isArray(body?.request?.contents) ? body.request.contents : null);
+
+        if (contentList) {
+            let injected = 0;
+            for (const content of contentList) {
+                if (!content || !Array.isArray(content.parts)) continue;
+                for (const part of content.parts) {
+                    if (!part || !part.functionCall) continue;
+                    if (part.thoughtSignature) continue;
+                    part.thoughtSignature = GEMINI_SKIP_SIGNATURE;
+                    injected++;
+                    modified = true;
+                }
+            }
+            if (injected > 0) {
+                logger.debug(`[GUI Interceptor] Injected skip thought_signature on ${injected} functionCall part(s) for Gemini target ${modelName}`);
+            }
+        }
+
+        const toolsList = Array.isArray(body?.tools)
+            ? body.tools
+            : (Array.isArray(body?.request?.tools) ? body.request.tools : null);
+
+        if (toolsList) {
+            let stripped = 0;
+            for (const tool of toolsList) {
+                if (!tool || !Array.isArray(tool.functionDeclarations)) continue;
+                const originalLength = tool.functionDeclarations.length;
+                tool.functionDeclarations = tool.functionDeclarations.filter(decl => {
+                    if (decl?.name && (decl.name.startsWith('default_api:') || decl.name === 'manage_subagents')) {
+                        return false;
+                    }
+                    return true;
+                });
+                if (tool.functionDeclarations.length !== originalLength) {
+                    stripped += (originalLength - tool.functionDeclarations.length);
+                    modified = true;
+                }
+            }
+            if (stripped > 0) {
+                logger.debug(`[GUI Interceptor] Stripped ${stripped} default_api tool declaration(s) for Gemini target ${modelName}`);
+            }
+        }
+
+        if (modified) return JSON.stringify(body);
+        return bodyText;
+    } catch (e) {
+        logger.debug(`[GUI Interceptor] Signature injection skipped: ${e.message}`);
+        return bodyText;
+    }
+}
+
 function injectPromptAdvisory(bodyText, advisoryText) {
     if (!advisoryText || !bodyText) return bodyText;
     try {
@@ -372,6 +473,8 @@ function accumulateExcluded(options, email) {
     return options.excludeAccounts;
 }
 
+const UPSTREAM_TIMEOUT_MS = Number(process.env.UPSTREAM_TIMEOUT_MS || 120000);
+
 function forwardToGoogle(hostName, req, res, bodyText, account = null, model = null, retryCount = 0, options = {}) {
     const headers = { ...req.headers };
     delete headers['transfer-encoding'];
@@ -385,17 +488,36 @@ function forwardToGoogle(hostName, req, res, bodyText, account = null, model = n
         method: req.method,
         path: req.url || req.originalUrl || '/',
         headers,
-        timeout: 15000,
+        timeout: UPSTREAM_TIMEOUT_MS,
     }, (proxyRes) => {
         const statusCode = proxyRes.statusCode;
 
-        if (statusCode === 200) {
-            if (res.headersSent || res.writableEnded) {
-                proxyRes.resume();
-                return;
-            }
+        // Google returns INVALID_ARGUMENT for payloads that are structurally valid
+        // JSON but incompatible with the selected model/session. Do not rotate
+        // accounts for this client-side error; account rotation cannot repair it.
+        if (statusCode === 400) {
+            const errorChunks = [];
+            proxyRes.on('data', (c) => errorChunks.push(c));
+            proxyRes.on('end', () => {
+                const body = Buffer.concat(errorChunks);
+                const errorText = body.toString('utf8');
+                logger.warn(`[GUI Interceptor] Upstream rejected request with 400 for ${model || 'unknown model'}: ${errorText.slice(0, 300)}`);
+                if (!res.headersSent && !res.writableEnded) {
+                    res.writeHead(400, sanitizeResponseHeaders(proxyRes.headers, body.length));
+                    res.end(body);
+                }
+            });
+            return;
+        }
+
+            if (statusCode === 200) {
+                if (res.headersSent || res.writableEnded) {
+                    proxyRes.resume();
+                    return;
+                }
             if (account && model) {
                 accountManager.notifySuccess(account, model);
+                recordRequest({ app: 'antigravity', accountId: account.email, model, error: false });
             }
             res.writeHead(200, sanitizeResponseHeaders(proxyRes.headers));
             
@@ -435,14 +557,17 @@ function forwardToGoogle(hostName, req, res, bodyText, account = null, model = n
 
         // Non-200 response (429, 401, 403, 5xx): buffer and inspect for retry / rotation
         const errorChunks = [];
-        proxyRes.on('data', (c) => errorChunks.push(c));
-        proxyRes.on('error', (err) => {
-            logger.error(`[GUI Interceptor] Error stream from ${hostName}: ${err.message}`);
-            if (!res.headersSent) res.status(502).json({ error: `Bad Gateway (${hostName})` });
-        });
+        proxyRes.on('data', (c) => errorChunks.push(c));            proxyRes.on('error', (err) => {
+                logger.error(`[GUI Interceptor] Error stream from ${hostName}: ${err.message}`);
+                safeProxyErrorResponse(res, 502, { error: `Bad Gateway (${hostName})` });
+            });
         proxyRes.on('end', async () => {
             const rawError = Buffer.concat(errorChunks);
             const errorText = rawError.toString('utf8');
+
+            if (account && model) {
+                recordRequest({ app: 'antigravity', accountId: account.email, model, error: true });
+            }
 
             if (statusCode === 429 && account && model) {
                 // Check if this is a CAPACITY_EXHAUSTED (503) error rather than a true rate limit
@@ -473,7 +598,13 @@ function forwardToGoogle(hostName, req, res, bodyText, account = null, model = n
                 // Accumulate the failed account into the shared exclusion set so
                 // it is never re-selected on subsequent retries of this request.
                 accumulateExcluded(options, account.email);
-                if (retryCount < 3) {
+                // Quota percentages are not always a reliable predictor of upstream
+                // availability (e.g. claude-opus is gated by an independent G1 credits
+                // balance that /accountLimits reports as 100%). So walk through the
+                // ENTIRE pool — not just 3 accounts — before giving up, bounded by the
+                // number of enabled accounts to avoid unbounded retry loops.
+                const retryBudget = (accountManager.getAllAccounts() || []).filter(a => a.enabled !== false).length;
+                if (retryCount < retryBudget) {
                     const nextSel = accountManager.selectAccount(model, {
                         ...options,
                         excludeAccounts: options.excludeAccounts,
@@ -483,7 +614,7 @@ function forwardToGoogle(hostName, req, res, bodyText, account = null, model = n
                         try {
                             const nextToken = await accountManager.getTokenForAccount(nextSel.account);
                             req.headers['authorization'] = `Bearer ${nextToken}`;
-                            logger.info(`[GUI Interceptor] 🔄 Auto-rotating ${model} to next pooled account: ${nextSel.account.email} (retry ${retryCount + 1}/3)`);
+                            logger.info(`[GUI Interceptor] 🔄 Auto-rotating ${model} to next pooled account: ${nextSel.account.email} (retry ${retryCount + 1}/${retryBudget})`);
                             return forwardToGoogle(hostName, req, res, bodyText, nextSel.account, model, retryCount + 1, options);
                         } catch (e) {
                             logger.error(`[GUI Interceptor] Failed to get token for next account ${nextSel.account.email}: ${e.message}`);
@@ -500,7 +631,8 @@ function forwardToGoogle(hostName, req, res, bodyText, account = null, model = n
 
                 // Auto-retry with next available account
                 accumulateExcluded(options, account.email);
-                if (retryCount < 3 && model) {
+                const retryBudget = (accountManager.getAllAccounts() || []).filter(a => a.enabled !== false).length;
+                if (retryCount < retryBudget && model) {
                     const nextSel = accountManager.selectAccount(model, {
                         ...options,
                         excludeAccounts: options.excludeAccounts,
@@ -616,14 +748,56 @@ function forwardToGoogle(hostName, req, res, bodyText, account = null, model = n
     });
 
     proxyReq.on('timeout', () => {
-        logger.warn(`[GUI Interceptor] Upstream connection timeout to ${hostName}`);
+        logger.warn(`[GUI Interceptor] Upstream connection timeout to ${hostName} (${UPSTREAM_TIMEOUT_MS}ms)`);
         proxyReq.destroy(new Error('Upstream connection timeout'));
     });
 
-    proxyReq.on('error', (err) => {
+    proxyReq.on('error', async (err) => {
         logger.error(`[GUI Interceptor] Forward error to ${hostName}: ${err.message}`);
         if (!res.headersSent && !res.writableEnded) {
-            res.status(502).json({ error: `Bad Gateway (${hostName})` });
+            const retryBudget = (accountManager.getAllAccounts() || []).filter(a => a.enabled !== false).length;
+            if (account && model && retryCount < retryBudget) {
+                logger.warn(`[GUI Interceptor] ⚠️ Connection error on account ${account.email} (${err.message}) — attempting retry ${retryCount + 1}/${retryBudget} with next account...`);
+                accumulateExcluded(options, account.email);
+                if (accountManager.notifyFailure) {
+                    accountManager.notifyFailure(account, model);
+                }
+                let nextAccount = null;
+                try {
+                    const sel = accountManager.selectAccount(model, {
+                        ...options,
+                        excludeAccounts: options.excludeAccounts,
+                        incomingTokenEmail: options.incomingTokenEmail
+                    });
+                    nextAccount = sel?.account || null;
+                } catch (e) {
+                    logger.error(`[GUI Interceptor] Failed to select next account on error: ${e.message}`);
+                }
+                if (nextAccount && nextAccount.email !== account.email) {
+                    try {
+                        const nextToken = await accountManager.getTokenForAccount(nextAccount);
+                        const nextProject = await accountManager.getProjectForAccount(nextAccount, nextToken);
+                        const nextReq = {
+                            ...req,
+                            headers: {
+                                ...req.headers,
+                                authorization: `Bearer ${nextToken}`
+                            }
+                        };
+                        let newBody = bodyText;
+                        try {
+                            const parsed = JSON.parse(bodyText);
+                            if (parsed.project) parsed.project = nextProject;
+                            newBody = JSON.stringify(parsed);
+                        } catch {}
+                        logger.info(`[GUI Interceptor] 🔄 Auto-rotating ${model} after network error to: ${nextAccount.email} (retry ${retryCount + 1}/3)`);
+                        return forwardToGoogle(hostName, nextReq, res, newBody, nextAccount, model, retryCount + 1, options);
+                    } catch (e) {
+                        logger.error(`[GUI Interceptor] Retry failed during setup: ${e.message}`);
+                    }
+                }
+            }
+            safeProxyErrorResponse(res, 502, { error: `Bad Gateway (${hostName})` });
         } else if (!res.writableEnded) {
             res.destroy();
         }
@@ -869,6 +1043,7 @@ function forwardAndNeutralizeQuota(hostName, req, res, bodyText) {
         method: req.method,
         path: req.url || req.originalUrl || '/',
         headers,
+        timeout: 60000,
     }, (proxyRes) => {
         const chunks = [];
         proxyRes.on('data', (c) => chunks.push(c));
@@ -956,7 +1131,7 @@ function forwardAndNeutralizeQuota(hostName, req, res, bodyText) {
     proxyReq.on('error', (err) => {
         logger.error(`[GUI Interceptor] Forward error to ${hostName}: ${err.message}`);
         if (!res.headersSent && !res.writableEnded) {
-            res.status(502).json({ error: `Bad Gateway (${hostName})` });
+            safeProxyErrorResponse(res, 502, { error: `Bad Gateway (${hostName})` });
         } else if (!res.writableEnded) {
             res.destroy();
         }
@@ -1004,6 +1179,14 @@ app.use(async (req, res, next) => {
     const isIdentityRequest = IDENTITY_ENDPOINT_MARKERS.some((m) => reqPathLower.includes(m));
 
     if (isAIRequest || isMetadataRequest) {
+        if (isAIRequest) {
+            const gate = readNetworkGate();
+            if (gate) {
+                logger.warn(`[GUI Interceptor] Network recovery gate active: ${gate.reason || 'network unavailable'}`);
+                return sendNetworkUnavailable(res, gate);
+            }
+        }
+
         // Bypass: the quota summary is scoped to whichever account authenticates,
         // so when routed through the rotating pool it looks "locked" to one account
         // regardless of the IDE login. Synthesize a neutral (healthy) response so
@@ -1212,12 +1395,13 @@ app.use(async (req, res, next) => {
 
                 // 7. AI bodies were buffered — forward manually (native https, DNS patched)
                 if (isAIRequest && requestBodyText != null) {
-                    const sanitizedText = sanitizeThoughtPartsForClaude(fallbackModel || requestedModel, requestBodyText);
+                    let preparedText = sanitizeThoughtPartsForClaude(fallbackModel || requestedModel, requestBodyText);
+                    preparedText = injectThoughtSignaturesForGemini(fallbackModel || requestedModel, preparedText);
                     let optionsToPass = { incomingTokenEmail, isMidSession, requestBodyObj };
                     if (handoverAdvisoryText) {
                         optionsToPass.injectedPrefixText = handoverAdvisoryText;
                     }
-                    forwardToGoogle(hostName, req, res, sanitizedText, account, fallbackModel || requestedModel, 0, optionsToPass);
+                    forwardToGoogle(hostName, req, res, preparedText, account, fallbackModel || requestedModel, 0, optionsToPass);
                     return;
                 }
 
@@ -1570,6 +1754,10 @@ app.use('/api', createIMessageRouter());
 import { createGeminiConversationRouter } from './gemini-conversations.js';
 app.use('/api/gemini', createGeminiConversationRouter());
 
+// Mount Voice Memos API (Apple Voice Memos query and audio streaming)
+import voiceMemosRouter from './voice-memos-api.js';
+app.use('/api/voicememos', voiceMemosRouter);
+
 // Mount unified search API (across conversations + iMessage)
 import { createSearchRouter } from './api-search.js';
 app.use('/api', createSearchRouter());
@@ -1866,8 +2054,8 @@ app.get('/account-limits', async (req, res) => {
         // Fetch quotas for each account in parallel
         const results = await Promise.allSettled(
             allAccounts.map(async (account) => {
-                // Skip invalid accounts
-                if (account.isInvalid) {
+                // Skip invalid accounts without refresh capability
+                if (account.isInvalid && !account.refreshToken && req.query.force !== 'true') {
                     return {
                         email: account.email,
                         status: 'invalid',
@@ -2156,8 +2344,8 @@ app.get('/account-limits', async (req, res) => {
                     source: metadata.source || 'unknown',
                     enabled: metadata.enabled !== false,
                     projectId: metadata.projectId || null,
-                    isInvalid: metadata.isInvalid || false,
-                    invalidReason: metadata.invalidReason || null,
+                    isInvalid: (acc.status === 'invalid' || acc.status === 'banned') ? (metadata.isInvalid || true) : false,
+                    invalidReason: (acc.status === 'invalid' || acc.status === 'banned') ? (metadata.invalidReason || null) : null,
                     verifyUrl: metadata.verifyUrl || null,
                     lastUsed: metadata.lastUsed || null,
                     modelRateLimits: metadata.modelRateLimits || {},
@@ -2292,6 +2480,8 @@ app.post('/v1/messages/count_tokens', (req, res) => {
  */
 app.post('/v1/messages', async (req, res) => {
     try {
+        const gate = readNetworkGate();
+        if (gate) return sendNetworkUnavailable(res, gate);
         // Ensure account manager is initialized
         await ensureInitialized();
 
@@ -2523,6 +2713,31 @@ app.post('/v1/messages', async (req, res) => {
 /**
  * Catch-all for unsupported endpoints
  */
+// Initialize proficiency tracker
+proficiencyTracker.init();
+
+// Expose proficiency matrix API
+app.get('/api/proficiency/matrix', (req, res) => {
+    res.json(proficiencyTracker.getMatrix());
+});
+
+app.post('/api/proficiency/advise', express.json(), (req, res) => {
+    try {
+        const { current_model, task_type } = req.body;
+        if (!current_model || !task_type) {
+            return res.status(400).json({ error: 'Missing current_model or task_type' });
+        }
+        const routingMode = accountManager.getRoutingMode
+            ? accountManager.getRoutingMode() : 'load_balancer';
+        const recommendation = proficiencyTracker.advise(
+            current_model, task_type, { routingMode }
+        );
+        res.json(recommendation);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+});
+
 usageStats.setupRoutes(app);
 
 // ==========================================
@@ -2534,9 +2749,7 @@ const ssmcpProxy = createProxyMiddleware({
     on: {
         error: (err, req, res) => {
             logger.error(`[SSmcp Proxy] Error: ${err.message}`);
-            if (!res.headersSent) {
-                res.status(502).json({ error: 'SSmcp Server Offline (:8765)' });
-            }
+            safeProxyErrorResponse(res, 502, { error: 'SSmcp Server Offline (:8765)' });
         }
     }
 });
@@ -2559,10 +2772,12 @@ const daemonProxy = createProxyMiddleware({
     on: {
         proxyReq: restreamRequestBody,
         error: (err, req, res) => {
-            logger.error(`[Daemon Proxy] Error: ${err.message}`);
-            if (!res.headersSent) {
-                res.status(502).json({ error: 'Commander Daemon Offline (:18791)' });
+            if (err.code === 'ECONNREFUSED') {
+                logger.debug(`[Daemon Proxy] Service offline: ${err.message}`);
+            } else {
+                logger.error(`[Daemon Proxy] Error: ${err.message}`);
             }
+            safeProxyErrorResponse(res, 502, { error: 'Commander Daemon Offline (:18791)' });
         }
     }
 });
@@ -2579,10 +2794,12 @@ const mcpHttpProxy = createProxyMiddleware({
             restreamRequestBody(proxyReq, req, res);
         },
         error: (err, req, res) => {
-            logger.error(`[MCP Proxy] Error: ${err.message}`);
-            if (!res.headersSent) {
-                res.status(502).json({ error: 'SSmcp HTTP Server Offline (:8765)' });
+            if (err.code === 'ECONNREFUSED') {
+                logger.debug(`[MCP Proxy] Service offline: ${err.message}`);
+            } else {
+                logger.error(`[MCP Proxy] Error: ${err.message}`);
             }
+            safeProxyErrorResponse(res, 502, { error: 'SSmcp HTTP Server Offline (:8765)' });
         }
     }
 });
@@ -2604,16 +2821,18 @@ const dashboardProxy = createProxyMiddleware({
             }
         },
         error: (err, req, res) => {
-            logger.error(`[Dashboard Proxy] Error: ${err.message}`);
-            if (!res.headersSent) {
-                res.status(502).json({ error: 'Dashboard Offline' });
+            if (err.code === 'ECONNREFUSED') {
+                logger.debug(`[Dashboard Proxy] Service offline: ${err.message}`);
+            } else {
+                logger.error(`[Dashboard Proxy] Error: ${err.message}`);
             }
+            safeProxyErrorResponse(res, 502, { error: 'Dashboard Offline' });
         }
     }
 });
 
 app.use((req, res, next) => {
-    const flaskRoutes = ['/api/stream', '/api/status', '/api/attention', '/api/heartbeats', '/api/nodes', '/api/services', '/api/containers', '/api/integrations', '/api/taxonomy', '/api/workflow', '/api/coordinator', '/api/agents', '/api/locks', '/api/worktrees', '/api/tasks', '/api/task-progress', '/api/handoffs', '/api/openclaw', '/api/blockers', '/api/service-mobility', '/api/ai-accounts', '/api/ai-proxy', '/api/token-usage', '/api/actions', '/api/discovered', '/api/discovered-devices', '/api/skills', '/api/model-logs', '/api/features', '/api/aggregator/status', '/api/local-engines', '/api/model-download-status'];
+    const flaskRoutes = ['/api/stream', '/api/status', '/api/attention', '/api/heartbeats', '/api/nodes', '/api/services', '/api/containers', '/api/integrations', '/api/taxonomy', '/api/workflow', '/api/coordinator', '/api/locks', '/api/worktrees', '/api/tasks', '/api/task-progress', '/api/handoffs', '/api/openclaw', '/api/blockers', '/api/service-mobility', '/api/ai-accounts', '/api/ai-proxy', '/api/token-usage', '/api/discovered', '/api/discovered-devices', '/api/skills', '/api/model-logs', '/api/features', '/api/aggregator/status', '/api/local-engines', '/api/model-download-status'];
     
     if (req.path === '/daemon-api' || req.path.startsWith('/daemon-api/')) {
         return daemonProxy(req, res, next);
@@ -2651,10 +2870,8 @@ app.use('*', createProxyMiddleware({
             }
         },
         error: (err, req, res) => {
-            logger.error(`[Transparent Passthrough] Error forwarding ${req.originalUrl}: ${err.message}`);
-            if (!res.headersSent) {
-                res.status(502).json({ error: 'Bad Gateway via Transparent Proxy' });
-            }
+            logger.error(`[Transparent Passthrough] Error forwarding ${req?.originalUrl || req?.url}: ${err.message}`);
+            safeProxyErrorResponse(res, 502, { error: 'Bad Gateway via Transparent Proxy' });
         }
     }
 }));
