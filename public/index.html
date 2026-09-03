@@ -98,6 +98,19 @@
         </div>
 
         <div class="flex items-center gap-2.5">
+            <!-- Virtual Space Controls -->
+            <div class="hidden md:flex items-center gap-1 bg-space-950/80 border border-space-border/60 rounded-full px-2 py-1 shadow-inner" title="Virtual Space Controls">
+                <button @click="fetch('/api/display/summon', {method:'POST'}).then(() => $store.global.toast = {type:'info', message:'Window summoned to Main Display'})" 
+                        class="text-xs font-mono px-2 py-0.5 rounded text-neon-cyan hover:bg-neon-cyan/20 transition-colors">
+                    SUMMON
+                </button>
+                <div class="w-px h-3 bg-space-border/80"></div>
+                <button @click="fetch('/api/display/banish', {method:'POST'}).then(() => $store.global.toast = {type:'info', message:'Window banished to Virtual Display'})" 
+                        class="text-xs font-mono px-2 py-0.5 rounded text-fuchsia-400 hover:bg-fuchsia-400/20 transition-colors">
+                    BANISH
+                </button>
+            </div>
+
             <!-- Active Focus Target Badge -->
             <div x-show="$store.global.activeFocusTarget" 
                  @click="$store.global.activeTab = 'skills'"
@@ -108,13 +121,27 @@
                 <span class="max-w-[160px] truncate" x-text="$store.global.activeFocusTarget"></span>
             </div>
 
-            <!-- Cognitive Lens Selector Pill -->
+            <!-- Philosophy Pill -->
             <button @click="$store.global.activeTab = 'philosophy'" 
                     class="hidden xl:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono bg-emerald-950/40 border border-emerald-500/30 text-emerald-300 hover:border-emerald-400 transition-all cursor-pointer"
-                    title="Active Cognitive Lens — click to switch craft in Philosophy">
+                    title="SolidStack Governing Philosophy & Architecture">
                 <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-                <span class="text-[10px] text-emerald-500 uppercase font-bold">Lens:</span>
-                <span class="uppercase font-bold" x-text="$store.global.cognitiveLens"></span>
+                <span class="text-[10px] text-emerald-500 uppercase font-bold">Philosophy:</span>
+                <span class="font-bold">CORE</span>
+            </button>
+
+            <!-- Alignment & Hygiene Pill -->
+            <button @click="$store.global.activeTab = 'dashboard'" 
+                    class="hidden lg:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono border transition-all cursor-pointer"
+                    :class="$store.data.alignment && $store.data.alignment.overall_score >= 90
+                        ? 'bg-emerald-950/40 border-emerald-500/30 text-emerald-300 hover:border-emerald-400' 
+                        : 'bg-amber-950/40 border-amber-500/30 text-amber-300 hover:border-amber-400'"
+                    title="SolidStack Workspace Alignment & Autonomous Hygiene Sweep">
+                <span class="w-1.5 h-1.5 rounded-full"
+                      :class="$store.data.alignment && $store.data.alignment.overall_score >= 90 ? 'bg-emerald-400' : 'bg-amber-400 animate-pulse'"></span>
+                <span class="text-[10px] uppercase font-bold"
+                      :class="$store.data.alignment && $store.data.alignment.overall_score >= 90 ? 'text-emerald-500' : 'text-amber-500'">Alignment:</span>
+                <span class="font-bold" x-text="`${$store.data.alignment ? $store.data.alignment.overall_score : 100}%`">100%</span>
             </button>
 
             <!-- Account Fleet Summary Pill -->
@@ -123,6 +150,15 @@
                 <span class="w-1.5 h-1.5 rounded-full bg-neon-green"></span>
                 <span x-text="`${$store.data.accounts.filter(a => a.enabled !== false && !a.isInvalid).length} / ${$store.data.accounts.length} Active`"></span>
             </div>
+
+            <!-- Proficiency Advisory Pill -->
+            <div x-show="$store.global.proficiencyAdvice && $store.global.proficiencyAdvice.estimated_savings_pct > 0"
+                 class="hidden md:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono bg-yellow-900/30 border border-yellow-500/30 text-yellow-300 hover:border-yellow-400 transition-all cursor-help shadow-sm"
+                 :title="$store.global.proficiencyAdvice?.reason">
+                <span>💡</span>
+                <span x-text="`${$store.global.proficiencyAdvice?.recommended_model?.split('-')[1] || 'Alternative'} sufficient for this task — save ~${$store.global.proficiencyAdvice?.estimated_savings_pct}% quota`"></span>
+            </div>
+
 
             <!-- Routing Status Pill -->
             <template x-if="connectionStatus === 'connected'">
@@ -259,6 +295,24 @@
                     </button>
                     <button
                         class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
+                        :class="{'active': $store.global.activeTab === 'keyring'}"
+                        @click="$store.global.activeTab = 'keyring'">
+                        <svg class="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                        </svg>
+                        <span class="text-emerald-400 font-bold">Keyring Hub</span>
+                    </button>
+                    <button
+                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
+                        :class="{'active': $store.global.activeTab === 'voicememos'}"
+                        @click="$store.global.activeTab = 'voicememos'">
+                        <svg class="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                        </svg>
+                        <span>Voice Memos</span>
+                    </button>
+                    <button
+                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
                         :class="{'active': $store.global.activeTab === 'capabilities'}"
                         @click="$store.global.activeTab = 'capabilities'">
                         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -333,7 +387,18 @@
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                                 d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
                         </svg>
-                        <span>Philosophy & Domains</span>
+                        <span>Philosophy & Architecture</span>
+                    </button>
+                    <button
+                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-sky-500/10"
+                        :class="{'bg-sky-500/20 text-sky-400 shadow-[0_0_15px_rgba(56,189,248,0.2)]': $store.global.activeTab === 'character'}"
+                        @click="$store.global.activeTab = 'character'">
+                        <svg class="w-5 h-5 text-sky-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M14 10l-2 1m0 0l-2-1m2 1v2.5M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                        </svg>
+                        <span>Pip 3D Studio</span>
+                    </button>
                     <button
                         class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-fuchsia-500/10"
                         :class="{'bg-fuchsia-500/20 text-fuchsia-400 shadow-[0_0_15px_rgba(217,70,239,0.2)]': $store.global.activeTab === 'agent-skills'}"
@@ -377,6 +442,84 @@
                     </div>
                 </nav>
 
+                    <button
+                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
+                        :class="{'active': $store.global.activeTab === 'swarm'}"
+                        @click="$store.global.activeTab = 'swarm'">
+                        <span>Swarm</span>
+                    </button>
+                    <button
+                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
+                        :class="{'active': $store.global.activeTab === 'research'}"
+                        @click="$store.global.activeTab = 'research'">
+                        <span>Research</span>
+                    </button>
+                    <button
+                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
+                        :class="{'active': $store.global.activeTab === 'prompt'}"
+                        @click="$store.global.activeTab = 'prompt'">
+                        <span>Prompt</span>
+                    </button>
+                    <button
+                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
+                        :class="{'active': $store.global.activeTab === 'evolution'}"
+                        @click="$store.global.activeTab = 'evolution'">
+                        <span>Evolution</span>
+                    </button>
+                    <button
+                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
+                        :class="{'active': $store.global.activeTab === 'consideration'}"
+                        @click="$store.global.activeTab = 'consideration'">
+                        <span>Consideration</span>
+                    </button>
+                    <button
+                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
+                        :class="{'active': $store.global.activeTab === 'alignment'}"
+                        @click="$store.global.activeTab = 'alignment'">
+                        <span>Alignment</span>
+                    </button>
+                    <button
+                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
+                        :class="{'active': $store.global.activeTab === 'audit'}"
+                        @click="$store.global.activeTab = 'audit'">
+                        <span>Audit</span>
+                    </button>
+                    <button
+                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
+                        :class="{'active': $store.global.activeTab === 'ui-evolution'}"
+                        @click="$store.global.activeTab = 'ui-evolution'">
+                        <span>UI Evolution</span>
+                    </button>
+                    <button
+                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
+                        :class="{'active': $store.global.activeTab === 'network'}"
+                        @click="$store.global.activeTab = 'network'">
+                        <span>Network</span>
+                    </button>
+                    <button
+                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
+                        :class="{'active': $store.global.activeTab === 'openclaw'}"
+                        @click="$store.global.activeTab = 'openclaw'">
+                        <span>OpenClaw</span>
+                    </button>
+                    <button
+                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
+                        :class="{'active': $store.global.activeTab === 'workspace'}"
+                        @click="$store.global.activeTab = 'workspace'">
+                        <span>Workspace</span>
+                    </button>
+                    <button
+                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
+                        :class="{'active': $store.global.activeTab === 'containment'}"
+                        @click="$store.global.activeTab = 'containment'">
+                        <span>Containment</span>
+                    </button>
+                    <button
+                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
+                        :class="{'active': $store.global.activeTab === 'compute'}"
+                        @click="$store.global.activeTab = 'compute'">
+                        <span>Compute</span>
+                    </button>
                 <div class="px-4 mt-8 mb-2 text-xs font-bold text-gray-600 uppercase tracking-widest"
                     x-text="$store.global.t('system')">System</div>
                 <nav class="flex flex-col gap-1">
@@ -443,6 +586,15 @@
                 x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from"
                 class="w-full"></div>
 
+            <!-- Voice Memos -->
+            <div x-show="$store.global.activeTab === 'voicememos'" x-load-view="'voicememos'"
+                x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from"
+                class="w-full"></div>
+
+            <!-- Keyring Hub -->
+            <div x-show="$store.global.activeTab === 'keyring'" x-load-view="'keyring'"
+                x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from"
+                class="w-full"></div>
 
             <!-- UAD -->
             <div x-show="$store.global.activeTab === 'uad'" x-load-view="'uad'"
@@ -489,10 +641,29 @@
                 x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from"
                 class="w-full h-full"></div>
 
+            <!-- Pip 3D Studio & Mascot Rig -->
+            <div x-show="$store.global.activeTab === 'character'" x-load-view="'character'"
+                x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from"
+                class="w-full h-full flex flex-col"></div>
+
             <!-- Settings -->
             <div x-show="$store.global.activeTab === 'settings'" x-load-view="'settings'"
                 x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from"
                 class="w-full"></div>
+            <!-- New SSC Tabs -->
+            <div x-show="$store.global.activeTab === 'swarm'" x-load-view="'swarm'" x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from" class="w-full"></div>
+            <div x-show="$store.global.activeTab === 'research'" x-load-view="'research'" x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from" class="w-full"></div>
+            <div x-show="$store.global.activeTab === 'prompt'" x-load-view="'prompt'" x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from" class="w-full"></div>
+            <div x-show="$store.global.activeTab === 'evolution'" x-load-view="'evolution'" x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from" class="w-full"></div>
+            <div x-show="$store.global.activeTab === 'consideration'" x-load-view="'consideration'" x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from" class="w-full"></div>
+            <div x-show="$store.global.activeTab === 'alignment'" x-load-view="'alignment'" x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from" class="w-full"></div>
+            <div x-show="$store.global.activeTab === 'audit'" x-load-view="'audit'" x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from" class="w-full"></div>
+            <div x-show="$store.global.activeTab === 'ui-evolution'" x-load-view="'ui-evolution'" x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from" class="w-full"></div>
+            <div x-show="$store.global.activeTab === 'network'" x-load-view="'network'" x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from" class="w-full"></div>
+            <div x-show="$store.global.activeTab === 'openclaw'" x-load-view="'openclaw'" x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from" class="w-full"></div>
+            <div x-show="$store.global.activeTab === 'workspace'" x-load-view="'workspace'" x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from" class="w-full"></div>
+            <div x-show="$store.global.activeTab === 'containment'" x-load-view="'containment'" x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from" class="w-full"></div>
+            <div x-show="$store.global.activeTab === 'compute'" x-load-view="'compute'" x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from" class="w-full"></div>
         </div>
     </div>
 
@@ -524,33 +695,18 @@
                     <span x-text="$store.global.t('connectGoogle')">Connect Google Account</span>
                 </button>
 
-                <div class="rounded-lg border border-neon-cyan/20 bg-space-800/60 p-3 text-left">
-                    <div class="flex items-center justify-between gap-2">
-                        <span class="text-xs font-semibold text-neon-cyan">Create swarm accounts</span>
-                        <button class="btn btn-xs btn-outline border-neon-cyan/40 text-neon-cyan" @click="discoverSwarm" :disabled="provisioning">Review available</button>
-                    </div>
-                    <div class="grid grid-cols-2 gap-2 mt-2">
-                        <select x-model="provisionDomain" class="select select-xs bg-space-900 border-space-border text-gray-300"><option value="reseller.mysolidstate.ca">reseller.mysolidstate.ca</option><option value="adamassist.com">adamassist.com</option><option value="mysolidstate.ca">mysolidstate.ca</option></select>
-                        <input x-model="provisionPrefix" placeholder="prefix" class="input input-xs bg-space-900 border-space-border text-gray-300">
-                        <input x-model.number="provisionStart" type="number" min="0" placeholder="start" class="input input-xs bg-space-900 border-space-border text-gray-300">
-                        <input x-model.number="provisionCount" type="number" min="1" max="100" placeholder="count" class="input input-xs bg-space-900 border-space-border text-gray-300">
-                    </div>
-                    <button class="btn btn-sm btn-secondary w-full mt-2" @click="provisionSwarm" :disabled="provisioning"><span x-text="provisioning ? 'Creating…' : 'Create accounts in selected dashboard'">Create accounts in selected dashboard</span></button>
-                    <p class="text-[10px] text-gray-500 mt-2" x-show="discoveredAccounts.length">Found: <span x-text="discoveredAccounts.slice(0, 8).join(', ')"></span></p>
-                </div>
-
-                <div class="grid grid-cols-2 gap-3 mt-1">
-                    <button class="btn bg-cyan-950/40 hover:bg-cyan-900/60 border border-cyan-500/40 text-cyan-300 hover:text-white text-xs h-11 flex flex-nowrap whitespace-nowrap shadow-sm" @click="autoAddSwarm('@reseller.mysolidstate.ca')">
-                        <svg class="w-4 h-4 mr-1.5 text-neon-cyan shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-                        🤖 Auto-Add Reseller
+                <div class="grid grid-cols-2 gap-3 mt-4">
+                    <button class="btn bg-cyan-950/40 hover:bg-cyan-900/60 border border-cyan-500/40 text-cyan-300 hover:text-white text-xs h-11 flex flex-nowrap whitespace-nowrap shadow-sm items-center justify-center" @click="addAccountWeb('@reseller.mysolidstate.ca')">
+                        <svg class="w-4 h-4 mr-1.5 text-neon-cyan shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                        <span x-text="nextReseller ? 'Add Reseller (' + nextReseller.split('@')[0] + ')' : 'Add Reseller'">Add Reseller</span>
                     </button>
-                    <button class="btn bg-purple-950/40 hover:bg-purple-900/60 border border-purple-500/40 text-purple-300 hover:text-white text-xs h-11 flex flex-nowrap whitespace-nowrap shadow-sm" @click="autoAddSwarm('@adamassist.com')">
-                        <svg class="w-4 h-4 mr-1.5 text-neon-purple shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-                        🤖 Auto-Add AdamAssist
+                    <button class="btn bg-purple-950/40 hover:bg-purple-900/60 border border-purple-500/40 text-purple-300 hover:text-white text-xs h-11 flex flex-nowrap whitespace-nowrap shadow-sm items-center justify-center" @click="addAccountWeb('@adamassist.com')">
+                        <svg class="w-4 h-4 mr-1.5 text-neon-purple shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                        <span x-text="nextAdamAssist ? 'Add AdamAssist (' + nextAdamAssist.split('@')[0] + ')' : 'Add AdamAssist'">Add AdamAssist</span>
                     </button>
                 </div>
 
-                <div class="text-center mt-2">
+                <div class="text-center mt-4">
                     <p class="text-xs text-gray-500 mb-2" x-text="$store.global.t('or')">OR</p>
                     
                     <!-- Manual Mode (collapsible) -->
@@ -589,22 +745,6 @@
                             <template x-if="!authUrl">
                                 <div class="text-gray-500">Loading...</div>
                             </template>
-                        </div>
-                    </details>
-
-                    <!-- CLI Command -->
-                    <details class="group">
-                        <summary class="text-xs text-gray-400 hover:text-neon-cyan cursor-pointer transition-colors inline-flex items-center gap-1">
-                            <svg class="w-3 h-3 transition-transform group-open:rotate-90" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
-                            </svg>
-                            <span x-text="$store.global.t('useCliCommand')">Use CLI Command</span>
-                        </summary>
-                        <div class="mt-3 p-3 bg-black/50 rounded border border-space-border/30 font-mono text-xs text-gray-300">
-                            <div class="flex items-center gap-2">
-                                <span class="text-gray-600">$</span>
-                                <code>npm run accounts:add</code>
-                            </div>
                         </div>
                     </details>
                 </div>
@@ -699,7 +839,7 @@
                     { id: 'uad', name: 'UAD Action Dispatcher', desc: 'Execute system scripts and diagnostic routines', domain: 'mcp:19874' },
                     { id: 'processes', name: 'Process Orchestrator', desc: 'Daemons, service map & compatibility ports', domain: 'core:19870' },
                     { id: 'infrastructure', name: 'Infrastructure & Nodes', desc: 'VMs, hardware consolidation & mobility', domain: 'compute:19877' },
-                    { id: 'philosophy', name: 'Philosophy & 10 Domains', desc: 'Cognitive triad & architectural invariants', domain: 'core:19870' },
+                    { id: 'philosophy', name: 'Philosophy & Architecture', desc: 'Core operating laws, structural layers & system invariants', domain: 'core:19870' },
                     { id: 'skills', name: 'Skills & Containment Vault', desc: 'Executive focus tracker & idea vault', domain: 'agents:19873' },
                     { id: 'agent-chat', name: 'Agent Chat Console', desc: 'Direct multi-agent operator chat & telemetry', domain: 'agents:19873' },
                     { id: 'overnight', name: 'Lorax Overnight Loop', desc: 'Autonomous mutation loops & verification', domain: 'jobs:19878' },
@@ -910,10 +1050,16 @@
     <script src="js/components/agent-chat.js"></script>
     <script src="js/components/overnight.js"></script>
     <script src="js/components/ai-copilot.js"></script>
-
+    <script src="js/components/voice-memos.js"></script>
     <script src="js/components/uad.js"></script>
-    <script src="js/components/workflow.js"></script>
+    <script src="js/components/workflow.js?v=2.7.8"></script>
     <script src="js/components/economics.js"></script>
+    <script src="js/components/swarm.js"></script>
+    <script src="js/components/research.js"></script>
+    <script src="js/components/prompt.js"></script>
+    <script src="js/components/network.js"></script>
+    <script src="js/components/keyring.js"></script>
+    <script src="js/components/evolution.js"></script>
 
     <!-- 4. App (registers Alpine components from window.Components) -->
     <script src="app.js?v=3.2.0"></script>
