@@ -2628,9 +2628,41 @@ Output ONLY the rewritten prompt, wrapped in triple backticks.`;
         });
     });
 
+    // --- Agent Handoff State Machine ---
+    let agentHandoffState = {
+        active: false,
+        reason: null,
+        timestamp: null
+    };
+
+    router.get('/agent/status', (req, res) => {
+        res.json(agentHandoffState);
+    });
+
+    router.post('/agent/handoff', express.json(), (req, res) => {
+        agentHandoffState = {
+            active: true,
+            reason: req.body.reason || "Waiting for Human",
+            timestamp: Date.now()
+        };
+        res.json({ success: true, state: agentHandoffState });
+    });
+
+    router.post('/agent/release', (req, res) => {
+        agentHandoffState = { active: false, reason: null, timestamp: null };
+        
+        // Automatically banish the window back to the virtual space upon release
+        const pyScript = 'import sys\nsys.path.append("/Users/test/Projects/solidstack")\nfrom ss.display import banish_window\nbanish_window("SolidStack Browser")';
+        exec(`python3 -c '${pyScript}'`, { cwd: BASE_DIR }, (err, stdout) => {
+            if (err) console.error("[Agent Handoff] Failed to auto-banish:", err);
+        });
+        
+        res.json({ success: true, state: agentHandoffState });
+    });
+    // -----------------------------------
     // GET /api/display/summon - Teleports automation window to main display
     router.post('/display/summon', (req, res) => {
-        const pyScript = 'import sys\nsys.path.append("/Users/test/Projects/solidstack")\nfrom ss.display import summon_window\nsummon_window("Google Chrome")';
+        const pyScript = 'import sys\nsys.path.append("/Users/test/Projects/solidstack")\nfrom ss.display import summon_window\nsummon_window("SolidStack Browser")';
         exec(`python3 -c '${pyScript}'`, { cwd: BASE_DIR }, (err, stdout) => {
             if (err) return res.status(500).json({ error: err.message });
             res.json({ success: true, message: 'Window summoned' });
@@ -2639,7 +2671,7 @@ Output ONLY the rewritten prompt, wrapped in triple backticks.`;
 
     // GET /api/display/banish - Teleports automation window to virtual display
     router.post('/display/banish', (req, res) => {
-        const pyScript = 'import sys\nsys.path.append("/Users/test/Projects/solidstack")\nfrom ss.display import banish_window\nbanish_window("Google Chrome")';
+        const pyScript = 'import sys\nsys.path.append("/Users/test/Projects/solidstack")\nfrom ss.display import banish_window\nbanish_window("SolidStack Browser")';
         exec(`python3 -c '${pyScript}'`, { cwd: BASE_DIR }, (err, stdout) => {
             if (err) return res.status(500).json({ error: err.message });
             res.json({ success: true, message: 'Window banished' });
