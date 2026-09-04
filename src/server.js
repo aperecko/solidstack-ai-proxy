@@ -40,8 +40,12 @@ import { logger } from './utils/logger.js';
 import { readNetworkGate, sendNetworkUnavailable } from './utils/network-gate.js';
 import proficiencyTracker from './modules/proficiency-tracker.js';
 import usageStats from './modules/usage-stats.js';
+import autonomousJudge from './modules/autonomous-judge.js';
+import { injectActiveRules } from './modules/jit-injector.js';
 import { mountOpenAICompat, mountResponsesCompat } from './openai-compat.js';
+import { isNimEligible } from './providers/nvidia-nim.js';
 import { createCommanderRouter } from './commander-api.js';
+import { getVerifiedModels } from './cloudcode/model-tester.js';
 import {
     logConversation,
     initStreamingLog,
@@ -278,6 +282,9 @@ async function ensureInitialized() {
             initDynamicModelConfig().catch(err => {
                 logger.warn(`[Server] Dynamic model config init failed (non-fatal): ${err.message}`);
             });
+
+            // Start autonomous judge for event-driven telemetry evaluation
+            autonomousJudge.start();
 
             // Prime quota state on boot so the pool isn't selectable-blind until
             // the first backstop/on-demand sweep fires. Non-blocking.
@@ -1094,15 +1101,22 @@ function forwardAndNeutralizeQuota(hostName, req, res, bodyText) {
                         }
                     }
 
-                    // Inject local on-demand MoE models into Antigravity IDE model picker
-                    data.models['gemma-4-26b-a4b-it'] = {
-                        displayName: 'Gemma 4 26B-A4B (Local Turbo Fieldfare)',
-                        quotaInfo: { remainingFraction: 1.0 }
-                    };
-                    data.models['gemma-4-26b-a4b'] = {
-                        displayName: 'Gemma 4 26B-A4B (Local)',
-                        quotaInfo: { remainingFraction: 1.0 }
-                    };
+                    // Dynamically inject verified models into Antigravity IDE model picker
+                    try {
+                        const verifiedData = getVerifiedModels();
+                        if (verifiedData && Array.isArray(verifiedData.models)) {
+                            for (const vm of verifiedData.models) {
+                                data.models[vm.id] = {
+                                    displayName: vm.displayName || vm.id,
+                                    quotaInfo: { remainingFraction: 1.0 }
+                                };
+                            }
+                        }
+                        // Note: Never prune native upstream models from UI even if temporary probes fail.
+                        // Upstream models should remain selectable so user or pool rotation can attempt them.
+                    } catch (e) {
+                        logger.warn('[GUI Interceptor] Error injecting verified models: ' + e.message);
+                    }
 
                     out = Buffer.from(JSON.stringify(data));
                     neutralized = true;
@@ -1397,6 +1411,7 @@ app.use(async (req, res, next) => {
                 if (isAIRequest && requestBodyText != null) {
                     let preparedText = sanitizeThoughtPartsForClaude(fallbackModel || requestedModel, requestBodyText);
                     preparedText = injectThoughtSignaturesForGemini(fallbackModel || requestedModel, preparedText);
+                    preparedText = injectActiveRules(preparedText);
                     let optionsToPass = { incomingTokenEmail, isMidSession, requestBodyObj };
                     if (handoverAdvisoryText) {
                         optionsToPass.injectedPrefixText = handoverAdvisoryText;
@@ -2511,7 +2526,8 @@ app.post('/v1/messages', async (req, res) => {
         const modelId = requestedModel;
 
         // Validate model ID before processing
-        const { account: validationAccount } = accountManager.selectAccount(modelId, { apiProfile: req?.apiProfile });
+        const isNim = isNimEligible(modelId, req.body?.taskTier);
+        const { account: validationAccount } = isNim ? { account: null } : accountManager.selectAccount(modelId, { apiProfile: req?.apiProfile });
         if (validationAccount) {
             const token = await accountManager.getTokenForAccount(validationAccount);
             const projectId = validationAccount.subscription?.projectId || null;
