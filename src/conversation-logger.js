@@ -13,11 +13,7 @@ const DB_PATH = path.join(DB_DIR, 'conversations.db');
 let db = null;
 
 function getDb() {
-    if (db) try { db.exec('ALTER TABLE conversations ADD COLUMN task_id TEXT'); } catch(e) {}
-    try { db.exec('ALTER TABLE conversations ADD COLUMN pool_id TEXT'); } catch(e) {}
-    try { db.exec('ALTER TABLE conversations ADD COLUMN retail_value_cad REAL DEFAULT 0'); } catch(e) {}
-    try { db.exec('ALTER TABLE conversations ADD COLUMN actual_cogs_cad REAL DEFAULT 0'); } catch(e) {}
-    return db;
+    if (db) return db;
     try {
         fs.mkdirSync(DB_DIR, { recursive: true });
     } catch {}
@@ -42,7 +38,8 @@ function getDb() {
             task_id TEXT,
             pool_id TEXT,
             retail_value_cad REAL DEFAULT 0,
-            actual_cogs_cad REAL DEFAULT 0
+            actual_cogs_cad REAL DEFAULT 0,
+            real_dollar_roi_cad REAL DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS messages (
             id TEXT PRIMARY KEY,
@@ -56,6 +53,11 @@ function getDb() {
         CREATE INDEX IF NOT EXISTS idx_conversations_created ON conversations(created_at);
         CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id);
     `);
+    try { db.exec('ALTER TABLE conversations ADD COLUMN task_id TEXT'); } catch(e) {}
+    try { db.exec('ALTER TABLE conversations ADD COLUMN pool_id TEXT'); } catch(e) {}
+    try { db.exec('ALTER TABLE conversations ADD COLUMN retail_value_cad REAL DEFAULT 0'); } catch(e) {}
+    try { db.exec('ALTER TABLE conversations ADD COLUMN actual_cogs_cad REAL DEFAULT 0'); } catch(e) {}
+    try { db.exec('ALTER TABLE conversations ADD COLUMN real_dollar_roi_cad REAL DEFAULT 0'); } catch(e) {}
     return db;
 }
 
@@ -118,11 +120,11 @@ export function logConversation(request, response, accountEmail, accountTier, re
         _db.prepare(`
             INSERT INTO conversations (id, client_id, model, account_email, account_tier,
                 created_at, updated_at, input_tokens, output_tokens, cache_read_tokens,
-                user_message_count, assistant_message_count, summary, status, task_id, pool_id, retail_value_cad, actual_cogs_cad)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                user_message_count, assistant_message_count, summary, status, task_id, pool_id, retail_value_cad, actual_cogs_cad, real_dollar_roi_cad)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(convId, clientId, model, accountEmail || '', accountTier || '',
             now, now, inputTokens, outputTokens, cacheReadTokens,
-            userMessages.length, 1, summary, 'completed', taskId, eco.poolId, eco.marketValueCad, eco.actualCogsCad);
+            userMessages.length, 1, summary, 'completed', taskId, eco.poolId, eco.marketValueCad, eco.actualCogsCad, eco.realDollarRoiCad);
 
         const insertMsg = _db.prepare(`
             INSERT INTO messages (id, conversation_id, role, content, tokens, created_at)
@@ -210,12 +212,12 @@ export function finalizeStreamingLog(convId, error) {
         _db.prepare(`
             INSERT INTO conversations (id, client_id, model, account_email, account_tier,
                 created_at, updated_at, input_tokens, output_tokens, cache_read_tokens,
-                user_message_count, assistant_message_count, summary, status, task_id, pool_id, retail_value_cad, actual_cogs_cad)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                user_message_count, assistant_message_count, summary, status, task_id, pool_id, retail_value_cad, actual_cogs_cad, real_dollar_roi_cad)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(acc.id, hashClientId(acc.request._req), model,
             acc.accountEmail || '', acc.accountTier || '',
             acc.startedAt, now, totalInput, totalOutput, totalCache,
-            userMessages.length, 1, summary, status, taskId, eco.poolId, eco.marketValueCad, eco.actualCogsCad);
+            userMessages.length, 1, summary, status, taskId, eco.poolId, eco.marketValueCad, eco.actualCogsCad, eco.realDollarRoiCad);
 
         const insertMsg = _db.prepare(`
             INSERT INTO messages (id, conversation_id, role, content, tokens, created_at)
