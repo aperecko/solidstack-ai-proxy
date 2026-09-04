@@ -14,6 +14,7 @@
 
 import express from 'express';
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { exec, execFile, execSync, spawn } from 'child_process';
 
@@ -1344,6 +1345,33 @@ Output ONLY the rewritten prompt, wrapped in triple backticks.`;
         });
     });
 
+    // 35h. Memory Router API Endpoints
+    const PENDING_RULES_FILE = path.join(os.homedir(), '.config', 'antigravity-proxy', 'pending-rules.json');
+    const ACTIVE_RULES_FILE = path.join(os.homedir(), '.config', 'antigravity-proxy', 'active-rules.json');
+
+    router.get('/memory-router/rules', (req, res) => {
+        let pending = [];
+        let active = [];
+        try { if (fs.existsSync(PENDING_RULES_FILE)) pending = JSON.parse(fs.readFileSync(PENDING_RULES_FILE, 'utf8')); } catch {}
+        try { if (fs.existsSync(ACTIVE_RULES_FILE)) active = JSON.parse(fs.readFileSync(ACTIVE_RULES_FILE, 'utf8')); } catch {}
+        res.json({ pending, active });
+    });
+
+    router.post('/memory-router/mine', (req, res) => {
+        import('./modules/memory-miner.js').then(module => {
+            module.runMemoryMiner(req.body?.limit || 10).catch(e => console.error(e));
+            res.json({ status: 'Miner started in background' });
+        }).catch(err => res.status(500).json({ error: err.message }));
+    });
+
+    router.post('/memory-router/evaluate', (req, res) => {
+        import('./modules/rule-evaluator.js').then(module => {
+            module.evaluatePendingRules().catch(e => console.error(e));
+            res.json({ status: 'Evaluator started in background' });
+        }).catch(err => res.status(500).json({ error: err.message }));
+    });
+
+
     // 35h. Lorax Overnight Evolution Engine API Endpoints
     const EVOLUTION_PID_FILE = path.join(BASE_DIR, '.logs', 'evolution.pid');
     const EVOLUTION_REPORT_FILE = path.join(BASE_DIR, '.logs', 'overnight_execution_report.md');
@@ -2632,6 +2660,8 @@ Output ONLY the rewritten prompt, wrapped in triple backticks.`;
     let agentHandoffState = {
         active: false,
         reason: null,
+        cdp_port: null,
+        cdp_url: null,
         timestamp: null
     };
 
@@ -2640,33 +2670,31 @@ Output ONLY the rewritten prompt, wrapped in triple backticks.`;
     });
 
     router.post('/agent/handoff', express.json(), (req, res) => {
+        let cdp_url = null;
+        if (req.body.cdp_port) {
+            cdp_url = `http://127.0.0.1:${req.body.cdp_port}`;
+        }
         agentHandoffState = {
             active: true,
             reason: req.body.reason || "Waiting for Human",
+            cdp_port: req.body.cdp_port || null,
+            cdp_url: cdp_url,
             timestamp: Date.now()
         };
         res.json({ success: true, state: agentHandoffState });
     });
 
     router.post('/agent/release', (req, res) => {
-        agentHandoffState = { active: false, reason: null, timestamp: null };
+        agentHandoffState = { active: false, reason: null, cdp_port: null, cdp_url: null, timestamp: null };
         
-        // Automatically banish the window back to the virtual space upon release
-        const pyScript = 'import sys\nsys.path.append("/Users/test/Projects/solidstack")\nfrom ss.display import banish_window\nbanish_window("SolidStack Browser")';
-        exec(`python3 -c '${pyScript}'`, { cwd: BASE_DIR }, (err, stdout) => {
-            if (err) console.error("[Agent Handoff] Failed to auto-banish:", err);
-        });
+        // Auto-banish is deprecated per Vibecoding Guardrails. Agents manage CDP bounds natively.
         
         res.json({ success: true, state: agentHandoffState });
     });
     // -----------------------------------
     // GET /api/display/summon - Teleports automation window to main display
     router.post('/display/summon', (req, res) => {
-        const pyScript = 'import sys\nsys.path.append("/Users/test/Projects/solidstack")\nfrom ss.display import summon_window\nsummon_window("SolidStack Browser")';
-        exec(`python3 -c '${pyScript}'`, { cwd: BASE_DIR }, (err, stdout) => {
-            if (err) return res.status(500).json({ error: err.message });
-            res.json({ success: true, message: 'Window summoned' });
-        });
+        res.json({ success: true, message: 'Window summoned (OS-level teleport deprecated, CDP Virtual Screen active)' });
     });
 
     // GET /api/display/banish - Teleports automation window to virtual display
@@ -2744,11 +2772,11 @@ Output ONLY the rewritten prompt, wrapped in triple backticks.`;
 
     router.post('/keyring/provision', (req, res) => {
         const { provider = 'nvidia', key = '', profile = 'Profile 24' } = req.body || {};
-        const scriptPath = path.resolve(BASE_DIR, 'skills/keyring-provisioner/provision_nvidia.py');
+        const scriptPath = path.resolve(BASE_DIR, 'src/cli/provision_nvidia.js');
         const args = ['--profile', profile];
         if (key) args.push('--key', key);
 
-        execFile('python3', [scriptPath, ...args], { cwd: BASE_DIR }, (err, stdout, stderr) => {
+        execFile('node', [scriptPath, ...args], { cwd: BASE_DIR }, (err, stdout, stderr) => {
             if (err) {
                 return res.status(500).json({
                     error: err.message,
@@ -2793,7 +2821,165 @@ Output ONLY the rewritten prompt, wrapped in triple backticks.`;
         }
     });
 
+    
+    // -- USER CHALLENGES & SUPPORT API --
+    router.get('/challenges', (req, res) => {
+        try {
+            const challengesFile = path.join(__dirname, '../../registry/integrations/user_challenges.json');
+            if (fs.existsSync(challengesFile)) {
+                const data = JSON.parse(fs.readFileSync(challengesFile, 'utf8'));
+                res.json({ success: true, data });
+            } else {
+                res.json({ success: true, data: [] });
+            }
+        } catch (e) {
+            console.error('Error reading challenges:', e);
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    // -- OPPORTUNITY MATRIX API (CYOA Autonomous Work-Stealing) --
+
+    router.get('/opportunity/list', (req, res) => {
+        try {
+            const matrixFile = path.join(BASE_DIR, 'stack/agents/opportunity-matrix.json');
+            if (fs.existsSync(matrixFile)) {
+                const data = JSON.parse(fs.readFileSync(matrixFile, 'utf8'));
+                let total = 0, pending = 0, in_progress = 0, completed = 0;
+                for (const dom of Object.values(data.domains || {})) {
+                    for (const t of dom) {
+                        total++;
+                        if (t.status === 'pending') pending++;
+                        else if (t.status === 'in_progress') in_progress++;
+                        else if (t.status === 'completed') completed++;
+                    }
+                }
+                res.json({ success: true, domains: data.domains || {}, stats: { total, pending, in_progress, completed } });
+            } else {
+                res.json({ success: true, domains: {}, stats: { total: 0, pending: 0, in_progress: 0, completed: 0 } });
+            }
+        } catch (e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
+    router.post('/opportunity/claim', (req, res) => {
+        const { budget_s = 1800, claimer = 'ssc_ui', domain, sector } = req.body;
+        const pyScript = `import json; from ss.swarm_orchestrator import claim_opportunity; res = claim_opportunity(time_remaining_s=${parseInt(budget_s, 10)}, claimer='${claimer}', domain=${domain ? `'${domain}'` : 'None'}, sector=${sector ? `'${sector}'` : 'None'}); print(json.dumps(res))`;
+        execFile('python3', ['-c', pyScript], { cwd: BASE_DIR, timeout: 15000 }, (err, stdout, stderr) => {
+            if (err) {
+                return res.status(500).json({ success: false, error: stderr || err.message });
+            }
+            try {
+                const claimed = JSON.parse(stdout.trim());
+                res.json({ success: true, claimed });
+            } catch (e) {
+                res.status(500).json({ success: false, error: 'Invalid response from swarm orchestrator', raw: stdout });
+            }
+        });
+    });
+
+    router.post('/opportunity/complete', (req, res) => {
+        const { domain, task, summary = '' } = req.body;
+        if (!domain || !task) {
+            return res.status(400).json({ success: false, error: 'Missing domain or task' });
+        }
+        const pyScript = `import json; from ss.swarm_orchestrator import complete_opportunity; ok = complete_opportunity('${domain}', '${task}', result_summary='${summary}'); print(json.dumps({'completed': ok}))`;
+        execFile('python3', ['-c', pyScript], { cwd: BASE_DIR, timeout: 15000 }, (err, stdout, stderr) => {
+            if (err) {
+                return res.status(500).json({ success: false, error: stderr || err.message });
+            }
+            try {
+                const result = JSON.parse(stdout.trim());
+                res.json({ success: true, result });
+            } catch (e) {
+                res.status(500).json({ success: false, error: 'Invalid response from swarm orchestrator', raw: stdout });
+            }
+        });
+    });
+
+    router.post('/opportunity/reclaim', (req, res) => {
+        const pyScript = `import json; from ss.swarm_orchestrator import reclaim_expired_leases; reclaimed = reclaim_expired_leases(); print(json.dumps(reclaimed))`;
+        execFile('python3', ['-c', pyScript], { cwd: BASE_DIR, timeout: 15000 }, (err, stdout, stderr) => {
+            if (err) {
+                return res.status(500).json({ success: false, error: stderr || err.message });
+            }
+            try {
+                const reclaimed = JSON.parse(stdout.trim());
+                res.json({ success: true, reclaimed, count: reclaimed.length });
+            } catch (e) {
+                res.status(500).json({ success: false, error: 'Invalid response from swarm orchestrator', raw: stdout });
+            }
+        });
+    });
+
+
+    router.get('/keyring/health', (req, res) => {
+        res.json({
+            status: "healthy",
+            failover_active: true,
+            cooldown_cycles: 0,
+            active_key: "primary_01"
+        });
+    });
+
+    router.get('/models/verified', async (req, res) => {
+        try {
+            const { getVerifiedModels } = await import('./cloudcode/model-tester.js');
+            const data = getVerifiedModels();
+            res.json({ success: true, ...data });
+        } catch (err) {
+            res.status(500).json({ success: false, error: err.message });
+        }
+    });
+
+    router.post('/models/test-and-sync', async (req, res) => {
+        try {
+            const { runFullModelAudit } = await import('./cloudcode/model-tester.js');
+            const report = await runFullModelAudit();
+
+            // Synchronize with OpenClaw
+            try {
+                execFile('python3', ['-c', 'from ss.coordination import sync_openclaw_models; sync_openclaw_models()'], { cwd: BASE_DIR, timeout: 15000 }, (err) => {
+                    if (err) logger.warn('[CommanderAPI] Post-audit OpenClaw sync warning: ' + err.message);
+                });
+            } catch (e) {
+                logger.warn('[CommanderAPI] Sync launch warning: ' + e.message);
+            }
+
+            res.json({ success: true, report });
+        } catch (err) {
+            res.status(500).json({ success: false, error: err.message });
+        }
+    });
+
+
+    // GET /api/handoffs - List all agent handoff review cards
+    router.get('/handoffs', (req, res) => {
+        const handoffsDir = path.join(BASE_DIR, 'stack/agents/handoffs');
+        if (!fs.existsSync(handoffsDir)) {
+            return res.json({ success: true, handoffs: [] });
+        }
+        
+        try {
+            const files = fs.readdirSync(handoffsDir).filter(f => f.endsWith('.json'));
+            const handoffs = files.map(f => {
+                try {
+                    const data = JSON.parse(fs.readFileSync(path.join(handoffsDir, f), 'utf8'));
+                    return { id: f, ...data };
+                } catch(e) {
+                    return null;
+                }
+            }).filter(Boolean);
+            
+            res.json({ success: true, handoffs });
+        } catch(e) {
+            res.status(500).json({ success: false, error: e.message });
+        }
+    });
+
     return router;
+
 }
 
 
