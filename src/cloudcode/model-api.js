@@ -31,7 +31,7 @@ const modelCache = {
 function isSupportedModel(modelId) {
     const family = getModelFamily(modelId);
     const lower = (modelId || '').toLowerCase();
-    return family === 'claude' || family === 'gemini' || lower.includes('gpt') || lower.includes('oss') || lower.includes('gemma-4') || lower.includes('turbo') || lower.includes('local');
+    return family === 'claude' || family === 'gemini' || lower.includes('gpt') || lower.includes('oss') || lower.includes('gemma-4') || lower.includes('turbo') || lower.includes('local') || lower.includes('glm') || lower.includes('minimax') || lower.includes('ollama');
 }
 
 /**
@@ -59,6 +59,20 @@ export async function listModels(token) {
 
     // Inject local on-demand models into the model list for Antigravity & clients
     modelList.push({
+        id: 'meta/llama-3.2-11b-vision-instruct',
+        object: 'model',
+        created: Math.floor(Date.now() / 1000),
+        owned_by: 'nvidia-nim',
+        description: 'Llama 3.2 11B Vision (NVIDIA NIM Free 40 RPM)'
+    });
+    modelList.push({
+        id: 'fcc-fast',
+        object: 'model',
+        created: Math.floor(Date.now() / 1000),
+        owned_by: 'nvidia-nim',
+        description: 'Free Claude Code Fast (NVIDIA NIM Tier 0)'
+    });
+    modelList.push({
         id: 'gemma-4-26b-a4b-it',
         object: 'model',
         created: Math.floor(Date.now() / 1000),
@@ -71,6 +85,22 @@ export async function listModels(token) {
         created: Math.floor(Date.now() / 1000),
         owned_by: 'local-turbofieldfare',
         description: 'Gemma 4 26B-A4B (Local Turbo Fieldfare MoE)'
+    });
+    
+    // Inject Free Tier NIM / Hub models
+    modelList.push({
+        id: 'deepseek-ai/deepseek-r1',
+        object: 'model',
+        created: Math.floor(Date.now() / 1000),
+        owned_by: 'nvidia-nim',
+        description: 'DeepSeek R1 (NIM Free)'
+    });
+    modelList.push({
+        id: 'qwen/qwen2.5-coder-32b-instruct',
+        object: 'model',
+        created: Math.floor(Date.now() / 1000),
+        owned_by: 'nvidia-nim',
+        description: 'Qwen 2.5 Coder 32B (NIM Free)'
     });
 
     // Warm the model validation cache
