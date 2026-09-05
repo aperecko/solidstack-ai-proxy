@@ -9,6 +9,7 @@ import { DEFAULT_COOLDOWN_MS } from '../constants.js';
 import { formatDuration } from '../utils/helpers.js';
 import { resolvePoolForAccount } from '../economic-engine.js';
 import { logger } from '../utils/logger.js';
+import { getG1CreditExhaustedRemaining } from './quota-store.js';
 
 /**
  * Check if all accounts are rate-limited for a specific model
@@ -27,8 +28,9 @@ export function isAllRateLimited(accounts, modelId) {
         if (acc.isInvalid) return true; // Invalid accounts count as unavailable
         if (acc.enabled === false) return true; // Disabled accounts count as unavailable
 
+        if (acc.type === 'apikey' || acc.email?.includes('virtual-gemini-key')) return true;
+
         if (isClaude) {
-            if (acc.type === 'apikey' || acc.email?.includes('virtual-gemini-key')) return true;
             const tier = (acc.subscription?.tier || acc.tier || '').toLowerCase();
             if (tier === 'free') return true;
 
@@ -63,18 +65,23 @@ export function getAvailableAccounts(accounts, modelId = null) {
         // WebUI: Skip disabled accounts
         if (acc.enabled === false) return false;
 
+        if (acc.type === 'apikey' || acc.email?.includes('virtual-gemini-key')) return false;
+
         if (isClaude) {
-            if (acc.type === 'apikey' || acc.email?.includes('virtual-gemini-key')) return false;
             const tier = (acc.subscription?.tier || acc.tier || '').toLowerCase();
             if (tier === 'free') return false;
+        }
 
-            // Prefer live cached quotas over stale accounts.json data
-            const cached = acc._cachedFormattedQuotas?.[modelId];
-            const q = cached || acc.quota?.models?.[modelId];
-            if (q && q.remainingFraction !== null && q.remainingFraction <= 0.05 && (q.resetTime || cached?.resetTime)) {
-                const resetMs = new Date(q.resetTime || cached?.resetTime).getTime();
-                if (!isNaN(resetMs) && resetMs > Date.now()) return false;
-            }
+        // Prefer live cached quotas over stale accounts.json data. This applies to
+        // BOTH Claude and Gemini models: an exhausted model (remainingFraction ≈ 0
+        // with a reset in the future) must be skipped so account selection and
+        // fallback rewriting step down to healthier tiers instead of retrying a
+        // starved model over and over (visible as endless -high ping-pong).
+        const cached = acc._cachedFormattedQuotas?.[modelId];
+        const q = cached || acc.quota?.models?.[modelId];
+        if (q && q.remainingFraction !== null && q.remainingFraction <= 0.05 && (q.resetTime || cached?.resetTime)) {
+            const resetMs = new Date(q.resetTime || cached?.resetTime).getTime();
+            if (!isNaN(resetMs) && resetMs > Date.now()) return false;
         }
 
         if (modelId && acc.modelRateLimits && acc.modelRateLimits[modelId]) {
@@ -82,6 +89,14 @@ export function getAvailableAccounts(accounts, modelId = null) {
             if (limit.isRateLimited && limit.resetTime > Date.now()) {
                 return false;
             }
+        }
+
+        // G1-credit-exhaustion (INSUFFICIENT_G1_CREDITS_BALANCE / error 2008) is a
+        // distinct, longer-lived state tracked in the quota-store. Exclude the
+        // account for this model so fallback-rewrite and selection skip it instead
+        // of choosing a model whose whole pool is credit-starved (→ 502).
+        if (modelId && getG1CreditExhaustedRemaining('antigravity', acc.email, modelId) > 0) {
+            return false;
         }
 
         return true;

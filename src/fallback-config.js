@@ -16,14 +16,20 @@ let dynamicFallbackMap = {};
 // is preserved even when no live model list has been fetched yet.
 // Model IDs match the real Cloud Code model list (e.g. claude-opus-4-6-thinking).
 const FALLBACK_CASCADE = {
-    'claude-opus-4-6-thinking': ['claude-sonnet-4-6', 'gemini-3.1-pro-high', 'gemini-3.7-flash-high', 'gemini-3.6-flash-high'],
-    'claude-opus-4-6': ['claude-sonnet-4-6', 'gemini-3.1-pro-high', 'gemini-3.7-flash-high', 'gemini-3.6-flash-high'],
-    'claude-sonnet-4-6': ['gemini-3.1-pro-high', 'gemini-3.7-flash-high', 'gemini-3.6-flash-high', 'gemini-3.1-flash-lite'],
-    'gemini-3.1-pro-high': ['gemini-3.7-flash-high', 'gemini-3.6-flash-high', 'gemini-3.1-flash-lite'],
-    'gemini-3.1-pro-low': ['gemini-3.7-flash-medium', 'gemini-3.6-flash-medium', 'gemini-3.1-flash-lite'],
-    'gemini-3.7-flash-high': ['gemini-3.6-flash-high', 'gemini-3.7-flash-medium', 'gemini-3.1-flash-lite'],
-    'gemini-3.7-flash-medium': ['gemini-3.7-flash-low', 'gemini-3.1-flash-lite'],
-    'gemini-3.6-flash-high': ['gemini-3.6-flash-medium', 'gemini-3.6-flash-low', 'gemini-3.1-flash-lite'],
+    'claude-opus-4-6-thinking': ['claude-sonnet-4-6', 'gemini-3.8-flash-high', 'gemini-3.7-flash-high'],
+    'claude-opus-4-6': ['claude-sonnet-4-6', 'gemini-3.8-flash-high', 'gemini-3.7-flash-high'],
+    'claude-sonnet-4-6': ['gemini-3.8-flash-high', 'gemini-3.7-flash-high', 'gemini-3.1-flash-lite'],
+    'gemini-3.1-pro-high': ['gemini-3.8-flash-high', 'gemini-3.7-flash-high', 'gemini-3.1-flash-lite'],
+    'gemini-3.1-pro-low': ['gemini-3.8-flash-medium', 'gemini-3.7-flash-medium', 'gemini-3.1-flash-lite'],
+    'gemini-3.8-flash-high': ['gemini-3.8-flash-medium', 'gemini-3.8-flash-low', 'gemini-3.7-flash-high', 'gemini-3.1-flash-lite'],
+    'gemini-3.7-flash-high': ['gemini-3.7-flash-medium', 'gemini-3.7-flash-low', 'gemini-3.8-flash-high', 'gemini-3.1-flash-lite'],
+    'gemini-3.7-flash-medium': ['gemini-3.8-flash-medium', 'gemini-3.8-flash-low', 'gemini-3.7-flash-low', 'gemini-3.1-flash-lite'],
+    'gemini-3.6-flash-high': ['gemini-3.6-flash-medium', 'gemini-3.6-flash-low', 'gemini-3.8-flash-high', 'gemini-3.1-flash-lite'],
+    'gemini-3.1-flash-lite': ['meta/llama-3.2-11b-vision-instruct', 'gemma-4-26b-a4b-it'],
+    'fcc-fast': ['meta/llama-3.2-11b-vision-instruct', 'gemini-3.1-flash-lite'],
+    'fcc-llama70b': ['meta/llama-3.2-11b-vision-instruct', 'gemini-3.1-flash-lite'],
+    'fcc-deepseek': ['deepseek-ai/deepseek-v3', 'meta/llama-3.2-11b-vision-instruct'],
+    'auto-economic': ['meta/llama-3.2-11b-vision-instruct', 'gemini-3.1-flash-lite'],
 };
 
 /**

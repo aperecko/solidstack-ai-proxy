@@ -21,11 +21,13 @@ import { buildFallbackMap, buildPresets, getModelFamily, GEMINI_SKIP_SIGNATURE }
 import { initFallbackMap, getFallbackChain } from './fallback-config.js';
 import { logRoutingTelemetry } from './cloudcode/routing-logger.js';
 import { mountWebUI } from './webui/index.js';
+import { keyringManager } from './providers/keyring-manager.js';
 import { config } from './config.js';
 import { globalThrottle } from './utils/throttle.js';
 import { recordRequest, getQuotaStatus } from './account-manager/quota-store.js';
 import { isAuthError, isRateLimitError, isCapacityExhaustedError, isAccountForbiddenError } from './errors.js';
 import { quotaRefreshSoon, setQuotaRefreshImpl } from './utils/quota-refresh.js';
+import { selectOptimalModel } from './routing/smart-router.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -54,10 +56,13 @@ import {
     createConversationRouter
 } from './conversation-logger.js';
 import { startInFlight, endInFlight, recordTokenUsage } from './cloudcode/routing-logger.js';
+import { requireBillingGate } from './auth/billing-gate.js';
 
 // Parse fallback flag directly from command line args to avoid circular dependency
 const args = process.argv.slice(2);
-const FALLBACK_ENABLED = args.includes('--fallback') || process.env.FALLBACK === 'true';
+
+// Fallback is enabled by default to ensure resilience across exhausted models
+const FALLBACK_ENABLED = process.env.FALLBACK !== 'false' && !args.includes('--no-fallback');
 
 // Parse --strategy flag (format: --strategy=sticky or --strategy sticky)
 let STRATEGY_OVERRIDE = null;
@@ -99,16 +104,19 @@ function getOrCreateHandoverAdvisory(conversationId, requestBodyObj, fallbackMod
         };
     }
 
-    // First time handing over for this conversation: create snapshot
-    const fallbackSessionId = crypto.randomBytes(4).toString('hex').toUpperCase();
+    const fallbackSessionId = crypto.randomUUID();
+    
+    // Auto-save the request body payload so the user can easily replay it later
+    // if the fallback model doesn't succeed.
     try {
         fs.mkdirSync(sessionsDir, { recursive: true });
         fs.writeFileSync(
-            path.join(sessionsDir, `SESSION_${fallbackSessionId}.json`),
-            JSON.stringify(requestBodyObj, null, 2)
+            path.join(sessionsDir, `session_${fallbackSessionId}.json`),
+            JSON.stringify(requestBodyObj, null, 2),
+            'utf-8'
         );
     } catch (e) {
-        logger.error(`[GUI Interceptor] Failed to save session reference: ${e.message}`);
+        logger.error(`[Fallback] Failed to save fallback session snapshot ${fallbackSessionId}: ${e.message}`);
     }
 
     if (conversationId) {
@@ -128,10 +136,6 @@ function getOrCreateHandoverAdvisory(conversationId, requestBodyObj, fallbackMod
 
 const app = express();
 
-// The network watchdog writes this gate before changing tunnel state. Keep the
-// check synchronous and local so generation fails fast without waiting for the
-// account pool or Google while protected traffic is held.
-// Keep health and diagnostics responsive even while account/quota initialization
 // or an upstream generation request is slow. These routes must not wait on the
 // account manager or Google services.
 app.get('/health', (_req, res) => {
@@ -346,10 +350,13 @@ function sanitizeThoughtPartsForClaude(modelName, bodyText) {
         if (!modelName || !modelName.toLowerCase().includes('claude')) return bodyText;
         let body;
         try { body = JSON.parse(bodyText); } catch { return bodyText; }
-        if (!Array.isArray(body?.contents)) return bodyText;
+        const contentList = Array.isArray(body?.contents)
+            ? body.contents
+            : (Array.isArray(body?.request?.contents) ? body.request.contents : null);
+        if (!contentList) return bodyText;
 
         let stripped = 0;
-        for (const content of body.contents) {
+        for (const content of contentList) {
             if (!content || content.role !== 'model' || !Array.isArray(content.parts)) continue;
             const filtered = content.parts.filter(part => {
                 if (!part || part.thought !== true) return true;
@@ -420,7 +427,8 @@ function injectThoughtSignaturesForGemini(modelName, bodyText) {
 
         if (toolsList) {
             let stripped = 0;
-            for (const tool of toolsList) {
+            for (let i = toolsList.length - 1; i >= 0; i--) {
+                const tool = toolsList[i];
                 if (!tool || !Array.isArray(tool.functionDeclarations)) continue;
                 const originalLength = tool.functionDeclarations.length;
                 tool.functionDeclarations = tool.functionDeclarations.filter(decl => {
@@ -432,6 +440,9 @@ function injectThoughtSignaturesForGemini(modelName, bodyText) {
                 if (tool.functionDeclarations.length !== originalLength) {
                     stripped += (originalLength - tool.functionDeclarations.length);
                     modified = true;
+                }
+                if (tool.functionDeclarations.length === 0) {
+                    toolsList.splice(i, 1);
                 }
             }
             if (stripped > 0) {
@@ -509,6 +520,13 @@ function forwardToGoogle(hostName, req, res, bodyText, account = null, model = n
                 const body = Buffer.concat(errorChunks);
                 const errorText = body.toString('utf8');
                 logger.warn(`[GUI Interceptor] Upstream rejected request with 400 for ${model || 'unknown model'}: ${errorText.slice(0, 300)}`);
+                
+                if (options.isFallback || retryCount > 0) {
+                    logger.warn(`[GUI Interceptor] ⚠️ Trapped 400 error during fallback. Yielding 502 to IDE instead to preserve session.`);
+                    safeProxyErrorResponse(res, 502, { error: `Original model capacity exhausted, and fallback failed: ${errorText.slice(0, 100)}` });
+                    return;
+                }
+
                 if (!res.headersSent && !res.writableEnded) {
                     res.writeHead(400, sanitizeResponseHeaders(proxyRes.headers, body.length));
                     res.end(body);
@@ -630,7 +648,7 @@ function forwardToGoogle(hostName, req, res, bodyText, account = null, model = n
                 }
             } else if ((statusCode === 401 || statusCode === 403) && account) {
                 logger.warn(`[GUI Interceptor] ⚠️ Account ${account.email} error ${statusCode} on ${model || 'request'}: ${errorText.slice(0, 200)}`);
-                if (errorText.toLowerCase().includes('not eligible') || errorText.toLowerCase().includes('violation of terms')) {
+                if (statusCode === 401 || errorText.toLowerCase().includes('not eligible') || errorText.toLowerCase().includes('violation of terms') || errorText.toLowerCase().includes('invalid_token')) {
                     accountManager.markInvalid(account.email, errorText);
                 } else {
                     accountManager.notifyFailure(account, model);
@@ -668,6 +686,9 @@ function forwardToGoogle(hostName, req, res, bodyText, account = null, model = n
                     let fallbackAccount = null;
                     let fallbackModel = null;
                     for (const fb of getFallbackChain(model)) {
+                        if (getModelFamily(fb) !== getModelFamily(options.originalModel || model)) {
+                            continue;
+                        }
                         const fbResult = accountManager.selectAccount(fb, {
                             ...options,
                             incomingTokenEmail: options.incomingTokenEmail
@@ -719,27 +740,33 @@ function forwardToGoogle(hostName, req, res, bodyText, account = null, model = n
                 let finalStatusCode = statusCode;
                 let finalBody = rawError;
                 
-                if (statusCode === 429 || (statusCode === 403 && errorText.toLowerCase().includes('quota'))) {
+                if (statusCode === 429 || (statusCode === 403 && errorText.toLowerCase().includes('quota')) || statusCode === 401) {
                     finalStatusCode = 502;
                     const upstreamDetail = errorText.slice(0, 500);
                     try {
                         const errObj = JSON.parse(errorText);
+
                         if (errObj.error) {
                             errObj.error.code = 502;
                             errObj.error.status = 'BAD_GATEWAY';
-                            errObj.error.message = `SolidStack Proxy: upstream rate limit or quota hit for this model. Cause (truncated): ${upstreamDetail}`;
+                            if (errorText.includes('INSUFFICIENT_G1_CREDITS_BALANCE') || errorText.includes('"error_number": "2008"')) {
+                                errObj.error.message = `SolidStack Proxy: Google One AI Premium credits exhausted for this account pool (${model}). Please upgrade or switch to a free tier model.`;
+                            } else {
+                                errObj.error.message = `SolidStack Proxy: upstream rate limit, quota, or auth failure for this model. Cause (truncated): ${upstreamDetail}`;
+                            }
                         }
+
                         finalBody = Buffer.from(JSON.stringify(errObj));
                     } catch (e) {
                         finalBody = Buffer.from(JSON.stringify({
                             error: {
                                 code: 502,
                                 status: 'BAD_GATEWAY',
-                                message: `SolidStack Proxy: upstream rate limit or quota hit for this model. Cause (truncated): ${upstreamDetail}`
+                                message: `SolidStack Proxy: upstream rate limit, quota, or auth failure for this model. Cause (truncated): ${upstreamDetail}`
                             }
                         }));
                     }
-                    logger.warn(`[GUI Interceptor] Upstream rate-limit/quota for status ${statusCode}; returned truthfully-labeled 502 to IDE.`);
+                    logger.warn(`[GUI Interceptor] Upstream rate-limit/quota/auth error for status ${statusCode}; returned truthfully-labeled 502 to IDE.`);
                 }
                 
                 const outHeaders = sanitizeResponseHeaders(proxyRes.headers, finalBody.length);
@@ -1787,6 +1814,36 @@ mountResponsesCompat(app, accountManager, ensureInitialized, FALLBACK_ENABLED);
 
 
 // --- Savings Dashboard ---
+
+app.get('/api/admin/keyring-analytics', (req, res) => {
+    try {
+        const analytics = keyringManager.getKeyringAnalytics();
+        res.json(analytics);
+    } catch (e) {
+        logger.error(`[API] Failed to get keyring analytics: ${e.message}`);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.post('/api/admin/keyring-config', (req, res) => {
+    try {
+        const { provider, keyId, cycleData } = req.body;
+        if (!provider || !keyId || !cycleData) {
+            return res.status(400).json({ error: 'Missing provider, keyId, or cycleData' });
+        }
+        
+        const success = keyringManager.setKeyCycleInfo(provider, keyId, cycleData);
+        if (success) {
+            res.json({ status: 'ok', analytics: keyringManager.getKeyringAnalytics() });
+        } else {
+            res.status(404).json({ error: 'Key not found' });
+        }
+    } catch (e) {
+        logger.error(`[API] Failed to set keyring config: ${e.message}`);
+        res.status(500).json({ error: e.message });
+    }
+});
+
 app.get('/api/savings-history', async (req, res) => {
     try {
         const fs = await import('fs');
@@ -2493,7 +2550,7 @@ app.post('/v1/messages/count_tokens', (req, res) => {
  * Anthropic-compatible Messages API
  * POST /v1/messages
  */
-app.post('/v1/messages', async (req, res) => {
+app.post('/v1/messages', requireBillingGate, async (req, res) => {
     try {
         const gate = readNetworkGate();
         if (gate) return sendNetworkUnavailable(res, gate);
@@ -2521,6 +2578,11 @@ app.post('/v1/messages', async (req, res) => {
             const targetModel = modelMapping[requestedModel].mapping;
             logger.info(`[Server] Mapping model ${requestedModel} -> ${targetModel}`);
             requestedModel = targetModel;
+        }
+
+        if (requestedModel === 'auto' || requestedModel === 'antigravity/auto') {
+            requestedModel = await selectOptimalModel(messages, req.body, accountManager);
+            logger.info(`[Smart Router] 'auto' dynamically resolved to -> ${requestedModel}`);
         }
 
         const modelId = requestedModel;
