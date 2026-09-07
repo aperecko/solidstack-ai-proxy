@@ -16,8 +16,10 @@
 import { sendMessage } from './cloudcode/message-handler.js';
 import { sendMessageStream } from './cloudcode/streaming-handler.js';
 import { config } from './config.js';
+import { resolveModelMapping } from './constants.js';
 import { globalThrottle } from './utils/throttle.js';
 import { logger as baseLogger } from './utils/logger.js';
+import { readNetworkGate, sendNetworkUnavailable } from './utils/network-gate.js';
 
 // Wrap base logger with a prefix tag for this module
 const logger = {
@@ -31,11 +33,13 @@ const logger = {
  * Semantic model alias routing table
  */
 export const SEMANTIC_MODEL_MAP = {
-    'fast': 'gemini-2.5-flash',
+    'fast': 'meta/llama-3.2-11b-vision-instruct',
+    'free': 'meta/llama-3.2-11b-vision-instruct',
+    'fcc-fast': 'meta/llama-3.2-11b-vision-instruct',
     'cheap': 'gemini-2.5-flash',
     'coding': 'claude-3-5-sonnet-20241022',
     'reasoning': 'claude-3-7-sonnet-20250219',
-    'vision': 'gemini-2.5-flash',
+    'vision': 'meta/llama-3.2-11b-vision-instruct',
     'default': 'claude-3-5-sonnet-20241022',
 };
 
@@ -153,8 +157,8 @@ export function resolveRequestedModel(requestedModel, messages = [], system = nu
     }
 
     const modelMapping = config.modelMapping || {};
-    if (modelMapping[requestedModel]?.mapping) {
-        const target = modelMapping[requestedModel].mapping;
+    const target = resolveModelMapping(requestedModel, modelMapping);
+    if (target !== requestedModel) {
         logger.info(`[Config-Router] Mapping model '${requestedModel}' -> '${target}'`);
         return target;
     }
@@ -490,6 +494,8 @@ export function mountResponsesCompat(app, accountManager, ensureInitialized, fal
      */
     app.post('/v1/responses', async (req, res) => {
         try {
+            const gate = readNetworkGate();
+            if (gate) return sendNetworkUnavailable(res, gate);
             await ensureInitialized();
 
             // Apply micro-delay throttle to pace burst requests (hard invariant).
@@ -499,6 +505,8 @@ export function mountResponsesCompat(app, accountManager, ensureInitialized, fal
                 model,
                 input = [],
                 instructions,
+                tools,
+                tool_choice,
                 stream = false,
                 max_output_tokens = 4096,
                 temperature = 1.0,
@@ -515,6 +523,11 @@ export function mountResponsesCompat(app, accountManager, ensureInitialized, fal
 
             const requestedModel = resolveRequestedModel(model, messages, system);
 
+            if (accountManager.isAllRateLimited(requestedModel)) {
+                logger.warn(`[Responses-Compat] All accounts rate-limited for ${requestedModel}. Resetting state for optimistic retry.`);
+                accountManager.resetAllRateLimits();
+            }
+
             const anthropicRequest = {
                 app: 'opencode',
                 model: requestedModel,
@@ -527,7 +540,12 @@ export function mountResponsesCompat(app, accountManager, ensureInitialized, fal
             };
             if (system) anthropicRequest.system = system;
 
-            logger.info(`[API] Responses-compat request: model=${requestedModel}, stream=${!!stream}, items=${typeof input === 'string' ? 1 : (Array.isArray(input) ? input.length : 0)}`);
+            const translatedTools = translateOpenAITools(tools);
+            if (translatedTools) anthropicRequest.tools = translatedTools;
+            const translatedToolChoice = translateOpenAIToolChoice(tool_choice);
+            if (translatedToolChoice) anthropicRequest.tool_choice = translatedToolChoice;
+
+            logger.info(`[API] Responses-compat request: model=${requestedModel}, stream=${!!stream}, items=${typeof input === 'string' ? 1 : (Array.isArray(input) ? input.length : 0)}, tools=${translatedTools ? translatedTools.length : 0}`);
 
             if (stream) {
                 // ── SSE streaming ──
@@ -627,6 +645,7 @@ export function mountResponsesCompat(app, accountManager, ensureInitialized, fal
                     });
 
                 } catch (error) {
+                    logger.error('[Responses-Compat] Stream error:', error);
                     writeResponsesEvent(res, 'error', { message: error.message || 'upstream_error', type: 'upstream_error' });
                     writeResponsesEvent(res, 'response.completed', { ...emitBase, status: 'failed', output: [], error: { code: 'upstream_error', message: error.message } });
                 }
@@ -685,6 +704,8 @@ export function mountOpenAICompat(app, accountManager, ensureInitialized, fallba
      */
     app.post('/v1/chat/completions', async (req, res) => {
         try {
+            const gate = readNetworkGate();
+            if (gate) return sendNetworkUnavailable(res, gate);
             await ensureInitialized();
 
             // Apply micro-delay throttle to pace burst requests
@@ -716,6 +737,12 @@ export function mountOpenAICompat(app, accountManager, ensureInitialized, fallba
 
             // Resolve requested model with semantic aliases & auto-routing heuristics
             const requestedModel = resolveRequestedModel(model, openaiMessages, system);
+
+            // Optimistic Retry: If all accounts are marked rate-limited for this model, reset them to force a fresh check
+            if (accountManager.isAllRateLimited(requestedModel)) {
+                logger.warn(`[OpenAI-Compat] All accounts rate-limited for ${requestedModel}. Resetting state for optimistic retry.`);
+                accountManager.resetAllRateLimits();
+            }
 
             // Translate tools & tool_choice
             const translatedTools = translateOpenAITools(openaiTools);

@@ -76,6 +76,12 @@ export function buildMonitorPage() {
         '  <div class="dist-legend" id="model-legend"></div>',
         '</div>',
         '<main id="grid"><div class="none">Loading accounts...</div></main>',
+
+        '<div class="dist-card" id="keyring-card" style="margin-top:12px; display:none">',
+        '  <div class="dist-title"><span>External Provider Allotments (NIM, OpenRouter, Groq)</span><span id="keyring-wasted" style="color:var(--rd)"></span></div>',
+        '  <div id="keyring-grid" class="qg" style="margin-top:10px"></div>',
+        '</div>',
+
         '<div class="dist-card" id="event-card" style="display:flex">',
         '  <div class="dist-title"><span>Recent Persistent Events</span><span id="event-count" style="color:var(--gn)">0 events</span></div>',
         '  <div id="event-feed" style="font-size:11px;display:flex;flex-direction:column;gap:5px;max-height:160px;overflow-y:auto;padding-right:4px"></div>',

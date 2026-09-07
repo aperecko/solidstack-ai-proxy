@@ -1,3 +1,4 @@
+
 /**
  * Add Account Modal Component
  * Registers itself to window.Components for Alpine.js to consume
@@ -6,95 +7,65 @@ window.Components = window.Components || {};
 
 window.Components.addAccountModal = () => ({
     manualMode: false,
-    provisionDomain: 'reseller.mysolidstate.ca',
-    provisionPrefix: '',
-    provisionStart: 1,
-    provisionCount: 1,
-    provisioning: false,
-    discoveredAccounts: [],
     authUrl: '',
     authState: '',
     callbackInput: '',
     submitting: false,
-    async autoAddSwarm(domain) {
-        Alpine.store('global').showToast('🤖 Finding next available account...', 'info');
+    nextAdamAssist: null,
+    nextReseller: null,
+
+    init() {
+        this.loadNextAccounts();
+        this.$watch('$store.data.accounts', () => {
+            this.loadNextAccounts();
+        });
+        window.addEventListener('refresh-add-modal', () => {
+            this.loadNextAccounts();
+        });
+    },
+
+    async loadNextAccounts() {
         try {
-            const res1 = await fetch('/api/swarm/next-pending?domain=' + encodeURIComponent(domain));
-            const data1 = await res1.json();
-            if (data1.status !== 'ok') {
-                Alpine.store('global').showToast('Error: ' + data1.error, 'error');
-                return;
-            }
-            const targetEmail = data1.email;
-            Alpine.store('global').showToast('🤖 Starting Zero-Touch robot for ' + targetEmail + '...', 'info');
-            
-            const res2 = await fetch('/api/swarm/auto-onboard', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email: targetEmail })
-            });
-            const data2 = await res2.json();
-            if (data2.status === 'ok') {
-                Alpine.store('global').showToast('Zero-Touch robot running for ' + targetEmail + '!', 'success');
-                const modal = document.getElementById('add_account_modal');
-                if (modal) modal.close();
+            const [resAdam, resReseller] = await Promise.all([
+                fetch('/api/swarm/next-pending?domain=adamassist.com').then(r => r.json()).catch(() => null),
+                fetch('/api/swarm/next-pending?domain=reseller.mysolidstate.ca').then(r => r.json()).catch(() => null)
+            ]);
+            if (resAdam?.status === 'ok') {
+                this.nextAdamAssist = resAdam.email;
             } else {
-                Alpine.store('global').showToast('Error: ' + data2.error, 'error');
+                this.nextAdamAssist = null;
             }
-        } catch (e) {
-            Alpine.store('global').showToast('Failed to launch auto-onboard: ' + e.message, 'error');
-        }
+            if (resReseller?.status === 'ok') {
+                this.nextReseller = resReseller.email;
+            } else {
+                this.nextReseller = null;
+            }
+        } catch (e) {}
     },
 
-    async discoverSwarm() {
-        try {
-            const response = await fetch('/api/swarm/discover');
-            const data = await response.json();
-            if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
-            this.discoveredAccounts = data.accounts || [];
-            Alpine.store('global').showToast(`Found ${data.count || 0} swarm account(s)`, 'success');
-        } catch (e) {
-            Alpine.store('global').showToast('Discovery failed: ' + e.message, 'error');
-        }
-    },
-
-    async provisionSwarm() {
-        const count = Number(this.provisionCount);
-        const startIdx = Number(this.provisionStart);
-        if (!Number.isInteger(count) || count < 1 || count > 100 || !Number.isInteger(startIdx) || startIdx < 0) {
-            Alpine.store('global').showToast('Use a count from 1–100 and a non-negative start number.', 'error');
-            return;
-        }
-        this.provisioning = true;
-        try {
-            const response = await fetch('/api/swarm/provision', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ domain: this.provisionDomain, prefix: this.provisionPrefix, startIdx, count })
-            });
-            const data = await response.json();
-            if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
-            Alpine.store('global').showToast(`Created ${data.created} swarm account(s)`, 'success');
-            Alpine.store('data').fetchData();
-        } catch (e) {
-            Alpine.store('global').showToast('Provisioning failed: ' + e.message, 'error');
-        } finally {
-            this.provisioning = false;
-        }
-    },
-
-    async addAccountWeb(reAuthEmail = null) {
+    async addAccountWeb(domainOrEmail = null) {
         const password = Alpine.store('global').webuiPassword;
+        let targetEmail = null;
         
-        if (typeof reAuthEmail === 'string' && reAuthEmail.startsWith('@')) {
-            const domain = reAuthEmail;
+        if (typeof domainOrEmail === 'string' && domainOrEmail.startsWith('@')) {
+            const domain = domainOrEmail;
+            Alpine.store('global').showToast('Finding next sequential account for ' + domain + '...', 'info');
             try {
                 const res = await fetch('/api/swarm/next-pending?domain=' + encodeURIComponent(domain));
                 const data = await res.json();
                 if (data.status === 'ok') {
-                    reAuthEmail = data.email;
+                    targetEmail = data.email;
+                    // Auto-copy password to clipboard for 1-click convenience
+                    fetch(`/api/swarm/credentials/${encodeURIComponent(targetEmail)}`)
+                        .then(r => r.json())
+                        .then(d => {
+                            if (d.status === 'ok' && d.password) {
+                                navigator.clipboard.writeText(d.password);
+                            }
+                        })
+                        .catch(() => {});
                 } else {
-                    Alpine.store('global').showToast('Error finding account: ' + data.error, 'error');
+                    Alpine.store('global').showToast(data.error || 'All accounts logged in!', 'info');
                     return;
                 }
             } catch(e) {
@@ -104,10 +75,11 @@ window.Components.addAccountModal = () => ({
         }
         
         try {
-            const urlPath = reAuthEmail
-                ? '/api/auth/url?email=' + encodeURIComponent(reAuthEmail)
+            const urlPath = targetEmail
+                ? '/api/auth/url?email=' + encodeURIComponent(targetEmail)
                 : '/api/auth/url';
 
+            Alpine.store('global').showToast('Generating login link...', 'info');
             const { response, newPassword } = await window.utils.request(urlPath, {}, password);
             if (newPassword) Alpine.store('global').webuiPassword = newPassword;
 
@@ -115,7 +87,36 @@ window.Components.addAccountModal = () => ({
             if (data.status === 'ok') {
                 const modal = document.getElementById('add_account_modal');
                 if (modal) modal.close();
-                window.open(data.url, '_blank');
+                
+                // Open in active browser using our backend launch-clean-window
+                await fetch('/api/swarm/launch-clean-window', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: targetEmail, url: data.url })
+                });
+                
+                Alpine.store('global').showToast('Opened active browser! Please click through the login.', 'info');
+
+                // Fast 1-second background poller for instant UI detection
+                const initialEmails = new Set((Alpine.store('data').accounts || []).map(a => a.email));
+                let pollAttempts = 0;
+                const maxAttempts = 90; // 90 seconds
+                const fastPoller = setInterval(async () => {
+                    pollAttempts++;
+                    await Alpine.store('data').fetchData();
+                    const currentAccounts = Alpine.store('data').accounts || [];
+                    const newlyAdded = currentAccounts.find(a => !initialEmails.has(a.email));
+                    const isTargetPresent = targetEmail && currentAccounts.some(a => a.email === targetEmail);
+
+                    if (newlyAdded || isTargetPresent) {
+                        clearInterval(fastPoller);
+                        const addedEmail = newlyAdded ? newlyAdded.email : targetEmail;
+                        Alpine.store('global').showToast(`✓ Account ${addedEmail} added successfully!`, 'success');
+                        this.loadNextAccounts();
+                    } else if (pollAttempts >= maxAttempts) {
+                        clearInterval(fastPoller);
+                    }
+                }, 1000);
             } else {
                 Alpine.store('global').showToast(data.error || 'Failed to get auth URL', 'error');
             }
@@ -124,17 +125,12 @@ window.Components.addAccountModal = () => ({
         }
     },
 
-
-    /**
-     * Reset all state to initial values
-     */
     resetState() {
         this.manualMode = false;
         this.authUrl = '';
         this.authState = '';
         this.callbackInput = '';
         this.submitting = false;
-        // Close any open details elements
         const details = document.querySelectorAll('#add_account_modal details[open]');
         details.forEach(d => d.removeAttribute('open'));
     },
@@ -149,10 +145,7 @@ window.Components.addAccountModal = () => ({
         if (event.target.open && !this.authUrl) {
             try {
                 const password = Alpine.store('global').webuiPassword;
-                const {
-                    response,
-                    newPassword
-                } = await window.utils.request('/api/auth/url', {}, password);
+                const { response, newPassword } = await window.utils.request('/api/auth/url', {}, password);
                 if (newPassword) Alpine.store('global').webuiPassword = newPassword;
                 const data = await response.json();
                 if (data.status === 'ok') {
@@ -170,18 +163,10 @@ window.Components.addAccountModal = () => ({
         this.submitting = true;
         try {
             const store = Alpine.store('global');
-            const {
-                response,
-                newPassword
-            } = await window.utils.request('/api/auth/complete', {
+            const { response, newPassword } = await window.utils.request('/api/auth/complete', {
                 method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    callbackInput: this.callbackInput,
-                    state: this.authState
-                })
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ callbackInput: this.callbackInput, state: this.authState })
             }, store.webuiPassword);
             if (newPassword) store.webuiPassword = newPassword;
             const data = await response.json();

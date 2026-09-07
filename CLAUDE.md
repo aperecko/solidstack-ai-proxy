@@ -51,3 +51,5 @@ node tests/test-strategies.cjs       # strategy unit tests (no server needed)
 **`/api/strategy/health`** returns 403 unless dev mode is on.
 
 **Burst Pacing (`src/utils/throttle.js`)**: A global `RequestThrottle` enforces a 150ms micro-delay queue before every request reaches the account selector. This is a hard invariant — it prevents burst concurrency from pinning one account before the load balancer can rotate. Wired into `server.js` and `openai-compat.js`. Do not remove or bypass. See `docs/load-balancing.md` for design rationale.
+
+**Self-Surgery & Live Restarts**: When modifying `ai-proxy` from within an active AI agent session, always run `node --check src/index.js && node --check src/server.js` before restarting. To prevent dropping your own in-flight SSE stream, always use deferred reload: `python3 -m ss.cli service restart ai-proxy --delay 3` (or call `POST /api/accounts/reload` for config changes).

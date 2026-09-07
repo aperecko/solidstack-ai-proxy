@@ -47,12 +47,13 @@ export function buildCloudCodeRequest(anthropicRequest, projectId, accountEmail)
     }
 
     const payload = {
-        project: projectId,
+        project: projectId || 'aicode-consumers',
         model: model,
         request: googleRequest,
         userAgent: 'antigravity',
         requestType: 'agent',  // CLIProxyAPI v6.6.89 compatibility
-        requestId: 'agent-' + crypto.randomUUID()
+        requestId: 'agent-' + crypto.randomUUID(),
+        ...(accountEmail && accountEmail.endsWith('@gmail.com') ? { enabledCreditTypes: ['GOOGLE_ONE_AI'] } : {})
     };
 
     // Inject systemInstruction with role: "user" at the top level (CLIProxyAPI v6.6.89 behavior)

@@ -1,117 +1,233 @@
-<div x-data="philosophyDomain" class="view-container space-y-8">
-    <!-- Header -->
+<div x-data="philosophyDomain" class="view-container space-y-8 max-w-7xl mx-auto pb-12">
+    <!-- Header & North Star Statement -->
     <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-space-border pb-6">
-        <div>
-            <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-mono uppercase tracking-wider mb-2">
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/></svg>
-                SolidStack Philosophy & Cognitive Domains
+        <div class="space-y-2">
+            <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-xs font-mono uppercase tracking-wider">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+                SolidStack Governing Philosophy & Architecture
             </div>
-            <h1 class="text-3xl font-bold text-white tracking-tight">Software Designed for How Your Brain Thinks</h1>
-            <p class="text-sm text-gray-400 mt-1 max-w-3xl">
-                Core Law: <strong class="text-gray-200">Changing something's name does not change its purposed abilities</strong>. Every craft expresses reality through its own linguistic poetry while the underlying physical invariants remain rock-solid.
+            <h1 class="text-3xl lg:text-4xl font-bold text-white tracking-tight">The Architecture of Feeling: Sovereign & Human-Centered</h1>
+            <p class="text-sm lg:text-base text-gray-400 max-w-3xl leading-relaxed">
+                SolidStack is a sovereign control plane designed to <strong class="text-white">reduce cognitive load</strong>, eliminate duplicated effort, and ensure that when complex systems break, the response is <strong class="text-emerald-400">grounded, calm, and actionable</strong> rather than alarmed.
             </p>
+        </div>
+        <div class="flex flex-col items-end gap-2 shrink-0">
+            <div class="text-xs font-mono text-gray-500 bg-space-900 border border-space-border px-3 py-1.5 rounded-lg flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+                <span>Zero-Touch Autonomy Invariant</span>
+            </div>
         </div>
     </div>
 
-    <!-- Domain Selector Pills -->
-    <div class="space-y-3">
+    <!-- The 4 Core Operating Laws -->
+    <div class="space-y-4">
         <div class="flex items-center justify-between">
-            <span class="text-xs font-mono uppercase tracking-widest text-gray-400">Select Your Craft / Mindset</span>
-            <span class="text-xs text-gray-500">Live Metaphor & Terminology Translation</span>
+            <h2 class="text-xs font-mono uppercase tracking-widest text-emerald-400 flex items-center gap-2 font-bold">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                The 4 Foundational Operating Laws
+            </h2>
+            <span class="text-xs font-mono text-gray-500">Non-Negotiable System Invariants</span>
         </div>
-        <div class="flex flex-wrap gap-2">
-            <template x-for="domain in domains" :key="domain.id">
-                <button @click="selectedDomain = domain; if ($store.global?.setCognitiveLens) $store.global.setCognitiveLens(domain.id)" 
-                        class="px-4 py-2 rounded-xl text-sm font-medium border transition-all flex items-center gap-2"
-                        :class="selectedDomain.id === domain.id 
-                            ? 'bg-emerald-500/20 border-emerald-500/60 text-emerald-300 shadow-md shadow-emerald-500/10 scale-105 font-bold' 
-                            : 'bg-space-900 border-space-border text-gray-400 hover:text-white hover:border-gray-600'">
-                    <span x-text="domain.icon"></span>
-                    <span x-text="domain.name"></span>
-                </button>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <template x-for="law in operatingLaws" :key="law.num">
+                <div class="p-5 rounded-2xl bg-space-900/60 border border-space-border/80 hover:border-emerald-500/40 transition-all space-y-3 group hover:bg-space-900 shadow-sm">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center gap-3">
+                            <span class="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center font-mono font-bold text-xs text-emerald-400" x-text="law.num"></span>
+                            <h3 class="font-bold text-base text-white group-hover:text-emerald-300 transition-colors" x-text="law.title"></h3>
+                        </div>
+                        <span class="text-[10px] font-mono uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-space-800 border border-space-border text-gray-400" x-text="law.badge"></span>
+                    </div>
+                    <p class="text-xs text-gray-300 leading-relaxed pl-11" x-text="law.desc"></p>
+                </div>
             </template>
         </div>
     </div>
 
-    <!-- Active Domain & P-F-P Triad -->
-    <div class="view-card space-y-6">
-        <div class="flex items-center justify-between border-b border-space-border pb-4">
-            <div>
-                <h3 class="text-xl font-bold text-white flex items-center gap-2">
-                    <span x-text="selectedDomain.icon"></span>
-                    <span x-text="selectedDomain.name"></span>
-                </h3>
-                <p class="text-sm text-gray-400 mt-1" x-text="selectedDomain.tagline"></p>
-            </div>
-            <div class="flex items-center gap-3">
-                <button @click="navigator.clipboard.writeText(`System Instruction - Mindset: ${selectedDomain.name} (${selectedDomain.category})\nTagline: ${selectedDomain.tagline}\nPresent: ${selectedDomain.pfp.present}\nFuture: ${selectedDomain.pfp.future}\nPast: ${selectedDomain.pfp.past}`); if ($store.global?.showToast) $store.global.showToast('Domain cognitive prompt copied', 'success');"
-                        class="btn btn-xs btn-outline border-space-border text-gray-300 hover:text-emerald-400 font-mono gap-1">
-                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
-                    <span>Copy Domain Prompt</span>
-                </button>
-                <span class="text-xs font-mono px-3 py-1 rounded-full bg-space-800 border border-space-border text-gray-300" x-text="selectedDomain.category"></span>
-            </div>
+    <!-- The Dialectical Duality: Boring Foundation vs Wild Flow -->
+    <div class="space-y-4">
+        <div class="flex items-center justify-between">
+            <h2 class="text-xs font-mono uppercase tracking-widest text-purple-400 flex items-center gap-2 font-bold">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4"/></svg>
+                The Dialectical Duality
+            </h2>
+            <span class="text-xs font-mono text-gray-500">Phenomenological Resonance</span>
         </div>
 
-        <!-- The 3 P-F-P Triad Cards -->
-        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div class="p-4 rounded-xl bg-amber-500/5 border border-amber-500/20 space-y-2">
-                <div class="flex items-center justify-between text-xs font-mono font-bold text-amber-400 uppercase tracking-wider">
-                    <span>⚡ 1. The Present</span>
-                    <span>Interactions (1–3)</span>
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <!-- Boring Foundation -->
+            <div class="p-6 rounded-2xl bg-gradient-to-br from-space-900/90 to-space-950 border border-blue-500/30 space-y-4 shadow-lg">
+                <div class="flex items-center gap-3 pb-3 border-b border-space-border">
+                    <div class="w-10 h-10 rounded-xl bg-blue-500/15 border border-blue-500/30 flex items-center justify-center text-blue-400">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-lg text-white" x-text="duality.boring.title"></h3>
+                        <p class="text-xs font-mono text-blue-400" x-text="duality.boring.subtitle"></p>
+                    </div>
                 </div>
-                <p class="text-xs text-gray-300 leading-relaxed" x-text="selectedDomain.pfp.present"></p>
+                <ul class="space-y-2.5 text-xs text-gray-300">
+                    <template x-for="(pt, idx) in duality.boring.points" :key="idx">
+                        <li class="flex items-start gap-2.5">
+                            <span class="text-blue-400 font-bold shrink-0 mt-0.5">•</span>
+                            <span class="leading-relaxed" x-text="pt"></span>
+                        </li>
+                    </template>
+                </ul>
             </div>
 
-            <div class="p-4 rounded-xl bg-sky-500/5 border border-sky-500/20 space-y-2">
-                <div class="flex items-center justify-between text-xs font-mono font-bold text-sky-400 uppercase tracking-wider">
-                    <span>🔮 2. The Future</span>
-                    <span>Intentions (4–6)</span>
+            <!-- Wild Flow -->
+            <div class="p-6 rounded-2xl bg-gradient-to-br from-space-900/90 to-space-950 border border-fuchsia-500/30 space-y-4 shadow-lg">
+                <div class="flex items-center gap-3 pb-3 border-b border-space-border">
+                    <div class="w-10 h-10 rounded-xl bg-fuchsia-500/15 border border-fuchsia-500/30 flex items-center justify-center text-fuchsia-400">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z"/></svg>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-lg text-white" x-text="duality.wild.title"></h3>
+                        <p class="text-xs font-mono text-fuchsia-400" x-text="duality.wild.subtitle"></p>
+                    </div>
                 </div>
-                <p class="text-xs text-gray-300 leading-relaxed" x-text="selectedDomain.pfp.future"></p>
-            </div>
-
-            <div class="p-4 rounded-xl bg-purple-500/5 border border-purple-500/20 space-y-2">
-                <div class="flex items-center justify-between text-xs font-mono font-bold text-purple-400 uppercase tracking-wider">
-                    <span>🏛️ 3. The Past</span>
-                    <span>Identity (7–9)</span>
-                </div>
-                <p class="text-xs text-gray-300 leading-relaxed" x-text="selectedDomain.pfp.past"></p>
+                <ul class="space-y-2.5 text-xs text-gray-300">
+                    <template x-for="(pt, idx) in duality.wild.points" :key="idx">
+                        <li class="flex items-start gap-2.5">
+                            <span class="text-fuchsia-400 font-bold shrink-0 mt-0.5">•</span>
+                            <span class="leading-relaxed" x-text="pt"></span>
+                        </li>
+                    </template>
+                </ul>
             </div>
         </div>
     </div>
 
-    <!-- The 10 Invariant Slots Projection -->
+    <!-- The 3 Structural Layers -->
     <div class="space-y-4">
         <div class="flex items-center justify-between">
-            <h3 class="text-lg font-bold text-white flex items-center gap-2">
-                <svg class="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/></svg>
-                The 10 Invariant Slots Live Matrix
-            </h3>
-            <span class="text-xs font-mono text-emerald-400">Ports & API Contracts 100% Invariant</span>
+            <h2 class="text-xs font-mono uppercase tracking-widest text-cyan-400 flex items-center gap-2 font-bold">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 100-6 3 3 0 000 6z"/></svg>
+                The Structural Layer Separation
+            </h2>
+            <span class="text-xs font-mono text-gray-500">Zero Category Errors</span>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <template x-for="layer in structuralLayers" :key="layer.level">
+                <div class="p-5 rounded-2xl bg-space-900/80 border border-space-border space-y-3 flex flex-col justify-between">
+                    <div class="space-y-2">
+                        <div class="flex items-center justify-between">
+                            <span class="text-[11px] font-mono text-cyan-400 font-bold" x-text="layer.level"></span>
+                            <span class="text-[10px] font-mono text-gray-500" x-text="layer.speed"></span>
+                        </div>
+                        <h4 class="font-bold text-sm text-white" x-text="layer.name"></h4>
+                        <div class="text-xs font-mono text-gray-400" x-text="layer.role"></div>
+                        <p class="text-xs text-gray-300 leading-relaxed pt-1" x-text="layer.desc"></p>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <!-- The 10 Invariant Subsystems Matrix -->
+    <div class="space-y-4">
+        <div class="flex items-center justify-between">
+            <div>
+                <h3 class="text-lg font-bold text-white flex items-center gap-2">
+                    <svg class="w-5 h-5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z"/></svg>
+                    The 10 Invariant Subsystems &amp; Port Topology
+                </h3>
+                <p class="text-xs text-gray-400 mt-0.5">Physical contracts, deterministic ports, and clear execution verbs across the entire stack</p>
+            </div>
+            <span class="text-xs font-mono text-emerald-400 bg-emerald-500/10 px-3 py-1 rounded-full border border-emerald-500/20">100% Invariant Contracts</span>
         </div>
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <template x-for="idx in [0,1,2,3,4,5,6,7,8,9]" :key="idx">
-                <div class="p-4 rounded-xl border flex items-start justify-between gap-4 transition-all"
-                     :class="getTierColor(idx)">
-                    <div class="space-y-1">
-                        <div class="flex items-center gap-2">
-                            <span class="w-6 h-6 rounded bg-black/40 flex items-center justify-center font-mono font-bold text-xs text-white" x-text="idx"></span>
-                            <h4 class="font-bold text-sm text-white" x-text="getSlotData(idx).label"></h4>
+            <template x-for="sub in subsystems" :key="sub.slot">
+                <div @click="selectedSlot = (selectedSlot === sub.slot ? null : sub.slot)"
+                     class="p-4 rounded-xl border flex flex-col justify-between gap-3 transition-all cursor-pointer hover:scale-[1.01] hover:border-emerald-500/50"
+                     :class="getTierColor(sub.tier)">
+                    <div class="flex items-start justify-between gap-4">
+                        <div class="space-y-1.5 flex-1">
+                            <div class="flex items-center gap-2.5">
+                                <span class="w-6 h-6 rounded bg-black/50 border border-white/10 flex items-center justify-center font-mono font-bold text-xs text-white shadow-sm" x-text="sub.slot"></span>
+                                <h4 class="font-bold text-sm text-white" x-text="sub.name"></h4>
+                            </div>
+                            <p class="text-xs text-gray-300 leading-normal pl-8.5" x-text="sub.role"></p>
+                            <div class="pt-1 pl-8.5 flex items-center gap-2 text-[11px] font-mono text-gray-400">
+                                <span>Port: <strong class="text-white" x-text="sub.port"></strong></span>
+                                <span>•</span>
+                                <span class="text-gray-500" x-text="'localhost:' + sub.port"></span>
+                            </div>
                         </div>
-                        <p class="text-xs text-gray-400" x-text="getSlotData(idx).metaphor"></p>
-                        <div class="pt-2 flex items-center gap-2 text-[11px] font-mono text-gray-500">
-                            <span x-text="getTechnicalInvariant(idx)"></span>
+                        <div class="text-right space-y-1.5 flex flex-col items-end shrink-0">
+                            <span class="text-[9px] font-mono uppercase tracking-wider px-2 py-0.5 rounded bg-black/50 text-gray-400 border border-white/10"
+                                  x-text="sub.tier"></span>
+                            <span class="text-xs font-mono font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/30" x-text="'[' + sub.verb + '()]'"></span>
                         </div>
                     </div>
-                    <div class="text-right space-y-1.5 flex flex-col items-end">
-                        <span class="text-[10px] font-mono uppercase tracking-wider px-2 py-0.5 rounded bg-black/40 text-gray-400"
-                              x-text="getTierLabel(idx)"></span>
-                        <span class="text-xs font-mono font-medium text-emerald-400" x-text="'[' + getSlotData(idx).verb + '()]'"></span>
+
+                    <!-- Expandable Subsystem Details on Click -->
+                    <div x-show="selectedSlot === sub.slot" 
+                         class="pt-3 border-t border-white/10 text-xs font-mono space-y-2 animate-in fade-in">
+                        <div class="flex justify-between items-center text-emerald-300 font-bold">
+                            <span>Service Ingress:</span>
+                            <span class="text-white font-mono" x-text="'http://127.0.0.1:' + sub.port"></span>
+                        </div>
+                        <p class="text-[11px] text-gray-300 font-sans leading-relaxed">
+                            Slot #<span x-text="sub.slot"></span> serves as a deterministic system barrier, routing tool commands and keeping telemetry isolated.
+                        </p>
+                        <div class="flex justify-end pt-1">
+                            <button @click.stop="$store.global.activeTab = 'uad'" class="btn btn-xs bg-emerald-500/20 border border-emerald-500/40 text-emerald-300 hover:bg-emerald-500 hover:text-black font-mono">
+                                Inspect Tools in UAD ➔
+                            </button>
+                        </div>
                     </div>
                 </div>
             </template>
+        </div>
+    </div>
+
+    <!-- Scope Boundaries: SolidStack IS vs IS NOT -->
+    <div class="space-y-4">
+        <div class="flex items-center justify-between">
+            <h2 class="text-xs font-mono uppercase tracking-widest text-amber-400 flex items-center gap-2 font-bold">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                Scope Boundaries &amp; Operational Truth
+            </h2>
+            <span class="text-xs font-mono text-gray-500">Preventing Architectural Drift</span>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <!-- SolidStack IS -->
+            <div class="p-5 rounded-2xl bg-emerald-500/5 border border-emerald-500/20 space-y-3">
+                <h4 class="font-bold text-emerald-400 text-sm flex items-center gap-2">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                    SolidStack IS:
+                </h4>
+                <ul class="space-y-2 text-xs text-gray-300">
+                    <template x-for="(item, idx) in scopeBoundaries.is" :key="idx">
+                        <li class="flex items-start gap-2">
+                            <span class="text-emerald-400 font-bold">✓</span>
+                            <span class="leading-relaxed" x-text="item"></span>
+                        </li>
+                    </template>
+                </ul>
+            </div>
+
+            <!-- SolidStack IS NOT -->
+            <div class="p-5 rounded-2xl bg-rose-500/5 border border-rose-500/20 space-y-3">
+                <h4 class="font-bold text-rose-400 text-sm flex items-center gap-2">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                    SolidStack IS NOT:
+                </h4>
+                <ul class="space-y-2 text-xs text-gray-300">
+                    <template x-for="(item, idx) in scopeBoundaries.isNot" :key="idx">
+                        <li class="flex items-start gap-2">
+                            <span class="text-rose-400 font-bold">✗</span>
+                            <span class="leading-relaxed" x-text="item"></span>
+                        </li>
+                    </template>
+                </ul>
+            </div>
         </div>
     </div>
 </div>

@@ -58,6 +58,13 @@ export async function listModels(token) {
         }));
 
     // Inject local on-demand models into the model list for Antigravity & clients
+        modelList.push({
+        id: 'auto',
+        object: 'model',
+        created: Math.floor(Date.now() / 1000),
+        owned_by: 'solidstack',
+        description: 'Auto (Dynamic MoE Smart Route)'
+    });
     modelList.push({
         id: 'meta/llama-3.2-11b-vision-instruct',
         object: 'model',
@@ -89,6 +96,20 @@ export async function listModels(token) {
     
     // Inject Free Tier NIM / Hub models
     modelList.push({
+        id: 'deepseek-ai/deepseek-v4-pro-0813',
+        object: 'model',
+        created: Math.floor(Date.now() / 1000),
+        owned_by: 'nvidia-nim',
+        description: 'DeepSeek V4 Pro (NVIDIA NIM)'
+    });
+    modelList.push({
+        id: 'nvidia/llama-3.1-nemotron-70b-instruct',
+        object: 'model',
+        created: Math.floor(Date.now() / 1000),
+        owned_by: 'nvidia-nim',
+        description: 'Nemotron 70B (NVIDIA NIM)'
+    });
+    modelList.push({
         id: 'deepseek-ai/deepseek-r1',
         object: 'model',
         created: Math.floor(Date.now() / 1000),
@@ -109,7 +130,8 @@ export async function listModels(token) {
 
     return {
         object: 'list',
-        data: modelList
+        data: modelList,
+        models: modelList
     };
 }
 
@@ -206,7 +228,39 @@ export async function getModelQuotas(token, projectId = null, tier = null) {
         }
     }
 
+
+    // Cross-link G1 Credits quota: if any known G1-gated model (like claude-opus-4-6-thinking) 
+    // has a quotaInfo, apply its remainingFraction to other G1-gated aliases (like gemini-pro-agent).
+    const g1MetricModel = 'claude-opus-4-6-thinking';
+    const g1Aliases = ['gemini-pro-agent', 'gpt-oss-120b-medium', 'claude-opus-4-6'];
+
+    // Correlated canary check: if gemini-3.1-pro-high or gemini-2.5-pro is depleted (<= 0.05),
+    // G1 pro balance is exhausted, so do not leave G1 models showing 1.0!
+    const canaryQuota = quotas['gemini-3.1-pro-high'] || quotas['gemini-2.5-pro'];
+    const isCanaryExhausted = canaryQuota && typeof canaryQuota.remainingFraction === 'number' && canaryQuota.remainingFraction <= 0.05;
+
+    if (isCanaryExhausted) {
+        if (quotas[g1MetricModel]) {
+            quotas[g1MetricModel].remainingFraction = canaryQuota.remainingFraction;
+            quotas[g1MetricModel].resetTime = canaryQuota.resetTime || quotas[g1MetricModel].resetTime;
+        }
+        for (const alias of g1Aliases) {
+            if (quotas[alias]) {
+                quotas[alias].remainingFraction = canaryQuota.remainingFraction;
+                quotas[alias].resetTime = canaryQuota.resetTime || quotas[alias].resetTime;
+            }
+        }
+    } else if (quotas[g1MetricModel]) {
+        for (const alias of g1Aliases) {
+            if (quotas[alias]) {
+                quotas[alias].remainingFraction = quotas[g1MetricModel].remainingFraction;
+                quotas[alias].resetTime = quotas[g1MetricModel].resetTime;
+            }
+        }
+    }
+
     return quotas;
+
 }
 
 /**

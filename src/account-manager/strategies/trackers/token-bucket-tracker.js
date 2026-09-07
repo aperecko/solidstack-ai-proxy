@@ -10,11 +10,19 @@
 const DEFAULT_CONFIG = {
     maxTokens: 50,        // Maximum token capacity
     tokensPerMinute: 6,   // Regeneration rate
-    initialTokens: 50     // Starting tokens
+    initialTokens: 50,    // Starting tokens
+    aimd: {               // AIMD backpressure config
+        enabled: true,
+        additiveIncrease: 0.5,
+        multiplicativeDecrease: 0.5,
+        minTokensPerMinute: 1,
+        maxTokensPerMinute: 60
+    }
 };
 
 export class TokenBucketTracker {
     #buckets = new Map(); // email -> { tokens, lastUpdated }
+    #rates = new Map();   // email -> current tokensPerMinute
     #config;
 
     /**
@@ -22,7 +30,24 @@ export class TokenBucketTracker {
      * @param {Object} config - Token bucket configuration
      */
     constructor(config = {}) {
-        this.#config = { ...DEFAULT_CONFIG, ...config };
+        this.#config = { 
+            ...DEFAULT_CONFIG, 
+            ...config,
+            aimd: { ...DEFAULT_CONFIG.aimd, ...(config.aimd || {}) }
+        };
+    }
+
+    /**
+     * Get the current generation rate for an account
+     */
+    #getRate(email) {
+        if (!this.#config.aimd.enabled) {
+            return this.#config.tokensPerMinute;
+        }
+        if (!this.#rates.has(email)) {
+            this.#rates.set(email, this.#config.tokensPerMinute);
+        }
+        return this.#rates.get(email);
     }
 
     /**
@@ -36,10 +61,11 @@ export class TokenBucketTracker {
             return this.#config.initialTokens;
         }
 
-        // Apply token regeneration based on time elapsed
+        // Apply token regeneration based on time elapsed and dynamic rate
         const now = Date.now();
         const minutesElapsed = (now - bucket.lastUpdated) / (1000 * 60);
-        const regenerated = minutesElapsed * this.#config.tokensPerMinute;
+        const currentRate = this.#getRate(email);
+        const regenerated = minutesElapsed * currentRate;
         const currentTokens = Math.min(
             this.#config.maxTokens,
             bucket.tokens + regenerated
@@ -92,6 +118,34 @@ export class TokenBucketTracker {
     }
 
     /**
+     * AIMD Additive Increase: called on request success
+     * Increases the token regeneration rate
+     */
+    recordSuccess(email) {
+        if (!this.#config.aimd.enabled) return;
+        const currentRate = this.#getRate(email);
+        const newRate = Math.min(
+            this.#config.aimd.maxTokensPerMinute,
+            currentRate + this.#config.aimd.additiveIncrease
+        );
+        this.#rates.set(email, newRate);
+    }
+
+    /**
+     * AIMD Multiplicative Decrease: called on rate limit
+     * Decreases the token regeneration rate
+     */
+    recordRateLimit(email) {
+        if (!this.#config.aimd.enabled) return;
+        const currentRate = this.#getRate(email);
+        const newRate = Math.max(
+            this.#config.aimd.minTokensPerMinute,
+            currentRate * this.#config.aimd.multiplicativeDecrease
+        );
+        this.#rates.set(email, newRate);
+    }
+
+    /**
      * Get the maximum token capacity
      * @returns {number} Maximum tokens per bucket
      */
@@ -108,6 +162,9 @@ export class TokenBucketTracker {
             tokens: this.#config.initialTokens,
             lastUpdated: Date.now()
         });
+        if (this.#config.aimd.enabled) {
+            this.#rates.set(email, this.#config.tokensPerMinute);
+        }
     }
 
     /**
@@ -115,6 +172,7 @@ export class TokenBucketTracker {
      */
     clear() {
         this.#buckets.clear();
+        this.#rates.clear();
     }
 
     /**
@@ -130,7 +188,8 @@ export class TokenBucketTracker {
 
         // Calculate time to regenerate 1 token
         const tokensNeeded = 1 - currentTokens;
-        const minutesNeeded = tokensNeeded / this.#config.tokensPerMinute;
+        const currentRate = this.#getRate(email);
+        const minutesNeeded = tokensNeeded / currentRate;
         return Math.ceil(minutesNeeded * 60 * 1000);
     }
 

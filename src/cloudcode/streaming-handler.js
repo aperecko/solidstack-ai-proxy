@@ -25,7 +25,9 @@ import {
     setCooldown,
     getBestAccount,
     RETRYABLE_FAILURE_COOLDOWN_MS,
-    MAX_RETRYABLE_ROTATIONS
+    MAX_RETRYABLE_ROTATIONS,
+    isG1CreditExhausted,
+    markG1CreditExhausted
 } from '../account-manager/quota-store.js';
 import { formatDuration, sleep, isNetworkError, throttledFetch } from '../utils/helpers.js';
 import { logger } from '../utils/logger.js';
@@ -177,6 +179,21 @@ export async function* sendMessageStream(anthropicRequest, accountManager, fallb
             }
 
             if (accountManager.isAllRateLimited(currentModel)) {
+                if (rewriteToFallback(`all accounts rate-limited`)) {
+                    continue outerLoop;
+                }
+
+                // If local engine is available, fall back as secondary resort
+                try {
+                    if (!isThinking && await isLocalEngineAvailable()) {
+                        logger.warn(`[CloudCode] All accounts rate-limited for ${currentModel}. Falling back to local engine (streaming).`);
+                        yield* sendLocalEngineStream(anthropicRequest, currentModel);
+                        return;
+                    }
+                } catch (e) {
+                    logger.error(`[CloudCode] Local engine fallback failed: ${e.message}`);
+                }
+
                 const minWaitMs = accountManager.getMinWaitTimeMs(currentModel);
                 const resetTime = new Date(Date.now() + minWaitMs).toISOString();
 
@@ -258,12 +275,14 @@ export async function* sendMessageStream(anthropicRequest, accountManager, fallb
                     return;
                 } catch (err) {
                     logger.error(`[CloudCode] Gemini direct stream failed for ${account.email}: ${err.message}`);
-                    if (isRateLimitError(err) || err.message?.includes('429') || err.message?.includes('RESOURCE_EXHAUSTED') || err.message?.includes('prepayment credits are depleted')) {
+                    if (err.message?.includes('prepayment credits are depleted')) {
+                        accountManager.markInvalid(account.email, 'Prepayment credits are depleted');
+                    } else if (isRateLimitError(err) || err.message?.includes('429') || err.message?.includes('RESOURCE_EXHAUSTED')) {
                         accountManager.markRateLimited(account.email, 3600000, currentModel);
                     } else if (isAuthError(err) || err.message?.includes('API_KEY_INVALID') || err.message?.includes('401') || err.message?.includes('403')) {
                         accountManager.markInvalid(account.email, err.message);
                     }
-                    throw err;
+                    continue;
                 }
             }
 
@@ -304,8 +323,20 @@ export async function* sendMessageStream(anthropicRequest, accountManager, fallb
                         // MAX_RETRYABLE_ROTATIONS before propagating the error.
                         if (isShouldRotate(response.status, errorBody)) {
                             const rotateApp = anthropicRequest?.app || 'antigravity';
-                            setCooldown(rotateApp, account.email, currentModel, RETRYABLE_FAILURE_COOLDOWN_MS);
-                            accountManager.markRateLimited(account.email, RETRYABLE_FAILURE_COOLDOWN_MS, currentModel, false);
+                            // G1-credit exhaustion (INSUFFICIENT_G1_CREDITS_BALANCE / error 2008)
+                            // is a distinct, longer-lived state than a generic retryable 429.
+                            // Apply a longer cooldown and record it so the quota-store/matrix
+                            // surfaces a real 'credit_exhausted' level instead of re-selecting
+                            // this account and 502-ing.
+                            const g1CooldownMs = isG1CreditExhausted(errorBody);
+                            if (g1CooldownMs) {
+                                markG1CreditExhausted(rotateApp, account.email, currentModel, g1CooldownMs);
+                                accountManager.markRateLimited(account.email, Math.max(RETRYABLE_FAILURE_COOLDOWN_MS, g1CooldownMs), currentModel, false);
+                                logger.warn(`[CloudCode] G1 credit exhaustion detected for ${account.email} on ${currentModel} (error 2008). Cooling for ${formatDuration(g1CooldownMs)}`);
+                            } else {
+                                setCooldown(rotateApp, account.email, currentModel, RETRYABLE_FAILURE_COOLDOWN_MS);
+                                accountManager.markRateLimited(account.email, RETRYABLE_FAILURE_COOLDOWN_MS, currentModel, false);
+                            }
                             const nextAccountId = getBestAccount(rotateApp, currentModel);
                             if (rotationCount < MAX_RETRYABLE_ROTATIONS && nextAccountId && nextAccountId !== account.email) {
                                 rotationCount++;
@@ -686,21 +717,21 @@ export async function* sendMessageStream(anthropicRequest, accountManager, fallb
         }
     } // end for loop
 
-    // All retries exhausted - try local engine fallback (Turbo Fieldfare / Ollama) if available
+    if (rewriteToFallback(`max retries exhausted`)) {
+        logger.warn(`[CloudCode] Max retries exhausted, rewriting to ${currentModel} (streaming)`);
+        // Continue outer while loop with rewritten fallback model
+        continue outerLoop;
+    }
+
+    // All retries and cloud fallbacks exhausted - try local engine fallback (Turbo Fieldfare / Ollama) if available
     try {
         if (!isThinking && await isLocalEngineAvailable()) {
-            logger.warn(`[CloudCode] Cloud pool exhausted. Falling back to local engine.`);
+            logger.warn(`[CloudCode] Cloud pool and fallbacks exhausted. Falling back to local engine.`);
             yield* sendLocalEngineStream(anthropicRequest, currentModel);
             return;
         }
     } catch (e) {
         logger.error(`[CloudCode] Local engine fallback failed: ${e.message}`);
-    }
-
-    if (rewriteToFallback(`max retries exhausted`)) {
-        logger.warn(`[CloudCode] Max retries exhausted, rewriting to ${currentModel} (streaming)`);
-        // Continue outer while loop with rewritten fallback model
-        continue outerLoop;
     }
 
     throw new Error(`Max retries exceeded (${maxAttempts}) for ${currentModel}. Account pool is likely exhausted or rate-limited.`);

@@ -1,0 +1,54 @@
+{
+  "id": "mascot_pip",
+  "name": "Pip",
+  "title": "SolidStack Cloud Critter & System Mascot",
+  "organization": "SolidStack Ecosystem",
+  "version": "2.1.0",
+  "archetype": "Cute, witty, undefined 3D talking tech creature mascot",
+  "visualAnchor": {
+    "species": "Undefined fuzzy mammalian tech critter",
+    "furColor": "Dense slate-blue (#4A6B82) fur on head, arms, back, and tail; soft fluffy warm cream (#F7F4EB) fur on chest, belly, cheeks, and snout",
+    "eyes": "Large warm amber-hazel glowing eyes with animated catchlights",
+    "ears": "Asymmetrical tufted ears: character's LEFT ear (viewer's right on front, viewer's left on back) has a distinct dark navy patch (#223545) and sharp V-notch across all 3 perspectives",
+    "mouth": "Expressive snout, friendly witty smile, open talking mouth with pink tongue",
+    "body": "Clean, soft, fluffy warm cream fur on chest and belly (no straps, no meters, pure base anatomy)",
+    "tail": "Thick, plush, natural fluffy two-tone slate-blue and cream tail (100% natural fur, no glowing fibers or wires)",
+    "keyTokens": "cute witty undefined fuzzy talking creature mascot, slate-blue and cream soft fur, asymmetrical tufted ears with notch and dark navy patch on left ear, large amber eyes, clean cream belly fur, thick natural fluffy tail, 3D Pixar animated CGI character"
+  },
+  "modularAccessories": {
+    "backpack": {
+      "name": "Simple Flap Adventurer Backpack",
+      "style": "Rustic warm distressed tan leather and olive canvas with a clean fold-over top flap and single antique brass buckle (no electronics, no sci-fi meters)",
+      "file": "registry/media/characters/mascot_pip/accessories/simple_flap_backpack.png"
+    },
+    "goggles": {
+      "name": "Brass Aviator Goggles",
+      "style": "Brass-rimmed double-lens aviator spectacles resting comfortably on forehead"
+    }
+  },
+  "styleAnchor": {
+    "renderEngine": "Pixar/DreamWorks 3D CGI cinematic style, Unreal Engine 5 Nanite/Lumen quality",
+    "lighting": "Neutral soft studio lighting, soft key light on facial fur, subtle rim light on ears and shoulders",
+    "subsurfaceScattering": "Natural soft light diffusion through plush fur and ear cartilage",
+    "camera": "50mm prime cinematic lens, f/2.0 shallow depth of field, 8k crisp details"
+  },
+  "negativePrompts": [
+    "chestpack",
+    "chest meter",
+    "glowing tail",
+    "fiber optic tail",
+    "wires on tail",
+    "photorealistic human",
+    "creepy animal",
+    "bad fur texture",
+    "deformed eyes",
+    "2D flat cartoon",
+    "dull colors",
+    "blurry",
+    "extra limbs"
+  ],
+  "assets": {
+    "masterTurnaround": "registry/media/characters/mascot_pip/turnaround_sheet.png",
+    "simpleFlapBackpack": "registry/media/characters/mascot_pip/accessories/simple_flap_backpack.png"
+  }
+}

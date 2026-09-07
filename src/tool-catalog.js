@@ -22,8 +22,8 @@
 import { spawn } from 'child_process';
 import { isProtectedZoneServer } from './protected-zones-server.js';
 
-// Same profile map used by /api/auth/launch-browser — reused here so
-// "open chrome profile 13" is a single tool call, not a manual OAuth flow.
+// Map of tenant accounts → fleet profile directories (Chrome_Automation),
+// so "open chrome profile 13" is a single tool call, not a manual OAuth flow.
 const FAMILY_PROFILES = {
     'assistaius@gmail.com': 'Profile 24',
     'adamtechnicalsolutions@gmail.com': 'Profile 19',

@@ -859,8 +859,11 @@ export function mountWebUI(app, dirname, accountManager) {
             // The user has completed verification on Google's site and clicks Refresh to re-enable.
             // Auth errors (no verifyUrl) still require OAuth re-auth via FIX button.
             const account = accountManager.getAllAccounts().find(a => a.email === email);
-            if (account && account.isInvalid && account.verifyUrl) {
+            if (account && account.isInvalid) {
                 accountManager.clearInvalid(email);
+                account.isInvalid = false;
+                account.invalidReason = null;
+                await accountManager.saveToDisk().catch(() => {});
             }
 
             res.json({
@@ -1025,7 +1028,7 @@ export function mountWebUI(app, dirname, accountManager) {
             const { email, url } = req.body;
             const targetUrl = url || `https://accounts.google.com/AccountChooser?Email=${encodeURIComponent(email)}&continue=https://myaccount.google.com`;
             const { spawn } = await import('child_process');
-            spawn('open', ['-na', 'Google Chrome', '--args', '--incognito', targetUrl], { detached: true, stdio: 'ignore' }).unref();
+            spawn('open', ['-a', 'Google Chrome', targetUrl], { detached: true, stdio: 'ignore' }).unref();
             res.json({ status: 'ok', message: `Launched clean window for ${email}` });
         } catch (error) {
             res.status(500).json({ status: 'error', error: error.message });
@@ -1102,33 +1105,67 @@ export function mountWebUI(app, dirname, accountManager) {
     
     app.get('/api/swarm/next-pending', async (req, res) => {
         try {
-            const domain = req.query.domain;
+            const rawDomain = req.query.domain || '';
+            const domain = rawDomain.replace(/^@/, '').trim();
             const fs = await import('fs');
             const path = await import('path');
             const os = await import('os');
             const vaultPath = path.join(os.homedir(), '.config', 'antigravity-proxy', 'swarm-recovery-vault.json');
             const accountsPath = path.join(os.homedir(), '.config', 'antigravity-proxy', 'accounts.json');
-            const vault = JSON.parse(fs.readFileSync(vaultPath, 'utf8'));
-            const accountsData = JSON.parse(fs.readFileSync(accountsPath, 'utf8'));
-            const activeEmails = new Set(accountsData.accounts.map(a => a.email));
             
-            const invalidAccount = accountsData.accounts.find(a => a.email.endsWith(domain) && a.isInvalid);
-            if (invalidAccount) {
-                return res.json({ status: 'ok', email: invalidAccount.email });
+            let vault = {};
+            if (fs.existsSync(vaultPath)) {
+                try { vault = JSON.parse(fs.readFileSync(vaultPath, 'utf8')); } catch (e) {}
+            }
+            let accountsData = { accounts: [] };
+            if (fs.existsSync(accountsPath)) {
+                try { accountsData = JSON.parse(fs.readFileSync(accountsPath, 'utf8')); } catch (e) {}
             }
             
+            // 1. Check if any existing account for this domain genuinely needs to be logged in again (e.g. revoked token)
+            const accountsNeedingRelogin = accountsData.accounts.filter(a => 
+                (domain ? a.email.endsWith('@' + domain) : true) && 
+                (a.isInvalid || a.status === 'invalid') &&
+                (!a.refreshToken || (a.invalidReason && !a.invalidReason.includes('not eligible') && !a.invalidReason.includes('PERMISSION_DENIED')))
+            );
+            
+            if (accountsNeedingRelogin.length > 0) {
+                // Sort numerically so we re-login lowest index first
+                accountsNeedingRelogin.sort((a, b) => {
+                    const numA = parseInt(a.email.match(/^(\d+)/)?.[1] || '999999', 10);
+                    const numB = parseInt(b.email.match(/^(\d+)/)?.[1] || '999999', 10);
+                    return numA - numB;
+                });
+                return res.json({ 
+                    status: 'ok', 
+                    email: accountsNeedingRelogin[0].email,
+                    action: 'relogin',
+                    reason: accountsNeedingRelogin[0].invalidReason || 'Session needs re-authentication'
+                });
+            }
+            
+            // 2. Otherwise find the next sequential pending account from vault that is NOT yet added
+            const alreadyAddedEmails = new Set(accountsData.accounts.map(a => a.email));
             const pending = Object.keys(vault)
-                .filter(email => !activeEmails.has(email) && email.endsWith(domain))
+                .filter(email => !alreadyAddedEmails.has(email) && (domain ? email.endsWith('@' + domain) : true))
                 .sort((a, b) => {
-                    const numA = parseInt(a.match(/^(\d+)/)?.[1] || 0);
-                    const numB = parseInt(b.match(/^(\d+)/)?.[1] || 0);
+                    const numA = parseInt(a.match(/^(\d+)/)?.[1] || '999999', 10);
+                    const numB = parseInt(b.match(/^(\d+)/)?.[1] || '999999', 10);
                     return numA - numB;
                 });
                 
             if (pending.length > 0) {
-                res.json({ status: 'ok', email: pending[0] });
+                res.json({ 
+                    status: 'ok', 
+                    email: pending[0],
+                    action: 'add_next',
+                    remainingCount: pending.length
+                });
             } else {
-                res.status(404).json({ status: 'error', error: 'No pending accounts in vault for domain ' + domain });
+                res.status(404).json({ 
+                    status: 'error', 
+                    error: `All accounts for ${domain || 'fleet'} are active and logged in! (0 pending)` 
+                });
             }
         } catch (error) {
             res.status(500).json({ status: 'error', error: error.message });
@@ -1931,7 +1968,7 @@ export function mountWebUI(app, dirname, accountManager) {
             const { promise: serverPromise, abort: abortServer, getPort } = startCallbackServer(state, 600000); // 10 min timeout
             if (getPort() !== callbackPort) {
                 abortServer();
-                throw new Error(`OAuth callback port ${callbackPort} is unavailable; refusing fallback port ${getPort} because Google redirect URIs must match exactly`);
+                throw new Error(`OAuth callback port ${callbackPort} is unavailable; refusing fallback port ${getPort()} because Google redirect URIs must match exactly`);
             }
 
             // Store the flow data
@@ -2006,64 +2043,9 @@ export function mountWebUI(app, dirname, accountManager) {
         res.json({ status: 'ok', state, phase: flow.status || 'awaiting_callback', email: flow.email || null, error: flow.error || null });
     });
 
-    /**
-     * POST /api/auth/launch-browser - Open the browser via the backend
-     * Uses incognito or specific Profile mapping depending on email domain
-     */
-    app.post('/api/auth/launch-browser', (req, res) => {
-        try {
-            const { url, email } = req.body;
-            if (!url) {
-                return res.status(400).json({ status: 'error', error: 'URL required' });
-            }
-            
-            let profileArg = '--incognito';
-            let isSwarm = false;
-            let debugPort = 9223;
-
-            if (email) {
-                const FAMILY_PROFILES = {
-                    'assistaius@gmail.com': 'Profile 24',
-                    'adamtechnicalsolutions@gmail.com': 'Profile 19',
-                    'apps000123000@gmail.com': 'Profile 20',
-                    'aptsoultuions@gmail.com': 'Profile 21',
-                    'haliburtonarcher@gmail.com': 'Profile 15',
-                    'adampps@gmail.com': 'Profile 14'
-                };
-                if (FAMILY_PROFILES[email]) {
-                    profileArg = `--profile-directory="${FAMILY_PROFILES[email]}"`;
-                } else if (email.endsWith('@adamassist.com') || email.endsWith('@reseller.mysolidstate.ca')) {
-                    isSwarm = true;
-                    // For swarms, we use incognito and a dedicated temp profile to allow the debugger to attach reliably
-                    const tempDir = `/tmp/swarm_profile_${Date.now()}`;
-                    profileArg += ` --user-data-dir=${tempDir} --remote-debugging-port=${debugPort} --no-first-run --no-default-browser-check --disable-fre --disable-sync --disable-features=Translate`;
-                }
-            }
-
-            const command = `open -n -a "Google Chrome" --args ${profileArg} "${url}"`;
-            import('child_process').then(({ exec }) => {
-                exec(command, (error) => {
-                    if (error) {
-                        logger.error(`[WebUI] Failed to launch Chrome:`, error);
-                        return res.status(500).json({ status: 'error', error: error.message });
-                    }
-                    
-                    if (isSwarm) {
-                        // Kick off headless CDP injection
-                        import('../auth/cdp-injector.js').then(({ injectSwarmPassword }) => {
-                            injectSwarmPassword(debugPort, email);
-                        }).catch(err => {
-                            logger.error(`[CDP] Failed to load injector: ${err.message}`);
-                        });
-                    }
-
-                    res.json({ status: 'ok', launched: true });
-                });
-            });
-        } catch (error) {
-            res.status(500).json({ status: 'error', error: error.message });
-        }
-    });
+    // REMOVED: POST /api/auth/launch-browser (temp-profile swarm browser + CDP password
+    // injection via src/auth/cdp-injector.js). Superseded by the always-on Chrome fleet;
+    // profile opening now goes through the open_chrome_profile native tool / fleet attach.
 
     /**
      * POST /api/auth/complete - Complete OAuth with manually submitted callback URL/code

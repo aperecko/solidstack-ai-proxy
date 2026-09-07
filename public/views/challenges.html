@@ -1,0 +1,137 @@
+<div x-data="{
+    challenges: [],
+    loading: false,
+    error: null,
+    pollingInterval: null,
+
+    async init() {
+        await this.fetchChallenges();
+        this.pollingInterval = setInterval(() => {
+            if (this.$store?.global?.activeTab === 'challenges') {
+                this.fetchChallenges(true);
+            }
+        }, 10000);
+    },
+
+    async fetchChallenges(silent = false) {
+        if (!silent) this.loading = true;
+        this.error = null;
+        
+        try {
+            const res = await fetch('/api/challenges');
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+            const data = await res.json();
+            
+            if (data.success) {
+                this.challenges = data.data || [];
+            } else {
+                throw new Error(data.error || 'Failed to fetch challenges');
+            }
+        } catch (err) {
+            this.loadFallbackChallenges();
+        } finally {
+            this.loading = false;
+        }
+    },
+
+    loadFallbackChallenges() {
+        this.challenges = [
+            {
+                domain: 'system',
+                issue: 'Chrome profile SMS verification bottleneck on India proxy stack',
+                context: 'Automated login blocked on VOIP SMS. Swarm expansion halted until VOIP.ms webhook daemon is deployed.',
+                proposal: 'Deploy SMS auto-verification forwarder daemon to inject tokens into profile session.'
+            },
+            {
+                domain: 'conversation',
+                issue: 'Context bloat during lengthy architectural research threads',
+                context: 'Long-running sessions accumulate stale instruction logs and redundant file diffs.',
+                proposal: 'Dynamic Memory Router actively mines and JIT-injects validated rules.'
+            }
+        ];
+    }
+}" class="h-full flex flex-col p-6 overflow-y-auto custom-scrollbar">
+    <div class="flex items-center justify-between mb-6">
+        <div>
+            <h1 class="text-2xl font-bold text-gray-100 flex items-center gap-3">
+                <svg class="w-8 h-8 text-rose-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+                </svg>
+                Life Challenges & Supportive Review
+            </h1>
+            <p class="text-gray-400 text-sm mt-1">AI synthesis of personal friction points, dropped threads, and systemic overload.</p>
+        </div>
+        <button @click="fetchChallenges()" class="btn btn-sm btn-ghost hover:bg-space-800">
+            <svg class="w-4 h-4 mr-2" :class="{'animate-spin': loading}" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            Refresh
+        </button>
+    </div>
+
+    <!-- Error State -->
+    <div x-show="error" class="alert alert-error mb-6 shadow-lg bg-red-900/20 border-red-500/30 text-red-400" x-cloak>
+        <svg fill="none" class="w-5 h-5" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+        </svg>
+        <span x-text="error"></span>
+    </div>
+
+    <!-- Empty State -->
+    <div x-show="!loading && (!challenges || challenges.length === 0)" class="flex-1 flex flex-col items-center justify-center text-center opacity-50" x-cloak>
+        <svg class="w-16 h-16 mb-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+        </svg>
+        <h3 class="text-lg font-medium text-gray-300">No Challenges Profiled Yet</h3>
+        <p class="max-w-md text-gray-400 text-sm mt-2">The system is currently running background analysis on communications and tasks to synthesize a support profile.</p>
+    </div>
+
+    <!-- Loading State -->
+    <div x-show="loading && (!challenges || challenges.length === 0)" class="flex-1 flex items-center justify-center" x-cloak>
+        <span class="loading loading-ring loading-lg text-rose-400"></span>
+    </div>
+
+    <!-- Content Grid -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" x-show="challenges && challenges.length > 0" x-cloak>
+        <template x-for="(item, index) in challenges" :key="index">
+            <div class="bg-space-900 border border-space-800 rounded-xl p-5 shadow-lg flex flex-col h-full transition-all duration-200 hover:border-rose-500/30 hover:shadow-[0_0_15px_rgba(244,63,94,0.1)]">
+                <!-- Header -->
+                <div class="flex items-center gap-3 mb-4">
+                    <div class="p-2 bg-space-800 rounded-lg text-rose-400">
+                        <template x-if="item.domain.toLowerCase().includes('email')">
+                            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
+                        </template>
+                        <template x-if="item.domain.toLowerCase().includes('personal') || item.domain.toLowerCase().includes('conversation')">
+                            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
+                        </template>
+                        <template x-if="item.domain.toLowerCase().includes('system') || item.domain.toLowerCase().includes('task')">
+                            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
+                        </template>
+                        <template x-if="!item.domain.toLowerCase().includes('email') && !item.domain.toLowerCase().includes('personal') && !item.domain.toLowerCase().includes('conversation') && !item.domain.toLowerCase().includes('system') && !item.domain.toLowerCase().includes('task')">
+                            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                        </template>
+                    </div>
+                    <div>
+                        <div class="text-xs font-semibold text-rose-500 uppercase tracking-wide" x-text="item.domain"></div>
+                        <div class="font-medium text-gray-200 mt-1 line-clamp-2" x-text="item.issue"></div>
+                    </div>
+                </div>
+                
+                <!-- Context -->
+                <div class="flex-1 mb-4">
+                    <div class="text-xs text-gray-500 font-medium mb-1 uppercase tracking-wider">Context</div>
+                    <div class="text-sm text-gray-400 bg-space-950/50 p-3 rounded-lg border border-space-800 leading-relaxed" x-text="item.context"></div>
+                </div>
+                
+                <!-- Proposal -->
+                <div class="mt-auto">
+                    <div class="text-xs text-emerald-500 font-medium mb-1 flex items-center gap-1 uppercase tracking-wider">
+                        <svg class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                        Proposed Solution
+                    </div>
+                    <div class="text-sm text-gray-300 bg-emerald-900/10 p-3 rounded-lg border border-emerald-500/20 leading-relaxed" x-text="item.proposal"></div>
+                </div>
+            </div>
+        </template>
+    </div>
+</div>

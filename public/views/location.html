@@ -1,0 +1,86 @@
+<div class="flex flex-col h-full bg-space-950 p-6" x-data="{
+    locationReady: false,
+    stats: { total_points: 2851, total_trips: 51, total_places: 42, total_duration_hours: 261.6 },
+    async init() {
+        try {
+            const res = await fetch('http://127.0.0.1:8766/api/stats');
+            const data = await res.json();
+            if (data.success && data.stats) {
+                this.stats = data.stats;
+            }
+        } catch (e) {
+            console.log('Location stats fetch error:', e);
+        }
+        setTimeout(() => { this.locationReady = true; }, 300);
+    }
+}">
+    <!-- Header -->
+    <div class="mb-4 flex flex-wrap justify-between items-end gap-4">
+        <div>
+            <div class="flex items-center gap-3 mb-1">
+                <h2 class="text-2xl font-bold font-mono tracking-tight text-white flex items-center gap-2">
+                    <svg class="w-6 h-6 text-neon-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/>
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/>
+                    </svg>
+                    Travel & Location Intelligence Hub
+                </h2>
+                <span class="px-2.5 py-0.5 rounded-full text-xs font-mono bg-neon-cyan/10 border border-neon-cyan/30 text-neon-cyan">
+                    Local SQLite Spatial
+                </span>
+            </div>
+            <p class="text-gray-400 text-xs max-w-3xl">
+                Unified travel history aggregated from Tesla Superchargers, Google Maps Timeline, iPhone geotags, and TripLogik device archives.
+            </p>
+        </div>
+
+        <div class="flex items-center gap-2">
+            <button @click="$refs.locationFrame.src = $refs.locationFrame.src" class="px-3 py-1.5 bg-space-800 hover:bg-space-700 text-gray-200 rounded font-mono text-xs border border-space-border transition-colors flex items-center gap-1.5">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+                Reload Map
+            </button>
+            <a href="http://127.0.0.1:8766/" target="_blank" class="px-3 py-1.5 bg-cyan-600/30 hover:bg-cyan-600/50 text-cyan-300 rounded font-mono text-xs border border-cyan-500/40 transition-colors flex items-center gap-1.5">
+                <span>Fullscreen Map (Port 8766)</span>
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+            </a>
+        </div>
+    </div>
+
+    <!-- Metrics Cards Strip -->
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+        <div class="bg-space-900/80 border border-space-border/60 rounded-xl p-3">
+            <div class="text-[10px] font-mono text-gray-400 uppercase">GPS Track Points</div>
+            <div class="text-xl font-bold font-mono text-cyan-400 mt-0.5" x-text="stats.total_points.toLocaleString()">2,851</div>
+            <div class="text-[10px] text-gray-500 mt-0.5">Deduplicated points</div>
+        </div>
+        <div class="bg-space-900/80 border border-space-border/60 rounded-xl p-3">
+            <div class="text-[10px] font-mono text-gray-400 uppercase">Travel Legs / Trips</div>
+            <div class="text-xl font-bold font-mono text-neon-green mt-0.5" x-text="stats.total_trips">51</div>
+            <div class="text-[10px] text-gray-500 mt-0.5">50 Tesla legs + GPX</div>
+        </div>
+        <div class="bg-space-900/80 border border-space-border/60 rounded-xl p-3">
+            <div class="text-[10px] font-mono text-gray-400 uppercase">Visited Places</div>
+            <div class="text-xl font-bold font-mono text-amber-400 mt-0.5" x-text="stats.total_places">42</div>
+            <div class="text-[10px] text-gray-500 mt-0.5">Superchargers (ON, NY, PA)</div>
+        </div>
+        <div class="bg-space-900/80 border border-space-border/60 rounded-xl p-3">
+            <div class="text-[10px] font-mono text-gray-400 uppercase">Recorded Duration</div>
+            <div class="text-xl font-bold font-mono text-purple-400 mt-0.5" x-text="`${stats.total_duration_hours} hrs`">261.6 hrs</div>
+            <div class="text-[10px] text-gray-500 mt-0.5">2020 — 2026 History</div>
+        </div>
+    </div>
+
+    <!-- Map Container -->
+    <div class="flex-1 border border-space-border/60 rounded-xl overflow-hidden bg-space-900 shadow-2xl relative min-h-[600px]">
+        <div x-show="!locationReady" class="absolute inset-0 flex flex-col items-center justify-center bg-space-900 z-10">
+            <div class="w-8 h-8 border-4 border-space-700 border-t-neon-cyan rounded-full animate-spin mb-4"></div>
+            <span class="font-mono text-xs text-gray-400">Loading Geospatial Engine...</span>
+        </div>
+
+        <iframe x-ref="locationFrame"
+                src="http://127.0.0.1:8766/"
+                class="w-full h-full border-0"
+                @load="locationReady = true">
+        </iframe>
+    </div>
+</div>

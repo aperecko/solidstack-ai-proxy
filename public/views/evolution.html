@@ -1,0 +1,157 @@
+<div class="px-8 py-6 w-full max-w-[1600px] mx-auto space-y-8 pb-12" x-data="evolution">
+    <!-- Header -->
+    <div class="border-b border-space-border pb-6 flex justify-between items-end">
+        <div>
+            <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-neon-purple/10 border border-neon-purple/30 text-neon-purple text-xs font-mono uppercase tracking-wider mb-2">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"></path></svg>
+                Lorax Intelligence
+            </div>
+            <h2 class="text-3xl font-bold text-white tracking-tight">Self-Improvement Cycles</h2>
+            <p class="text-gray-400 font-mono text-sm max-w-3xl leading-relaxed mt-1">
+                Telemetry from the Lorax daemon's continuous autonomous mutation and verification loops. Shows rejected iterations and durable primitives synthesized into the registry.
+            </p>
+        </div>
+        
+        <div class="flex gap-4 font-mono">
+            <div class="bg-space-900 border border-space-border rounded-xl p-3 flex flex-col items-end">
+                <span class="text-xs text-gray-500 uppercase tracking-wider">Evolution Status</span>
+                <div class="flex items-center gap-2 mt-1">
+                    <template x-if="status.running">
+                        <span class="flex items-center gap-2 text-neon-green font-bold text-sm">
+                            <span class="w-2 h-2 rounded-full bg-neon-green animate-pulse"></span>
+                            ACTIVE
+                        </span>
+                    </template>
+                    <template x-if="!status.running">
+                        <span class="text-gray-400 font-bold text-sm">DORMANT</span>
+                    </template>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Grid -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        
+        <!-- Left Column: Cycles & Metrics -->
+        <div class="lg:col-span-2 space-y-6">
+            <!-- Metrics Row -->
+            <div class="grid grid-cols-3 gap-4 font-mono">
+                <div class="bg-space-900 border border-space-border rounded-2xl p-5">
+                    <div class="text-xs text-gray-500 uppercase tracking-wider">Total Cycles</div>
+                    <div class="text-3xl font-bold text-white mt-1" x-text="status.total_cycles"></div>
+                </div>
+                <div class="bg-space-900 border border-emerald-500/20 rounded-2xl p-5">
+                    <div class="text-xs text-emerald-500 uppercase tracking-wider">Merged Primitives</div>
+                    <div class="text-3xl font-bold text-emerald-400 mt-1" x-text="status.merged_cycles"></div>
+                </div>
+                <div class="bg-space-900 border border-red-500/20 rounded-2xl p-5">
+                    <div class="text-xs text-red-500 uppercase tracking-wider">Discarded / Reverted</div>
+                    <div class="text-3xl font-bold text-red-400 mt-1" x-text="status.discarded_cycles"></div>
+                </div>
+            </div>
+
+            <div class="bg-space-900 border border-space-border rounded-2xl flex flex-col h-[700px]">
+                <div class="p-4 border-b border-space-border flex justify-between items-center">
+                    <h3 class="text-lg font-bold text-white flex items-center gap-2">
+                        <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                        Mutation History
+                    </h3>
+                    <div class="text-xs font-mono text-gray-500">Live feed</div>
+                </div>
+                
+                <div class="flex-1 overflow-y-auto custom-scrollbar p-0">
+                    <table class="w-full text-left border-collapse text-sm">
+                        <thead class="bg-space-950 font-mono text-xs uppercase text-gray-500 sticky top-0 z-10 border-b border-space-border">
+                            <tr>
+                                <th class="py-3 px-4 font-medium">Cycle</th>
+                                <th class="py-3 px-4 font-medium">Target / Branch</th>
+                                <th class="py-3 px-4 font-medium">Latency</th>
+                                <th class="py-3 px-4 font-medium">Verdict</th>
+                                <th class="py-3 px-4 font-medium">Posterior Summary</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-space-border font-sans">
+                            <template x-for="item in iterations" :key="item.iteration">
+                                <tr class="hover:bg-space-800/50 transition-colors group">
+                                    <td class="py-3 px-4 font-mono text-xs text-gray-400 whitespace-nowrap">
+                                        #<span x-text="item.iteration"></span>
+                                        <div class="text-[10px] text-gray-600 mt-0.5" x-text="item.time"></div>
+                                    </td>
+                                    <td class="py-3 px-4">
+                                        <div class="text-neon-cyan font-mono text-xs truncate max-w-[200px]" x-text="item.branch" :title="item.branch"></div>
+                                    </td>
+                                    <td class="py-3 px-4 font-mono text-xs text-gray-400" x-text="item.latency"></td>
+                                    <td class="py-3 px-4">
+                                        <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold font-mono tracking-wide"
+                                              :class="item.verdict === 'MERGED' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'"
+                                              x-text="item.verdict">
+                                        </span>
+                                    </td>
+                                    <td class="py-3 px-4 text-xs text-gray-300 max-w-[300px]">
+                                        <div class="truncate" x-text="item.posterior" :title="item.posterior"></div>
+                                    </td>
+                                </tr>
+                            </template>
+                            <template x-if="iterations.length === 0">
+                                <tr>
+                                    <td colspan="5" class="py-8 text-center text-gray-500 font-mono text-sm">No iterations recorded yet.</td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Right Column: Synthesized Capabilities -->
+        <div class="space-y-6">
+            <div class="bg-space-900 border border-space-border rounded-2xl flex flex-col h-[812px]">
+                <div class="p-4 border-b border-space-border bg-neon-purple/5">
+                    <h3 class="text-lg font-bold text-white flex items-center gap-2">
+                        <svg class="w-4 h-4 text-neon-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                        Synthesized Primitives
+                    </h3>
+                    <p class="text-xs text-gray-400 mt-1 font-mono">Durable agent capabilities extracted via continuous improvement</p>
+                </div>
+                
+                <div class="flex-1 overflow-y-auto custom-scrollbar p-4 space-y-4">
+                    <template x-for="cap in capabilities" :key="cap.id">
+                        <div class="bg-black border border-space-border rounded-xl p-4 hover:border-neon-purple/50 transition-colors">
+                            <div class="flex justify-between items-start mb-2">
+                                <div class="font-mono text-[10px] text-neon-purple bg-neon-purple/10 px-2 py-0.5 rounded" x-text="cap.id"></div>
+                                <div class="flex items-center gap-1">
+                                    <span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
+                                    <span class="text-[10px] font-mono text-emerald-500 uppercase" x-text="cap.status"></span>
+                                </div>
+                            </div>
+                            <h4 class="text-sm font-bold text-white" x-text="cap.name"></h4>
+                            <p class="text-xs text-gray-400 mt-1" x-text="cap.description"></p>
+                            
+                            <template x-if="cap.capabilities && cap.capabilities.length > 0">
+                                <div class="mt-3 pt-3 border-t border-space-border/50">
+                                    <div class="text-[10px] text-gray-500 uppercase font-mono mb-1.5 tracking-wider">Sub-Capabilities</div>
+                                    <ul class="space-y-1">
+                                        <template x-for="sub in cap.capabilities" :key="sub.id">
+                                            <li class="text-xs text-gray-300 flex items-start gap-1.5">
+                                                <span class="text-neon-purple mt-0.5 font-bold">›</span>
+                                                <span x-text="sub.description"></span>
+                                            </li>
+                                        </template>
+                                    </ul>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+                    
+                    <template x-if="capabilities.length === 0">
+                        <div class="py-12 text-center flex flex-col items-center justify-center h-full">
+                            <svg class="w-8 h-8 text-gray-600 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                            <span class="text-gray-500 text-sm font-mono">No primitives synthesized yet.</span>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

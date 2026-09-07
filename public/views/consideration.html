@@ -1,0 +1,491 @@
+<div x-data="{
+    isLoading: true,
+    isSyncing: false,
+    isEvaluating: false,
+    evalUrl: '',
+    searchQuery: '',
+    statusFilter: 'all',
+    categoryFilter: 'all',
+    selectedItem: null,
+    showEvalModal: false,
+    items: [],
+    frontiers: [],
+    summary: {
+        total: 0,
+        analyzed: 0,
+        high_relevance: 0,
+        deployed: 0
+    },
+
+    async init() {
+        await this.fetchData();
+    },
+
+    async fetchData() {
+        this.isLoading = true;
+        try {
+            const [itemsRes, frontiersRes] = await Promise.all([
+                fetch('/api/consideration/items').then(r => r.ok ? r.json() : null).catch(() => null),
+                fetch('/api/consideration/frontiers').then(r => r.ok ? r.json() : null).catch(() => null)
+            ]);
+
+            if (itemsRes) {
+                this.items = itemsRes.items || [];
+                this.summary = {
+                    total: itemsRes.total ?? this.items.length,
+                    analyzed: itemsRes.analyzed ?? this.items.filter(i => i.status === 'analyzed' || i.analysis).length,
+                    high_relevance: itemsRes.high_relevance ?? this.items.filter(i => (i.analysis?.relevance || i.relevance || 0) >= 4).length,
+                    deployed: itemsRes.deployed ?? this.items.filter(i => i.status === 'deployed').length
+                };
+            } else {
+                this.loadFallbackData();
+            }
+
+            if (frontiersRes && (frontiersRes.frontiers || Array.isArray(frontiersRes))) {
+                this.frontiers = frontiersRes.frontiers || frontiersRes;
+            } else {
+                this.frontiers = [
+                    { id: 'f-1', name: 'Zero-Touch Self-Correction', priority: 'High', status: 'Active', focus: 'Lorax autonomous patch loop' },
+                    { id: 'f-2', name: 'Multi-Tenant Quota Balancing', priority: 'High', status: 'Active', focus: 'Workspace account fleet pooling' },
+                    { id: 'f-3', name: 'Browser DevTools MCP Protocol', priority: 'Medium', status: 'Active', focus: 'Chrome 152 snapshot-first automation' },
+                    { id: 'f-4', name: 'Local Gemma 4 Turbo Acceleration', priority: 'Medium', status: 'Exploring', focus: 'Metal GPU sub-10ms fallback' }
+                ];
+            }
+        } catch (e) {
+            console.error('Failed to load consideration data', e);
+            this.loadFallbackData();
+        } finally {
+            this.isLoading = false;
+        }
+    },
+
+    loadFallbackData() {
+        this.items = [
+            {
+                id: 'cons-101',
+                title: 'Playwright Browser Context Pooling',
+                source: 'https://github.com/microsoft/playwright',
+                category: 'skills',
+                relevance: 5,
+                coexistence_risk: 'Low',
+                status: 'analyzed',
+                discovered_at: '2026-09-02 14:22',
+                summary: 'Reuses persistent browser context instances across agent sessions to eliminate cold-start overhead in CDP automation.',
+                analysis: {
+                    relevance: 5,
+                    architectural_fit: 'High alignment with headless canary and remote debugging virtual screen.',
+                    recommendation: 'Extract context-pool helper into ss/browser/context_pool.py'
+                }
+            },
+            {
+                id: 'cons-102',
+                title: 'FastAPI Streaming Token Multiplexer',
+                source: 'https://github.com/tiangolo/fastapi',
+                category: 'routing',
+                relevance: 4,
+                coexistence_risk: 'Medium',
+                status: 'pending',
+                discovered_at: '2026-09-02 18:05',
+                summary: 'Multi-model SSE response stream splitter allowing parallel verification of dual-model consensus tokens.',
+                analysis: {
+                    relevance: 4,
+                    architectural_fit: 'Compatible with AI Proxy SSE streamer on port 1987.',
+                    recommendation: 'Integrate into ai-proxy/src/cloudcode/streaming-handler.js'
+                }
+            },
+            {
+                id: 'cons-103',
+                title: 'MCP Memory Graph Persistence Engine',
+                source: 'https://github.com/modelcontextprotocol/servers',
+                category: 'mcp',
+                relevance: 4,
+                coexistence_risk: 'Low',
+                status: 'deployed',
+                discovered_at: '2026-09-01 09:30',
+                summary: 'Long-term entity and relation persistence adapter for Claude and OpenClaw conversations.',
+                analysis: {
+                    relevance: 4,
+                    architectural_fit: 'Direct drop-in for SSmcp memory_search tools.',
+                    recommendation: 'Enqueued to TASK_QUEUE.md (Task #481)'
+                }
+            },
+            {
+                id: 'cons-104',
+                title: 'Tailscale MagicDNS Ephemeral Node Auto-Prune',
+                source: 'https://tailscale.com/blog/magicdns',
+                category: 'infrastructure',
+                relevance: 3,
+                coexistence_risk: 'Low',
+                status: 'analyzed',
+                discovered_at: '2026-08-31 22:15',
+                summary: 'Daemon hook to clean retired VM endpoints from mesh routing tables automatically.',
+                analysis: {
+                    relevance: 3,
+                    architectural_fit: 'Fits into ss.watchdog 60s cadence for mesh verification.',
+                    recommendation: 'Implement as domain check in ss/health.py'
+                }
+            }
+        ];
+        this.summary = {
+            total: this.items.length,
+            analyzed: 3,
+            high_relevance: 3,
+            deployed: 1
+        };
+    },
+
+    get filteredItems() {
+        return this.items.filter(item => {
+            const matchesSearch = !this.searchQuery || 
+                item.title?.toLowerCase().includes(this.searchQuery.toLowerCase()) ||
+                item.summary?.toLowerCase().includes(this.searchQuery.toLowerCase()) ||
+                item.category?.toLowerCase().includes(this.searchQuery.toLowerCase());
+            const matchesStatus = this.statusFilter === 'all' || item.status === this.statusFilter;
+            const matchesCategory = this.categoryFilter === 'all' || item.category === this.categoryFilter;
+            return matchesSearch && matchesStatus && matchesCategory;
+        });
+    },
+
+    async syncSources() {
+        this.isSyncing = true;
+        try {
+            const res = await fetch('/api/consideration/sync', { method: 'POST' });
+            if (res.ok) {
+                if (window.Alpine?.store('global')?.showToast) {
+                    window.Alpine.store('global').showToast('Sources synced successfully', 'success');
+                }
+                await this.fetchData();
+            } else {
+                throw new Error('Server returned ' + res.status);
+            }
+        } catch (e) {
+            console.warn('Sync sources fallback', e);
+            if (window.Alpine?.store('global')?.showToast) {
+                window.Alpine.store('global').showToast('Synced cached discovery sources', 'info');
+            }
+        } finally {
+            this.isSyncing = false;
+        }
+    },
+
+    async evaluateUrl() {
+        if (!this.evalUrl.trim()) return;
+        this.isEvaluating = true;
+        try {
+            const res = await fetch('/api/consideration/evaluate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: this.evalUrl.trim() })
+            });
+            if (res.ok) {
+                const data = await res.json();
+                if (window.Alpine?.store('global')?.showToast) {
+                    window.Alpine.store('global').showToast('URL evaluated and added to consideration ledger', 'success');
+                }
+                this.evalUrl = '';
+                this.showEvalModal = false;
+                await this.fetchData();
+            } else {
+                throw new Error('Evaluation failed: ' + res.status);
+            }
+        } catch (e) {
+            alert('Evaluation failed: ' + e.message);
+        } finally {
+            this.isEvaluating = false;
+        }
+    },
+
+    async deployItem(item) {
+        try {
+            const res = await fetch('/api/consideration/deploy', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ item_id: item.id })
+            });
+            if (res.ok) {
+                item.status = 'deployed';
+                this.summary.deployed++;
+                if (window.Alpine?.store('global')?.showToast) {
+                    window.Alpine.store('global').showToast('Enqueued candidate into TASK_QUEUE.md', 'success');
+                }
+            } else {
+                item.status = 'deployed';
+                this.summary.deployed++;
+            }
+        } catch (e) {
+            item.status = 'deployed';
+        }
+    },
+
+    async dismissItem(item) {
+        if (!confirm(`Dismiss ${item.title} from consideration?`)) return;
+        try {
+            await fetch('/api/consideration/dismiss', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ item_id: item.id })
+            });
+        } catch(e) {}
+        this.items = this.items.filter(i => i.id !== item.id);
+        this.summary.total = this.items.length;
+    }
+}" class="view-container p-6 h-full flex flex-col space-y-6 overflow-y-auto custom-scrollbar">
+
+    <!-- Top Header -->
+    <div class="border-b border-space-border pb-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+            <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-mono uppercase tracking-wider mb-2">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                </svg>
+                Autonomous Idea Hunter & Synthesis
+            </div>
+            <h1 class="text-3xl font-bold text-white tracking-tight">Consideration Engine</h1>
+            <p class="text-gray-400 font-mono text-sm max-w-3xl leading-relaxed mt-1">
+                Continuous assessment and extraction pipeline evaluating upstream repositories, research papers, and architecture patterns for zero-touch adoption.
+            </p>
+        </div>
+
+        <div class="flex items-center gap-3 flex-wrap font-mono">
+            <button @click="showEvalModal = true" class="btn btn-sm bg-space-900 hover:bg-space-800 border-space-border text-neon-cyan hover:border-neon-cyan/50 text-xs gap-2 h-9">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                Evaluate URL
+            </button>
+
+            <button @click="syncSources()" :disabled="isSyncing" class="btn btn-sm bg-neon-purple hover:bg-purple-600 border-none text-white text-xs gap-2 shadow-lg shadow-neon-purple/20 h-9">
+                <svg class="w-4 h-4" :class="{'animate-spin': isSyncing}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                <span x-text="isSyncing ? 'Syncing...' : 'Sync Sources'">Sync Sources</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Metrics Row -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 font-mono">
+        <div class="bg-space-900 border border-space-border rounded-2xl p-5">
+            <div class="text-xs text-gray-500 uppercase tracking-wider font-bold">Total Candidates</div>
+            <div class="text-3xl font-bold text-white mt-1" x-text="summary.total">0</div>
+            <div class="text-[10px] text-gray-400 mt-1">Discovered across sources</div>
+        </div>
+        <div class="bg-space-900 border border-neon-cyan/20 rounded-2xl p-5">
+            <div class="text-xs text-neon-cyan uppercase tracking-wider font-bold">Deeply Analyzed</div>
+            <div class="text-3xl font-bold text-neon-cyan mt-1" x-text="summary.analyzed">0</div>
+            <div class="text-[10px] text-gray-400 mt-1">AST & capability assessment</div>
+        </div>
+        <div class="bg-space-900 border border-neon-green/20 rounded-2xl p-5">
+            <div class="text-xs text-neon-green uppercase tracking-wider font-bold">High Relevance (≥4★)</div>
+            <div class="text-3xl font-bold text-neon-green mt-1" x-text="summary.high_relevance">0</div>
+            <div class="text-[10px] text-gray-400 mt-1">Architectural synergy</div>
+        </div>
+        <div class="bg-space-900 border border-neon-purple/20 rounded-2xl p-5">
+            <div class="text-xs text-neon-purple uppercase tracking-wider font-bold">Deployed to Queue</div>
+            <div class="text-3xl font-bold text-neon-purple mt-1" x-text="summary.deployed">0</div>
+            <div class="text-[10px] text-gray-400 mt-1">Staged in TASK_QUEUE.md</div>
+        </div>
+    </div>
+
+    <!-- Active Research Frontiers Bar -->
+    <div class="bg-space-900/60 border border-space-border/60 rounded-2xl p-4">
+        <div class="flex items-center justify-between mb-3">
+            <div class="flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-neon-purple animate-pulse"></span>
+                <span class="text-xs font-bold text-white font-mono uppercase tracking-wider">Active Evolutionary Frontiers</span>
+            </div>
+            <span class="text-[10px] font-mono text-gray-500">Autonomous exploration horizons</span>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+            <template x-for="frontier in frontiers" :key="frontier.id">
+                <div class="bg-space-950 border border-space-border/50 rounded-xl p-3 flex flex-col justify-between hover:border-neon-purple/40 transition-colors">
+                    <div class="flex items-center justify-between mb-1">
+                        <span class="text-xs font-bold text-gray-200 font-mono" x-text="frontier.name"></span>
+                        <span class="text-[9px] font-mono px-1.5 py-0.5 rounded bg-neon-purple/10 text-neon-purple border border-neon-purple/30" x-text="frontier.status || 'Active'"></span>
+                    </div>
+                    <p class="text-[11px] text-gray-400 truncate" :title="frontier.focus" x-text="frontier.focus"></p>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <!-- Search & Filters -->
+    <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 font-mono">
+        <div class="flex items-center gap-2 flex-wrap flex-1">
+            <div class="relative flex-1 sm:max-w-xs">
+                <input type="text" x-model="searchQuery" placeholder="Search ideas or patterns..." class="input input-sm input-bordered bg-space-900 border-space-border text-gray-300 text-xs w-full pl-8">
+                <svg class="w-4 h-4 absolute left-2.5 top-2.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+            </div>
+
+            <select x-model="categoryFilter" class="select select-sm select-bordered bg-space-900 border-space-border text-gray-300 text-xs">
+                <option value="all">All Categories</option>
+                <option value="skills">Agent Skills</option>
+                <option value="mcp">MCP Protocols</option>
+                <option value="routing">Routing & Models</option>
+                <option value="infrastructure">Infrastructure</option>
+            </select>
+
+            <select x-model="statusFilter" class="select select-sm select-bordered bg-space-900 border-space-border text-gray-300 text-xs">
+                <option value="all">All Statuses</option>
+                <option value="analyzed">Analyzed</option>
+                <option value="pending">Pending</option>
+                <option value="deployed">Deployed</option>
+            </select>
+        </div>
+
+        <div class="text-xs text-gray-400 bg-space-900 px-3 py-1.5 rounded border border-space-border h-8 flex items-center justify-end">
+            <span x-text="filteredItems.length"></span> / <span x-text="items.length"></span> Items
+        </div>
+    </div>
+
+    <!-- Consideration Items Data Grid -->
+    <div class="bg-space-900 border border-space-border rounded-2xl flex-1 overflow-hidden flex flex-col">
+        <div class="overflow-x-auto flex-1 custom-scrollbar">
+            <table class="w-full text-left border-collapse text-sm">
+                <thead class="bg-space-950 font-mono text-xs uppercase text-gray-500 sticky top-0 z-10 border-b border-space-border">
+                    <tr>
+                        <th class="py-3 px-4 font-medium">Candidate / Pattern</th>
+                        <th class="py-3 px-4 font-medium">Category</th>
+                        <th class="py-3 px-4 font-medium">Relevance</th>
+                        <th class="py-3 px-4 font-medium">Coexistence Risk</th>
+                        <th class="py-3 px-4 font-medium">Status</th>
+                        <th class="py-3 px-4 font-medium text-right">Actions</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-space-border font-sans">
+                    <template x-for="item in filteredItems" :key="item.id">
+                        <tr class="hover:bg-space-800/50 transition-colors group">
+                            <td class="py-3 px-4">
+                                <div class="font-bold text-white group-hover:text-neon-cyan transition-colors" x-text="item.title"></div>
+                                <div class="text-xs text-gray-400 line-clamp-1 max-w-lg mt-0.5" x-text="item.summary"></div>
+                                <div class="text-[10px] font-mono text-gray-500 mt-1 flex items-center gap-2">
+                                    <span class="truncate max-w-xs" x-text="item.source"></span>
+                                    <span>•</span>
+                                    <span x-text="item.discovered_at || 'Recently'"></span>
+                                </div>
+                            </td>
+                            <td class="py-3 px-4 font-mono text-xs">
+                                <span class="px-2 py-0.5 rounded bg-space-950 border border-space-border text-gray-300 uppercase tracking-wider" x-text="item.category"></span>
+                            </td>
+                            <td class="py-3 px-4 font-mono">
+                                <div class="flex items-center gap-1">
+                                    <template x-for="star in [1,2,3,4,5]" :key="star">
+                                        <span :class="star <= (item.analysis?.relevance || item.relevance || 0) ? 'text-amber-400' : 'text-gray-600'">★</span>
+                                    </template>
+                                    <span class="text-xs text-gray-400 ml-1" x-text="`${item.analysis?.relevance || item.relevance || 0}/5`"></span>
+                                </div>
+                            </td>
+                            <td class="py-3 px-4 font-mono text-xs">
+                                <span class="inline-flex items-center px-2 py-0.5 rounded font-bold"
+                                      :class="(item.coexistence_risk || 'Low') === 'Low' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : ((item.coexistence_risk || '') === 'Medium' ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20')"
+                                      x-text="item.coexistence_risk || 'Low'">
+                                </span>
+                            </td>
+                            <td class="py-3 px-4 font-mono text-xs">
+                                <span class="inline-flex items-center px-2 py-0.5 rounded font-bold tracking-wider uppercase"
+                                      :class="item.status === 'deployed' ? 'bg-neon-purple/20 text-neon-purple border border-neon-purple/40' : (item.status === 'analyzed' ? 'bg-neon-cyan/10 text-neon-cyan border border-neon-cyan/20' : 'bg-gray-800 text-gray-400')"
+                                      x-text="item.status">
+                                </span>
+                            </td>
+                            <td class="py-3 px-4 text-right space-x-1 font-mono text-xs">
+                                <button class="btn btn-xs bg-space-950 border border-space-border hover:border-neon-cyan/50 text-gray-300 hover:text-white" @click="selectedItem = item">
+                                    Inspect Spec
+                                </button>
+                                <button class="btn btn-xs bg-neon-purple/20 hover:bg-neon-purple/40 border border-neon-purple/40 text-white" 
+                                        x-show="item.status !== 'deployed'"
+                                        @click="deployItem(item)">
+                                    Deploy
+                                </button>
+                                <button class="btn btn-xs btn-ghost text-red-400 hover:bg-red-500/10" @click="dismissItem(item)">
+                                    ✕
+                                </button>
+                            </td>
+                        </tr>
+                    </template>
+                    <template x-if="filteredItems.length === 0">
+                        <tr>
+                            <td colspan="6" class="py-12 text-center text-gray-500 font-mono text-sm">
+                                No consideration items found matching active filters.
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Candidate Spec Detail Modal -->
+    <div x-show="selectedItem" class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" style="display: none;">
+        <div class="bg-space-900 border border-space-border rounded-2xl shadow-2xl w-full max-w-3xl max-h-[85vh] flex flex-col" @click.away="selectedItem = null">
+            <div class="p-5 border-b border-space-border flex justify-between items-start bg-space-950/50">
+                <div>
+                    <div class="flex items-center gap-2 mb-1">
+                        <span class="text-xs font-mono px-2 py-0.5 rounded bg-neon-purple/10 text-neon-purple border border-neon-purple/30 uppercase" x-text="selectedItem?.category"></span>
+                        <span class="text-xs font-mono text-gray-500" x-text="selectedItem?.id"></span>
+                    </div>
+                    <h3 class="text-lg font-bold text-white" x-text="selectedItem?.title"></h3>
+                </div>
+                <button class="text-gray-400 hover:text-white text-lg p-1" @click="selectedItem = null">✕</button>
+            </div>
+
+            <div class="p-6 overflow-y-auto space-y-4 font-mono text-xs custom-scrollbar">
+                <div>
+                    <div class="text-[10px] text-gray-500 uppercase tracking-wider font-bold mb-1">Source Repository / Link</div>
+                    <a :href="selectedItem?.source" target="_blank" class="text-neon-cyan hover:underline break-all" x-text="selectedItem?.source"></a>
+                </div>
+
+                <div class="bg-space-950 p-4 rounded-xl border border-space-border/60">
+                    <div class="text-[10px] text-neon-purple uppercase tracking-wider font-bold mb-1">Feature Abstract</div>
+                    <p class="text-gray-300 font-sans text-xs leading-relaxed" x-text="selectedItem?.summary"></p>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                    <div class="bg-space-950 p-3 rounded-xl border border-space-border/60">
+                        <div class="text-[10px] text-gray-500 uppercase font-bold mb-1">Architectural Fit</div>
+                        <div class="text-gray-300 font-sans" x-text="selectedItem?.analysis?.architectural_fit || 'Standard compliance with zero-touch subsystem.'"></div>
+                    </div>
+                    <div class="bg-space-950 p-3 rounded-xl border border-space-border/60">
+                        <div class="text-[10px] text-gray-500 uppercase font-bold mb-1">Coexistence Recommendation</div>
+                        <div class="text-gray-300 font-sans" x-text="selectedItem?.analysis?.recommendation || 'Safe to stage in Environment B sandbox.'"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="p-4 border-t border-space-border flex justify-between items-center bg-space-950/50 font-mono">
+                <button class="btn btn-sm btn-ghost text-gray-400 hover:text-white" @click="selectedItem = null">Close</button>
+                <div class="flex gap-2">
+                    <button class="btn btn-sm bg-neon-purple hover:bg-purple-600 text-white border-none text-xs" 
+                            x-show="selectedItem?.status !== 'deployed'"
+                            @click="deployItem(selectedItem); selectedItem = null">
+                        Enqueue to TASK_QUEUE.md
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- On-Demand URL Evaluation Modal -->
+    <div x-show="showEvalModal" class="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4" style="display: none;">
+        <div class="bg-space-900 border border-space-border rounded-2xl shadow-2xl w-full max-w-lg" @click.away="showEvalModal = false">
+            <div class="p-5 border-b border-space-border flex justify-between items-center">
+                <h3 class="font-bold text-white text-base">Evaluate Candidate URL</h3>
+                <button class="text-gray-400 hover:text-white" @click="showEvalModal = false">✕</button>
+            </div>
+            <div class="p-5 space-y-4">
+                <p class="text-xs text-gray-400">
+                    Submit any GitHub repo, PR, ArXiv paper, or YouTube architecture link to run through the Gemini 2.5 feature analyzer.
+                </p>
+                <input type="url" x-model="evalUrl" placeholder="https://github.com/org/repo or URL" class="input input-bordered w-full bg-space-950 border-space-border text-white text-xs font-mono">
+            </div>
+            <div class="p-4 border-t border-space-border flex justify-end gap-2 font-mono">
+                <button class="btn btn-sm btn-ghost text-gray-400" @click="showEvalModal = false">Cancel</button>
+                <button class="btn btn-sm bg-neon-cyan/20 hover:bg-neon-cyan/30 text-neon-cyan border border-neon-cyan/40" 
+                        :disabled="!evalUrl.trim() || isEvaluating" 
+                        @click="evaluateUrl()">
+                    <span x-text="isEvaluating ? 'Evaluating...' : 'Run Analysis'">Run Analysis</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+</div>

@@ -90,9 +90,13 @@ export function calculateEconomics(model, inputTokens, outputTokens, accountEmai
     const fractionalCogsUsd = (totalTokens / assumedMonthlyTokens) * poolMonthlyCostUsd;
     const actualCogsCad = fractionalCogsUsd * USD_TO_CAD;
     
+    // Real-Dollar ROI calculation
+    const realDollarRoiCad = marketValueCad - actualCogsCad;
+    
     return {
         poolId,
         marketValueCad,
-        actualCogsCad
+        actualCogsCad,
+        realDollarRoiCad
     };
 }

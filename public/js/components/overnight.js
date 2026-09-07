@@ -13,14 +13,76 @@ window.Components.overnight = () => ({
     logs: '',
     rawLog: '',
     deficits: [],
+    opportunityData: { domains: {}, stats: { total: 0, pending: 0, in_progress: 0, completed: 0 } },
+    claimingOpp: false,
+    reclaimingOpp: false,
+    selectedOppSector: 'all',
     hours: 8.0,
     testCmd: 'pytest tests/unit/test_lorax_engine.py',
     intervalSec: 30,
     loading: false,
     starting: false,
     stopping: false,
-    activeSubtab: 'overview', // 'overview' | 'report' | 'raw_logs'
+    activeSubtab: 'overview', // 'overview' | 'report' | 'raw_logs' | 'opportunities'
     pollTimer: null,
+
+    async fetchOpportunities() {
+        try {
+            const res = await fetch('/api/opportunity/list');
+            if (res.ok) {
+                const data = await res.json();
+                this.opportunityData = data;
+            }
+        } catch (e) {
+            console.error('Failed to fetch opportunities:', e);
+        }
+    },
+
+    async claimOpportunity(domain, taskName, budgetS = 1800) {
+        if (this.claimingOpp) return;
+        this.claimingOpp = true;
+        try {
+            const res = await fetch('/api/opportunity/claim', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ domain, budget_s: budgetS, claimer: 'operator_ui' })
+            });
+            const data = await res.json();
+            if (res.ok && data.success && data.claimed) {
+                if (Alpine.store('global')?.showToast) {
+                    Alpine.store('global').showToast(`Claimed: ${data.claimed.task.task}`, 'success');
+                }
+                await this.fetchOpportunities();
+            } else {
+                if (Alpine.store('global')?.showToast) {
+                    Alpine.store('global').showToast(`Could not claim: ${data.error || 'No match'}`, 'error');
+                }
+            }
+        } catch (e) {
+            console.error('Failed to claim opportunity:', e);
+        } finally {
+            this.claimingOpp = false;
+        }
+    },
+
+    async reclaimLeases() {
+        if (this.reclaimingOpp) return;
+        this.reclaimingOpp = true;
+        try {
+            const res = await fetch('/api/opportunity/reclaim', { method: 'POST' });
+            const data = await res.json();
+            if (res.ok && data.success) {
+                if (Alpine.store('global')?.showToast) {
+                    Alpine.store('global').showToast(`Reclaimed ${data.count} expired lease(s)`, 'info');
+                }
+                await this.fetchOpportunities();
+            }
+        } catch (e) {
+            console.error('Failed to reclaim leases:', e);
+        } finally {
+            this.reclaimingOpp = false;
+        }
+    },
 
     async fetchDeficits() {
         try {
@@ -132,10 +194,14 @@ window.Components.overnight = () => ({
         this.fetchStatus();
         this.fetchLogs();
         this.fetchDeficits();
+        this.fetchOpportunities();
         this.pollTimer = setInterval(() => {
             this.fetchStatus();
             if (this.activeSubtab !== 'overview') {
                 this.fetchLogs();
+            }
+            if (this.activeSubtab === 'opportunities') {
+                this.fetchOpportunities();
             }
             this.fetchDeficits();
         }, 5000);

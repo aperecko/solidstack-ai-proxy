@@ -877,6 +877,7 @@ export class AccountManager {
                 invalidReason: a.invalidReason || null,
                 verifyUrl: a.verifyUrl || null,
                 lastUsed: a.lastUsed,
+                quota: a.quota || {},
                 // Include quota threshold settings
                 quotaThreshold: a.quotaThreshold,
                 modelQuotaThresholds: a.modelQuotaThresholds || {}

@@ -34,7 +34,7 @@ cat > ~/.config/opencode/opencode.json <<'EOF'
 {
   "$schema": "https://opencode.ai/config.json",
   "provider": {
-    "antigravity": {
+    "solidstack": {
       "npm": "@ai-sdk/anthropic",
       "name": "Antigravity Local",
       "options": {
@@ -58,8 +58,8 @@ cat > ~/.config/opencode/opencode.json <<'EOF'
       }
     }
   },
-  "model": "antigravity/claude-sonnet-4-6",
-  "small_model": "antigravity/gemini-3.5-flash-low"
+  "model": "solidstack/claude-sonnet-4-6",
+  "small_model": "solidstack/gemini-3.5-flash-low"
 }
 EOF
 ```
@@ -88,7 +88,7 @@ opencode
 
 ## Switching Models
 
-Inside OpenCode, all registered models appear as `antigravity/<model-id>`. The `small_model` field handles background operations — setting it to a Gemini Flash model conserves your Claude quota, the same way `ANTHROPIC_DEFAULT_HAIKU_MODEL` works in Claude Code.
+Inside OpenCode, all registered models appear as `solidstack/<model-id>`. The `small_model` field handles background operations — setting it to a Gemini Flash model conserves your Claude quota, the same way `ANTHROPIC_DEFAULT_HAIKU_MODEL` works in Claude Code.
 
 ## Available Models
 

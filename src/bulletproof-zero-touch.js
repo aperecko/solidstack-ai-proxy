@@ -26,57 +26,31 @@ function getNextPendingAccounts(limit = 5) {
 }
 
 function dismissNativeDialogs() {
-    const script = `osascript -e '
-tell application "Google Chrome" to activate
-delay 0.1
-tell application "System Events"
-    key code 53 -- ESCAPE to dismiss Chrome profile popup
-end tell'`;
-    try { execSync(script); } catch (e) {}
+    // Deprecated: OS-level keyboard events removed to prevent focus stealing.
 }
 
-async function hardwareType(text) {
-    const safeText = text.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/'/g, "\\'");
-    execSync(`python3 -c "import pyautogui; pyautogui.typewrite('${safeText}', interval=0.03)"`);
+async function hardwareType(page, text) {
+    await page.keyboard.type(text, { delay: 30 });
 }
 
-async function hardwarePress(key) {
-    execSync(`python3 -c "import pyautogui; pyautogui.press('${key}')"`);
+async function hardwarePress(page, key) {
+    await page.keyboard.press(key);
 }
 
 async function hardwareClick(page, element) {
     try {
-        await element.scrollIntoViewIfNeeded();
-        const box = await element.boundingBox();
-        if (!box) return false;
-        
-        // Ensure Chrome is active so clicks hit it
-        execSync(`osascript -e 'tell application "Google Chrome" to activate'`);
-        await new Promise(r => setTimeout(r, 200));
-
-        const windowMetrics = await page.evaluate(() => {
-            return {
-                screenX: window.screenX,
-                screenY: window.screenY,
-                outerHeight: window.outerHeight,
-                innerHeight: window.innerHeight
-            };
-        });
-        
-        // outerHeight - innerHeight gives toolbar height. screenY is top of window.
-        // On Mac, mouse coords are in points, same as DOM coords!
-        const absX = windowMetrics.screenX + box.x + (box.width / 2);
-        const absY = windowMetrics.screenY + (windowMetrics.outerHeight - windowMetrics.innerHeight) + box.y + (box.height / 2);
-        
-        execSync(`python3 -c "import pyautogui; pyautogui.moveTo(${absX}, ${absY}, 0.25, pyautogui.easeOutQuad); pyautogui.click()"`);
+        await element.click();
         return true;
     } catch (e) {
         return false;
     }
 }
 
-async function clearField() {
-    execSync(`python3 -c "import pyautogui; pyautogui.hotkey('command', 'a'); pyautogui.press('backspace')"`);
+async function clearField(page) {
+    await page.keyboard.down('Meta');
+    await page.keyboard.press('a');
+    await page.keyboard.up('Meta');
+    await page.keyboard.press('Backspace');
     await new Promise(r => setTimeout(r, 100));
 }
 
@@ -89,30 +63,27 @@ async function onboardSingleAccount(email) {
     const authUrl = getAuthorizationUrl(redirectUri, email);
     const { promise, abort } = startCallbackServer(authUrl.state, 180000);
 
-    const tempDir = `/tmp/ag-zero-touch-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-
-    // Launch with stealth
+    // Using a persistent automation profile instead of a throwaway /tmp directory
+    const profileDir = '/Users/test/Library/Application Support/Google/Chrome_Automation';
+    
+    // Launch natively, no headless, no focus stealing
     const browser = await puppeteerExtra.launch({
         executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
         headless: false,
+        defaultViewport: null,
         ignoreDefaultArgs: ['--enable-automation'],
         args: [
             '--force-dark-mode',
-            '--window-size=1100,750',
-            `--user-data-dir=${tempDir}`,
+            `--user-data-dir=${profileDir}`,
+            '--profile-directory=Default',
             '--no-first-run',
             '--no-default-browser-check',
-            '--disable-sync', '--test-type',
-            '--disable-signin-scoped-device-id',
-            '--disable-features=SigninInterceptEnable,DiceWebSigninInterception,EnterpriseProfileCreation,ProfilePickerOnStartup,SigninProfileCreation,ProfileCustomization,Sync'
+            '--remote-debugging-port=9222',
         ]
     });
 
     const page = await browser.newPage();
     console.log("Navigating to OAuth...");
-    
-    // Bring window to front immediately
-    execSync(`osascript -e 'tell application "Google Chrome" to activate'`);
     
     await page.goto(authUrl.url, { waitUntil: 'domcontentloaded', timeout: 60000 });
     
@@ -125,188 +96,23 @@ async function onboardSingleAccount(email) {
     let pinEntered = false;
 
     let finished = false;
-    async function visionLoop(page, email) {
-        let loopCount = 0;
-        while (!finished && loopCount < 30) {
-            loopCount++;
-            await new Promise(r => setTimeout(r, 2000));
-            if (finished) break;
-            console.log(`📸 Vision Loop iteration ${loopCount} started...`);
-            
-            try {
-                // Ensure Chrome is active
-                execSync(`osascript -e 'tell application "Google Chrome" to activate'`);
-                
-                // Annotate the DOM
-                const elements = await page.evaluate(() => {
-                    document.querySelectorAll('.ag-vision-annotation').forEach(el => el.remove());
-                    let counter = 1;
-                    const elems = [];
-                    const interactiveSelectors = 'input:not([type="hidden"]), button, a[role="button"], a[href], [role="button"], [role="link"], [role="checkbox"], div[data-challengetype]';
-                    
-                    document.querySelectorAll(interactiveSelectors).forEach(el => {
-                        const rect = el.getBoundingClientRect();
-                        const style = window.getComputedStyle(el);
-                        if (rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none' && style.opacity !== '0' && rect.y >= 0 && rect.x >= 0 && rect.y <= window.innerHeight) {
-                            const id = counter++;
-                            elems.push({ id, x: rect.x + rect.width / 2, y: rect.y + rect.height / 2, width: rect.width, height: rect.height });
-                            
-                            const box = document.createElement('div');
-                            box.className = 'ag-vision-annotation';
-                            box.style.position = 'absolute';
-                            box.style.left = rect.x + 'px';
-                            box.style.top = rect.y + 'px';
-                            box.style.width = rect.width + 'px';
-                            box.style.height = rect.height + 'px';
-                            box.style.border = '2px solid red';
-                            box.style.zIndex = '999999';
-                            box.style.pointerEvents = 'none';
-                            
-                            const label = document.createElement('div');
-                            label.innerText = id;
-                            label.style.position = 'absolute';
-                            label.style.left = '0';
-                            label.style.top = '0';
-                            label.style.background = 'yellow';
-                            label.style.color = 'black';
-                            label.style.fontSize = '14px';
-                            label.style.fontWeight = 'bold';
-                            label.style.padding = '2px';
-                            label.style.border = '1px solid black';
-                            
-                            box.appendChild(label);
-                            document.body.appendChild(box);
-                        }
-                    });
-                    return elems;
-                });
-                
-                if (elements.length === 0) continue;
-                
-                // Take screenshot
-                const b64 = await page.screenshot({ encoding: 'base64', type: 'jpeg', quality: 60 });
-                
-                // Clean up annotations immediately
-                await page.evaluate(() => document.querySelectorAll('.ag-vision-annotation').forEach(el => el.remove()));
-                
-                // Call AI Proxy
-                const prompt = `You are a zero-touch browser automation agent.
-Our goal is to log into a Google Account for email: ${email}
-The default password to use if asked is: ${DEFAULT_PASSWORD}
-
-Analyze the screenshot. Interactive elements are outlined in red and numbered in yellow.
-Examine what step of the Google OAuth/Login flow we are currently on.
-
-If we need to click a button (like Next, Continue, Agree, I understand, or a challenge option), output:
-{ "action": "click", "id": <number> }
-
-If we need to type into a field (like email or password), output:
-{ "action": "type", "id": <number>, "text": "<text to type>" }
-
-If we are on a screen asking for a 6-digit verification code sent to apps@, output:
-{ "action": "intercept_code", "id": <number> }
-
-If the screen is loading or no action is needed right now, output:
-{ "action": "wait" }
-
-Respond ONLY with valid JSON. No markdown formatting.`;
-
-                let apiKey = '';
-                try {
-                    const s = JSON.parse(readFileSync(join(homedir(), '.config', 'antigravity-proxy', 'settings.json'), 'utf8'));
-                    apiKey = s.apiKey || '';
-                } catch(e) {}
-                
-                const headers = { 'Content-Type': 'application/json' };
-                if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
-                
-                const body = {
-                    model: 'gemini-3.7-flash-high',
-                    max_tokens: 300,
-                    messages: [
-                        {
-                            role: 'user',
-                            content: [
-                                { type: 'text', text: prompt },
-                                { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b64 } }
-                            ]
-                        }
-                    ]
-                };
-                
-                const res = await fetch('http://localhost:1987/v1/messages', {
-                    method: 'POST',
-                    headers,
-                    body: JSON.stringify(body)
-                });
-                
-                const data = await res.json();
-                if (!data || !data.content || !data.content[0]) {
-                    console.log('No valid response from AI:', data);
-                    continue;
-                }
-                
-                const textContent = data.content[0].text || '';
-                let command;
-                try {
-                    const clean = textContent.replace(/```json/g, '').replace(/```/g, '').trim();
-                    command = JSON.parse(clean);
-                } catch (e) {
-                    console.log(`Failed to parse AI response: ${textContent}`);
-                    continue;
-                }
-                
-                console.log(`🤖 AI Vision Decision:`, command);
-                
-                if (command.action === 'wait') continue;
-                
-                if (command.id) {
-                    const target = elements.find(e => e.id === command.id);
-                    if (target) {
-                        const windowMetrics = await page.evaluate(() => {
-                            return { screenX: window.screenX, screenY: window.screenY, outerHeight: window.outerHeight, innerHeight: window.innerHeight };
-                        });
-                        
-                        const absX = windowMetrics.screenX + target.x;
-                        const absY = windowMetrics.screenY + (windowMetrics.outerHeight - windowMetrics.innerHeight) + target.y;
-                        
-                        if (command.action === 'click') {
-                            execSync(`python3 -c "import pyautogui; pyautogui.moveTo(${absX}, ${absY}, 0.25, pyautogui.easeOutQuad); pyautogui.click()"`);
-                        } else if (command.action === 'type') {
-                            execSync(`python3 -c "import pyautogui; pyautogui.moveTo(${absX}, ${absY}, 0.25, pyautogui.easeOutQuad); pyautogui.click()"`);
-                            await new Promise(r => setTimeout(r, 400));
-                            execSync(`python3 -c "import pyautogui; pyautogui.hotkey('command', 'a'); pyautogui.press('backspace')"`);
-                            await new Promise(r => setTimeout(r, 100));
-                            
-                            const safeText = command.text.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/'/g, "\\'");
-                            execSync(`python3 -c "import pyautogui; pyautogui.typewrite('${safeText}', interval=0.03); pyautogui.press('enter')"`);
-                        } else if (command.action === 'intercept_code') {
-                            console.log(`📡 AI detected Pin input! Intercepting 6-digit code...`);
-                            try {
-                                const out = execSync(`python3 ss/recovery_listener.py "${email}" 25`, { cwd: '/Users/test/Projects/solidstack' }).toString();
-                                const jsonMatch = out.match(/\{[\s\S]*\}/);
-                                if (jsonMatch) {
-                                    const parsed = JSON.parse(jsonMatch[0]);
-                                    if (parsed.status === 'ok' && parsed.code) {
-                                        console.log(`🔑 Intercepted recovery code: ${parsed.code}!`);
-                                        execSync(`python3 -c "import pyautogui; pyautogui.moveTo(${absX}, ${absY}, 0.2, pyautogui.easeOutQuad); pyautogui.click()"`);
-                                        await new Promise(r => setTimeout(r, 400));
-                                        execSync(`python3 -c "import pyautogui; pyautogui.typewrite('${parsed.code}', interval=0.03); pyautogui.press('enter')"`);
-                                    }
-                                }
-                            } catch (recErr) {
-                                console.error('Recovery code listener error:', recErr.message);
-                            }
-                        }
-                    }
-                }
-            } catch (err) {
-                console.error('Vision loop error:', err.message);
+    
+    async function openclawHandoff(email) {
+        console.log(`🤖 Dispatching OpenClaw agent for ${email}...`);
+        try {
+            const playbookPath = join(process.cwd(), '..', 'openclaw_skills', 'swarm_auth_playbook.md');
+            if (existsSync(playbookPath)) {
+                // We use port 9222 which is the default for OpenClaw / agent-browser
+                execSync(`openclaw agent --message-file "${playbookPath}"`, { stdio: 'inherit' });
+            } else {
+                console.log(`OpenClaw playbook not found at ${playbookPath}, falling back to manual wait.`);
             }
+        } catch (e) {
+            console.log(`OpenClaw execution error: ${e.message}`);
         }
     }
     
-    visionLoop(page, email);
+    openclawHandoff(email);
 
     try {
         const code = await promise;

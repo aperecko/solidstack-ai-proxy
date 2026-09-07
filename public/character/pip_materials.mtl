@@ -1,0 +1,33 @@
+# Pip PBR Shaders
+
+newmtl slateFur
+Kd 0.29 0.42 0.51
+Ks 0.05 0.05 0.05
+Ns 10
+illum 2
+
+newmtl darkNavyFur
+Kd 0.13 0.21 0.27
+Ks 0.05 0.05 0.05
+Ns 10
+illum 2
+
+newmtl creamFur
+Kd 0.97 0.96 0.92
+Ks 0.02 0.02 0.02
+Ns 5
+illum 2
+
+newmtl amberEye
+Kd 0.96 0.62 0.04
+Ks 0.8 0.8 0.8
+Ns 120
+Ke 0.47 0.21 0.06
+illum 2
+
+newmtl nose
+Kd 0.13 0.13 0.13
+Ks 0.2 0.2 0.2
+Ns 30
+illum 2
+

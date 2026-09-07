@@ -10,7 +10,7 @@ window.Components.aiCopilot = () => ({
     messages: [],
     consensusResult: null,
     auditingPatch: false,
-    selectedModel: 'auto', // Defaults to AI Proxy Swarm Load Balancer
+    selectedModel: 'auto', // Defaults to SSC Swarm Load Balancer
 
     // Contextual Quick Actions per Active Tab
     get quickPrompts() {
@@ -40,7 +40,7 @@ window.Components.aiCopilot = () => ({
             ],
             processes: [
                 { label: '🔍 Audit Process Memory Drift', prompt: 'Inspect all active daemon PIDs and check for memory leaks or orphaned socket connections.' },
-                { label: '🚀 Verify Service Mobility', prompt: 'Check stationary vs mobile services across nodes SSDOCK, SRV, and AMACBOOKPRO.' }
+                { label: '🚀 Verify Service Mobility', prompt: 'Check stationary vs mobile local services across the macOS host (AMACBOOKPRO).' }
             ],
             skills: [
                 { label: '💡 Synthesize Idea Vault', prompt: 'Group and cluster all ideas in the Containment Vault. Identify 2 quick-win sprint tasks.' },
@@ -83,7 +83,7 @@ window.Components.aiCopilot = () => ({
         });
 
         try {
-            // Call AI Proxy endpoint
+            // Call SSC endpoint
             const res = await fetch('/v1/chat/completions', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },

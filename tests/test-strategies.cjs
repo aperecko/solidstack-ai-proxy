@@ -106,10 +106,10 @@ async function runTests() {
     // ==========================================================================
     console.log('\n─── HealthTracker Tests ───');
 
-    test('HealthTracker: initial score is 70 by default', () => {
+    test('HealthTracker: initial score is 100 by default', () => {
         const tracker = new HealthTracker();
         const score = tracker.getScore('new@example.com');
-        assertEqual(score, 70, 'Default initial score should be 70');
+        assertEqual(score, 100, 'Default initial score should be 100');
     });
 
     test('HealthTracker: custom initial score', () => {
@@ -710,6 +710,26 @@ async function runTests() {
         assertNotNull(result.account, 'Emergency fallback should return an account');
         // waitMs indicates fallback was used (250ms for emergency)
         assertTrue(result.waitMs >= 250, 'Emergency fallback should add throttle delay');
+    });
+
+    
+    test('HybridStrategy: fallbacks respect excludeAccounts (prevents ping-pong loop)', () => {
+        const strategy = new HybridStrategy({
+            healthScore: { initial: 40, minUsable: 50 }, // Force emergency
+            tokenBucket: { initialTokens: 50, maxTokens: 50 }
+        });
+        const accounts = [
+            { email: 'bad1@a.com', enabled: true },
+            { email: 'bad2@a.com', enabled: true },
+            { email: 'good@a.com', enabled: true } // Assuming no tokens forces lastResort
+        ];
+        
+        // Exclude the two bad accounts
+        const options = { excludeAccounts: ['bad1@a.com', 'bad2@a.com'] };
+        const result = strategy.selectAccount(accounts, 'model', options);
+        
+        // It must NOT pick bad1 or bad2
+        assertEqual(result.account.email, 'good@a.com', 'Should respect excludeAccounts in emergency fallback');
     });
 
     test('HybridStrategy: uses last resort fallback for accounts without tokens', () => {

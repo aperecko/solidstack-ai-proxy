@@ -221,6 +221,7 @@ function scheduleSharedServerClose() {
             logger.warn(`[OAuth] Error closing idle shared callback server: ${e.message}`);
         }
         sharedCallbackServer = null;
+        sharedServerPort = OAUTH_CONFIG.callbackPort;
     }, SHARED_SERVER_IDLE_CLOSE_MS);
 }
 
@@ -229,6 +230,8 @@ function ensureSharedCallbackServer(host) {
         cancelSharedServerClose();
         return Promise.resolve(sharedServerPort);
     }
+
+    sharedServerPort = OAUTH_CONFIG.callbackPort;
 
     return new Promise(async (resolve, reject) => {
         const portsToTry = [OAUTH_CONFIG.callbackPort, ...(OAUTH_CONFIG.callbackFallbackPorts || [])];
@@ -347,7 +350,7 @@ function ensureSharedCallbackServer(host) {
  * @param {number} timeoutMs - Timeout in milliseconds (default 120000)
  * @returns {{promise: Promise<string>, abort: Function, getPort: Function}} Object with promise, abort, and getPort functions
  */
-export function startCallbackServer(expectedState, timeoutMs = 120000) {
+export function startCallbackServer(expectedState, timeoutMs = 600000) {
     let timeoutId = null;
     let isAborted = false;
     const host = process.env.HOST || '0.0.0.0';
@@ -544,7 +547,7 @@ export async function discoverProjectId(accessToken) {
         const tierId = getDefaultTierId(loadCodeAssistData.allowedTiers) || 'FREE';
         logger.info(`[OAuth] Onboarding user with tier: ${tierId}`);
 
-        const onboardedProject = await onboardUser(accessToken, tierId);
+        const onboardedProject = await onboardUser(accessToken, tierId, 'aicode-consumers');
         if (onboardedProject) {
             logger.success(`[OAuth] Successfully onboarded, project: ${onboardedProject}`);
             return onboardedProject;

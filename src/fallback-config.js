@@ -19,11 +19,24 @@ const FALLBACK_CASCADE = {
     'claude-opus-4-6-thinking': ['claude-sonnet-4-6', 'gemini-3.8-flash-high', 'gemini-3.7-flash-high'],
     'claude-opus-4-6': ['claude-sonnet-4-6', 'gemini-3.8-flash-high', 'gemini-3.7-flash-high'],
     'claude-sonnet-4-6': ['gemini-3.8-flash-high', 'gemini-3.7-flash-high', 'gemini-3.1-flash-lite'],
+    'gemini-pro-agent': ['gemini-3.8-flash-high', 'gemini-3.8-flash-medium', 'gemini-3.7-flash-high', 'gemini-3.1-flash-lite'],
+    'gemini-flash-agent': ['gemini-3.8-flash-high', 'gemini-3.8-flash-medium', 'gemini-3.7-flash-high', 'gemini-3.1-flash-lite'],
     'gemini-3.1-pro-high': ['gemini-3.8-flash-high', 'gemini-3.7-flash-high', 'gemini-3.1-flash-lite'],
     'gemini-3.1-pro-low': ['gemini-3.8-flash-medium', 'gemini-3.7-flash-medium', 'gemini-3.1-flash-lite'],
+    'gemini-2.5-pro': ['gemini-3.8-flash-high', 'gemini-3.8-flash-medium', 'gemini-3.1-flash-lite'],
+    'gemini-2.5-flash-thinking': ['gemini-3.8-flash-high', 'gemini-3.8-flash-medium', 'gemini-3.1-flash-lite'],
     'gemini-3.8-flash-high': ['gemini-3.8-flash-medium', 'gemini-3.8-flash-low', 'gemini-3.7-flash-high', 'gemini-3.1-flash-lite'],
-    'gemini-3.7-flash-high': ['gemini-3.7-flash-medium', 'gemini-3.7-flash-low', 'gemini-3.8-flash-high', 'gemini-3.1-flash-lite'],
-    'gemini-3.7-flash-medium': ['gemini-3.8-flash-medium', 'gemini-3.8-flash-low', 'gemini-3.7-flash-low', 'gemini-3.1-flash-lite'],
+    'gemini-3.8-flash-medium': ['gemini-3.8-flash-low', 'gemini-3.7-flash-medium', 'gemini-3.1-flash-lite'],
+    // Was previously only a downstream target (never a key) - a 3.8-flash-low
+    // quota exhaustion had no configured next hop and fell straight through to
+    // the client as a raw 502 once account rotation was also exhausted.
+    // 3.8/3.7 flash tiers are G1-gated or frequently exhausted on the free-tier
+    // pool, so put the verified-working same-family model (3.1-flash-lite) FIRST
+    // in each chain instead of dead-ending on an exhausted intermediate (M7b).
+    'gemini-3.8-flash-low': ['gemini-3.1-flash-lite', 'gemini-3.7-flash-low', 'meta/llama-3.2-11b-vision-instruct'],
+    'gemini-3.7-flash-high': ['gemini-3.1-flash-lite', 'gemini-3.7-flash-medium', 'gemini-3.7-flash-low', 'gemini-3.8-flash-high'],
+    'gemini-3.7-flash-medium': ['gemini-3.1-flash-lite', 'gemini-3.8-flash-medium', 'gemini-3.8-flash-low', 'gemini-3.7-flash-low'],
+    'gemini-3.7-flash-low': ['gemini-3.1-flash-lite', 'gemini-3.8-flash-medium', 'gemini-3.8-flash-low'],
     'gemini-3.6-flash-high': ['gemini-3.6-flash-medium', 'gemini-3.6-flash-low', 'gemini-3.8-flash-high', 'gemini-3.1-flash-lite'],
     'gemini-3.1-flash-lite': ['meta/llama-3.2-11b-vision-instruct', 'gemma-4-26b-a4b-it'],
     'fcc-fast': ['meta/llama-3.2-11b-vision-instruct', 'gemini-3.1-flash-lite'],
@@ -37,22 +50,28 @@ const FALLBACK_CASCADE = {
  * 1. Static cascade (spec-defined Opus → Sonnet → Gemini Pro → Flash)
  * 2. Dynamic map (built from live data) appended as additional hops
  *
+ * Fallbacks are STRICTLY same-family: a claude request may only fall back to
+ * claude models, a gemini request only to gemini models, etc. Cross-family hops
+ * (e.g. claude-sonnet-4-6 → gemini, or gemini-3.1-flash-lite → llama NIM) are
+ * filtered out — they waste a pooled slot of one family on another's request.
+ *
  * @param {string} model - Primary model ID
  * @returns {string[]} Ordered fallback model IDs (empty if none)
  */
 export function getFallbackChain(model) {
     const chain = [];
     const seen = new Set([model]);
+    const srcFamily = getModelFamily(model);
 
     for (const fb of FALLBACK_CASCADE[model] || []) {
-        if (!seen.has(fb)) {
+        if (!seen.has(fb) && getModelFamily(fb) === srcFamily) {
             seen.add(fb);
             chain.push(fb);
         }
     }
 
     const dyn = dynamicFallbackMap[model];
-    if (dyn && !seen.has(dyn)) {
+    if (dyn && !seen.has(dyn) && getModelFamily(dyn) === srcFamily) {
         seen.add(dyn);
         chain.push(dyn);
     }

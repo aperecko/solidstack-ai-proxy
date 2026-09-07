@@ -26,39 +26,63 @@ document.addEventListener('alpine:init', () => {
     Alpine.data('uad', window.Components.uad);
     Alpine.data('workflow', window.Components.workflow);
     Alpine.data('aiCopilot', window.Components.aiCopilot);
+    Alpine.data('voiceMemos', window.Components.voiceMemos);
+    Alpine.data('swarm', window.Components.swarm);
+    Alpine.data('keyringWizard', window.Components.keyring);
+    Alpine.data('research', window.Components.research);
+    Alpine.data('prompt', window.Components.prompt);
+    Alpine.data('network', window.Components.network);
+    Alpine.data('evolution', window.Components.evolution);
+    Alpine.data('openclaw', window.Components.openclaw);
 
     // View Loader Directive
-    Alpine.directive('load-view', (el, { expression }, { evaluate }) => {
+    Alpine.directive('load-view', (el, { expression }, { evaluate, effect }) => {
         if (!window.viewCache) window.viewCache = new Map();
 
         // Evaluate the expression to get the actual view name (removes quotes)
         const viewName = evaluate(expression);
+        const showExpr = el.getAttribute('x-show');
+        let loaded = false;
 
-        if (window.viewCache.has(viewName)) {
-            el.innerHTML = window.viewCache.get(viewName);
-            Alpine.initTree(el);
-            return;
-        }
+        effect(() => {
+            if (loaded) return;
+            
+            // Only load if x-show condition is met (or if no x-show is present)
+            const isVisible = showExpr ? evaluate(showExpr) : true;
+            if (!isVisible) return;
+            
+            loaded = true;
 
-        fetch(`views/${viewName}.html?t=${Date.now()}`)
-            .then(response => {
-                if (!response.ok) throw new Error(`HTTP ${response.status}`);
-                return response.text();
-            })
-            .then(html => {
-                // Update cache (optional, or remove if we want always-fresh)
-                // keeping cache for session performance, but initial load will now bypass browser cache
-                window.viewCache.set(viewName, html);
-                el.innerHTML = html;
-                Alpine.initTree(el);
-            })
-            .catch(err => {
-                console.error('Failed to load view:', viewName, err);
-                el.innerHTML = `<div class="p-4 border border-red-500/50 bg-red-500/10 rounded-lg text-red-400 font-mono text-sm">
-                    Error loading view: ${viewName}<br>
-                    <span class="text-xs opacity-75">${err.message}</span>
-                </div>`;
-            });
+            if (window.viewCache.has(viewName)) {
+                requestAnimationFrame(() => {
+                    el.innerHTML = window.viewCache.get(viewName);
+                    Alpine.initTree(el);
+                });
+                return;
+            }
+
+            fetch(`views/${viewName}.html?t=${Date.now()}`)
+                .then(response => {
+                    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                    return response.text();
+                })
+                .then(html => {
+                    // Update cache (optional, or remove if we want always-fresh)
+                    // keeping cache for session performance, but initial load will now bypass browser cache
+                    window.viewCache.set(viewName, html);
+                    requestAnimationFrame(() => {
+                        el.innerHTML = html;
+                        Alpine.initTree(el);
+                    });
+                })
+                .catch(err => {
+                    console.error('Failed to load view:', viewName, err);
+                    el.innerHTML = `<div class="p-4 border border-red-500/50 bg-red-500/10 rounded-lg text-red-400 font-mono text-sm">
+                        Error loading view: ${viewName}<br>
+                        <span class="text-xs opacity-75">${err.message}</span>
+                    </div>`;
+                });
+        });
     });
 
     // Main App Controller
@@ -130,7 +154,11 @@ document.addEventListener('alpine:init', () => {
             if (this.refreshTimer) clearInterval(this.refreshTimer);
             const interval = parseInt(Alpine.store('settings')?.refreshInterval || 3);
             if (interval > 0) {
-                this.refreshTimer = setInterval(() => Alpine.store('data').fetchData(), interval * 1000);
+                this.refreshTimer = setInterval(() => {
+                    if (!document.hidden) {
+                        Alpine.store('data').fetchData();
+                    }
+                }, interval * 1000);
             }
         },
 
@@ -138,35 +166,6 @@ document.addEventListener('alpine:init', () => {
             return Alpine.store('global')?.t(key) || key;
         },
 
-                async autoAddSwarm(domain) {
-            Alpine.store('global').showToast('🤖 Finding next available account...', 'info');
-            try {
-                const res1 = await fetch('/api/swarm/next-pending?domain=' + encodeURIComponent(domain));
-                const data1 = await res1.json();
-                if (data1.status !== 'ok') {
-                    Alpine.store('global').showToast('Error: ' + data1.error, 'error');
-                    return;
-                }
-                const targetEmail = data1.email;
-                Alpine.store('global').showToast('🤖 Starting Zero-Touch robot for ' + targetEmail + '...', 'info');
-                
-                const res2 = await fetch('/api/swarm/auto-onboard', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email: targetEmail })
-                });
-                const data2 = await res2.json();
-                if (data2.status === 'ok') {
-                    Alpine.store('global').showToast('Zero-Touch robot running for ' + targetEmail + '!', 'success');
-                    const modal = document.getElementById('add_account_modal');
-                    if (modal) modal.close();
-                } else {
-                    Alpine.store('global').showToast('Error: ' + data2.error, 'error');
-                }
-            } catch (e) {
-                Alpine.store('global').showToast('Failed to launch auto-onboard: ' + e.message, 'error');
-            }
-        },
 
                 async addAccountWeb(reAuthEmail = null) {
             const password = Alpine.store('global').webuiPassword;

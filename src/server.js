@@ -17,14 +17,14 @@ import { fileURLToPath } from 'url';
 import { createProxyMiddleware } from 'http-proxy-middleware';
 import { sendMessage, sendMessageStream, listModels, fetchAvailableModels, getModelQuotas, getSubscriptionTier, isValidModel } from './cloudcode/index.js';
 import { parseResetTime } from './cloudcode/rate-limit-parser.js';
-import { buildFallbackMap, buildPresets, getModelFamily, GEMINI_SKIP_SIGNATURE } from './constants.js';
+import { buildFallbackMap, buildPresets, getModelFamily, resolveModelMapping, GEMINI_SKIP_SIGNATURE } from './constants.js';
 import { initFallbackMap, getFallbackChain } from './fallback-config.js';
 import { logRoutingTelemetry } from './cloudcode/routing-logger.js';
 import { mountWebUI } from './webui/index.js';
 import { keyringManager } from './providers/keyring-manager.js';
 import { config } from './config.js';
 import { globalThrottle } from './utils/throttle.js';
-import { recordRequest, getQuotaStatus } from './account-manager/quota-store.js';
+import { recordRequest, getQuotaStatus, isG1CreditExhausted, markG1CreditExhausted, G1_CREDIT_EXHAUSTED_COOLDOWN_MS } from './account-manager/quota-store.js';
 import { isAuthError, isRateLimitError, isCapacityExhaustedError, isAccountForbiddenError } from './errors.js';
 import { quotaRefreshSoon, setQuotaRefreshImpl } from './utils/quota-refresh.js';
 import { selectOptimalModel } from './routing/smart-router.js';
@@ -46,6 +46,7 @@ import autonomousJudge from './modules/autonomous-judge.js';
 import { injectActiveRules } from './modules/jit-injector.js';
 import { mountOpenAICompat, mountResponsesCompat } from './openai-compat.js';
 import { isNimEligible } from './providers/nvidia-nim.js';
+import { streamAgToNim, isAgNimOverflowArmed, NIM_OVERFLOW_MODEL, isAgNimModel, resolveNimModel } from './providers/gui-nim-overflow.js';
 import { createCommanderRouter } from './commander-api.js';
 import { getVerifiedModels } from './cloudcode/model-tester.js';
 import {
@@ -595,24 +596,35 @@ function forwardToGoogle(hostName, req, res, bodyText, account = null, model = n
             }
 
             if (statusCode === 429 && account && model) {
-                // Check if this is a CAPACITY_EXHAUSTED (503) error rather than a true rate limit
-                const isCapacityExhausted = errorText.toLowerCase().includes('capacity_exhausted') ||
-                                           errorText.toLowerCase().includes('resource_exhausted') ||
-                                           errorText.toLowerCase().includes('quota_exceeded') ||
-                                           errorText.toLowerCase().includes('insufficient quota');
-                if (isCapacityExhausted) {
-                    logger.warn(`[GUI Interceptor] ⚠️ Account ${account.email} CAPACITY_EXHAUSTED on ${model} — skipping rate-limit marking, will retry with next account.`);
-                    // Do NOT mark rate-limited (avoids IDE model lock-out UX), but DO
-                    // record a persistent health failure so the account is de-prioritized
-                    // on FUTURE requests too — not just excluded within this retry loop.
-                    // Without this, a poisoned account (e.g. exhausted on most models)
-                    // keeps winning selection on every new request via its tier/bonus
-                    // scoring while its quota data sits older than the 5min trust window.
-                    accountManager.notifyFailure(account, model);
+                let errObj = null;
+                try { errObj = JSON.parse(errorText); } catch (e) {}
+                const g1CooldownMs = isG1CreditExhausted(errObj) ||
+                    (errorText.includes('INSUFFICIENT_G1_CREDITS_BALANCE') || errorText.includes('"error_number": "2008"') ? G1_CREDIT_EXHAUSTED_COOLDOWN_MS : null);
+
+                if (g1CooldownMs) {
+                    markG1CreditExhausted('antigravity', account.email, model, g1CooldownMs);
+                    accountManager.markRateLimited(account.email, g1CooldownMs, model);
+                    logger.warn(`[GUI Interceptor] ⚠️ Account ${account.email} G1 credit exhausted on ${model} (error 2008). Cooling for ${Math.round(g1CooldownMs/1000)}s.`);
                 } else {
-                    const resetMs = parseResetTime(proxyRes, errorText) || (10 * 1000);
-                    accountManager.markRateLimited(account.email, resetMs, model);
-                    logger.warn(`[GUI Interceptor] ⚠️ Account ${account.email} 429 rate-limited / quota exhausted on ${model} (cooldown: ${Math.round(resetMs/1000)}s).`);
+                    // Check if this is a CAPACITY_EXHAUSTED (503) error rather than a true rate limit
+                    const isCapacityExhausted = errorText.toLowerCase().includes('capacity_exhausted') ||
+                                               errorText.toLowerCase().includes('resource_exhausted') ||
+                                               errorText.toLowerCase().includes('quota_exceeded') ||
+                                               errorText.toLowerCase().includes('insufficient quota');
+                    if (isCapacityExhausted) {
+                        logger.warn(`[GUI Interceptor] ⚠️ Account ${account.email} CAPACITY_EXHAUSTED on ${model} — skipping rate-limit marking, will retry with next account.`);
+                        // Do NOT mark rate-limited (avoids IDE model lock-out UX), but DO
+                        // record a persistent health failure so the account is de-prioritized
+                        // on FUTURE requests too — not just excluded within this retry loop.
+                        // Without this, a poisoned account (e.g. exhausted on most models)
+                        // keeps winning selection on every new request via its tier/bonus
+                        // scoring while its quota data sits older than the 5min trust window.
+                        accountManager.notifyFailure(account, model);
+                    } else {
+                        const resetMs = parseResetTime(proxyRes, errorText) || (10 * 1000);
+                        accountManager.markRateLimited(account.email, resetMs, model);
+                        logger.warn(`[GUI Interceptor] ⚠️ Account ${account.email} 429 rate-limited / quota exhausted on ${model} (cooldown: ${Math.round(resetMs/1000)}s).`);
+                    }
                 }
                 // Quota state just changed (cooldown/capacity event): schedule an on-demand
                 // sweep so the next selection sees fresh remainingFraction data. Throttled
@@ -648,7 +660,16 @@ function forwardToGoogle(hostName, req, res, bodyText, account = null, model = n
                 }
             } else if ((statusCode === 401 || statusCode === 403) && account) {
                 logger.warn(`[GUI Interceptor] ⚠️ Account ${account.email} error ${statusCode} on ${model || 'request'}: ${errorText.slice(0, 200)}`);
-                if (statusCode === 401 || errorText.toLowerCase().includes('not eligible') || errorText.toLowerCase().includes('violation of terms') || errorText.toLowerCase().includes('invalid_token')) {
+                let errObj = null;
+                try { errObj = JSON.parse(errorText); } catch (e) {}
+                const g1CooldownMs = isG1CreditExhausted(errObj) ||
+                    (errorText.includes('INSUFFICIENT_G1_CREDITS_BALANCE') || errorText.includes('"error_number": "2008"') ? G1_CREDIT_EXHAUSTED_COOLDOWN_MS : null);
+
+                if (g1CooldownMs && model) {
+                    markG1CreditExhausted('antigravity', account.email, model, g1CooldownMs);
+                    accountManager.markRateLimited(account.email, g1CooldownMs, model);
+                    logger.warn(`[GUI Interceptor] ⚠️ Account ${account.email} G1 credit exhausted on ${model} (error 2008, ${statusCode}). Cooling for ${Math.round(g1CooldownMs/1000)}s.`);
+                } else if (statusCode === 401 || errorText.toLowerCase().includes('not eligible') || errorText.toLowerCase().includes('violation of terms') || errorText.toLowerCase().includes('invalid_token')) {
                     accountManager.markInvalid(account.email, errorText);
                 } else {
                     accountManager.notifyFailure(account, model);
@@ -682,11 +703,13 @@ function forwardToGoogle(hostName, req, res, bodyText, account = null, model = n
             if (!res.headersSent) {
                 // If we ran out of retries for the CURRENT model (or the pool is empty),
                 // try to CASCADE to a fallback model before giving up completely.
-                if (retryCount < 3 && model && options.isMidSession) {
+                const currentHops = options.fallbackHops || 0;
+                if (currentHops < 3 && model) {
                     let fallbackAccount = null;
                     let fallbackModel = null;
+                    const requestedFamily = getModelFamily(options.originalModel || model);
                     for (const fb of getFallbackChain(model)) {
-                        if (getModelFamily(fb) !== getModelFamily(options.originalModel || model)) {
+                        if (getModelFamily(fb) !== requestedFamily) {
                             continue;
                         }
                         const fbResult = accountManager.selectAccount(fb, {
@@ -703,10 +726,10 @@ function forwardToGoogle(hostName, req, res, bodyText, account = null, model = n
                         try {
                             const nextToken = await accountManager.getTokenForAccount(fallbackAccount);
                             req.headers['authorization'] = `Bearer ${nextToken}`;
-                            logger.warn(`[GUI Interceptor] ⚠️ Pool for ${model} exhausted during retry. Cascading to fallback model: ${fallbackModel} via ${fallbackAccount.email}`);
+                            logger.warn(`[GUI Interceptor] ⚠️ Pool for ${model} exhausted during retry. Cascading to fallback model: ${fallbackModel} via ${fallbackAccount.email} (hop ${currentHops + 1})`);
                             
                             // Generate save reference and write payload to disk if not already done
-                            if (!options.injectedPrefixText && options.requestBodyObj) {
+                            if (options.isMidSession && !options.injectedPrefixText && options.requestBodyObj) {
                                 const convId = extractConversationId(options.requestBodyObj);
                                 const handover = getOrCreateHandoverAdvisory(convId, options.requestBodyObj, fallbackModel);
                                 options.fallbackSessionId = handover.fallbackSessionId;
@@ -725,7 +748,9 @@ function forwardToGoogle(hostName, req, res, bodyText, account = null, model = n
                                 }
                             } catch (e) {}
                             req.headers['content-length'] = Buffer.byteLength(newBodyText);
-                            return forwardToGoogle(hostName, req, res, newBodyText, fallbackAccount, fallbackModel, retryCount + 1, options);
+                            options.fallbackHops = currentHops + 1;
+                            options.originalModel = options.originalModel || model;
+                            return forwardToGoogle(hostName, req, res, newBodyText, fallbackAccount, fallbackModel, 0, options);
                         } catch (e) {
                             logger.error(`[GUI Interceptor] Failed to get token for fallback account ${fallbackAccount.email}: ${e.message}`);
                         }
@@ -1293,13 +1318,76 @@ app.use(async (req, res, next) => {
             }
 
             // Apply model aliases (e.g., claude-3-5-sonnet-latest -> claude-sonnet-4-6)
-            // BEFORE we check account quotas or fallbacks!
+            // BEFORE we check account quotas or fallbacks! Cross-family mappings
+            // (e.g. claude-sonnet-4-6 -> gemini-3.8-flash-high) are blocked.
             if (requestedModel) {
                 const modelMapping = config.modelMapping || {};
-                if (modelMapping[requestedModel] && modelMapping[requestedModel].mapping) {
-                    const mappedModel = modelMapping[requestedModel].mapping;
+                const mappedModel = resolveModelMapping(requestedModel, modelMapping);
+                if (mappedModel !== requestedModel) {
                     logger.info(`[GUI Interceptor] Mapping requested model ${requestedModel} -> ${mappedModel}`);
                     requestedModel = mappedModel;
+                }
+            }
+
+            // 1b. Direct NVIDIA NIM Dispatch (Selected via AG Model Picker)
+            // Allows trying and testing NVIDIA NIM models directly from the AG model list
+            // without requiring the Gemini account pool to be depleted!
+            if (isAIRequest && requestBodyText != null && isAgNimModel(requestedModel)) {
+                const effectiveNimModel = resolveNimModel(requestedModel);
+                logger.info(`[GUI Interceptor] 🎯 Direct NVIDIA NIM model selected in AG: ${requestedModel} -> ${effectiveNimModel}`);
+                try {
+                    const overflow = await streamAgToNim(requestBodyText, {
+                        model: effectiveNimModel,
+                        provider: 'nvidia',
+                        isDirect: true
+                    });
+                    if (overflow.ok && overflow.stream) {
+                        const nativeAccount = incomingTokenEmail || accountManager.getNativeIdeAccount()?.email || null;
+                        logRoutingTelemetry('NIM_DIRECT', {
+                            requestedModel,
+                            actualModel: effectiveNimModel,
+                            nativeAccount,
+                            selectedAccount: null,
+                            reason: 'User selected NVIDIA NIM model directly in AG model list',
+                        });
+                        logger.success(`[GUI Interceptor] 🚀 Direct AG→NIM streaming response started (${effectiveNimModel}, ~${overflow.estimatedTokens} tok est)`);
+                        res.writeHead(200, {
+                            'Content-Type': 'text/event-stream; charset=utf-8',
+                            'Cache-Control': 'no-cache',
+                            'Connection': 'keep-alive',
+                        });
+                        let clientGone = false;
+                        const onClose = () => { clientGone = true; };
+                        res.on('close', onClose);
+                        try {
+                            for await (const chunk of overflow.stream()) {
+                                if (clientGone) break;
+                                res.write(chunk);
+                            }
+                        } finally {
+                            res.removeListener('close', onClose);
+                        }
+                        if (!clientGone) res.end();
+                        return;
+                    } else if (overflow.error) {
+                        logger.warn(`[GUI Interceptor] Direct AG→NIM dispatch failed (${overflow.error})`);
+                        return res.status(502).json({
+                            error: {
+                                code: 502,
+                                message: `NVIDIA NIM dispatch failed: ${overflow.error}`,
+                                status: 'BAD_GATEWAY'
+                            }
+                        });
+                    }
+                } catch (directNimErr) {
+                    logger.error(`[GUI Interceptor] Direct AG→NIM error: ${directNimErr.message}`);
+                    return res.status(500).json({
+                        error: {
+                            code: 500,
+                            message: `NVIDIA NIM dispatch error: ${directNimErr.message}`,
+                            status: 'INTERNAL'
+                        }
+                    });
                 }
             }
 
@@ -1331,38 +1419,40 @@ app.use(async (req, res, next) => {
 
             let handoverAdvisoryText = null;
             if (!account && isAIRequest && requestedModel) {
-                if (isMidSession) {
-                    // GUI/IDE requests are ALWAYS Gemini-native payloads (contents/parts
-                    // schema) that get forwarded verbatim to the Gemini streamGenerateContent
-                    // endpoint with only the model name swapped. Falling back to a Claude
-                    // model name (e.g. the dynamic cross-family map in buildFallbackMap can
-                    // route gemini-3.7-flash-high -> claude-sonnet-4-6) makes Google reject
-                    // the mismatched model/schema combo with 400 INVALID_ARGUMENT
-                    // ("Request contains an invalid argument."). Restrict GUI fallback to
-                    // same-family models only.
-                    const requestedFamily = getModelFamily(requestedModel);
-                    for (const fb of getFallbackChain(requestedModel)) {
-                        if (getModelFamily(fb) !== requestedFamily) {
-                            logger.warn(`[GUI Interceptor] Skipping cross-family fallback ${fb} for ${requestedModel} (would be rejected by Gemini backend)`);
-                            continue;
-                        }
-                        const fbResult = accountManager.selectAccount(fb, {
-                            apiProfile: req?.apiProfile,
-                            incomingTokenEmail,
-                        });
-                        if (fbResult.account) {
-                            account = fbResult.account;
-                            fallbackModel = fb;
-                            
+                // GUI/IDE requests are ALWAYS Gemini-native payloads (contents/parts
+                // schema) that get forwarded verbatim to the Gemini streamGenerateContent
+                // endpoint with only the model name swapped. Falling back to a Claude
+                // model name (e.g. the dynamic cross-family map in buildFallbackMap can
+                // route gemini-3.7-flash-high -> claude-sonnet-4-6) makes Google reject
+                // the mismatched model/schema combo with 400 INVALID_ARGUMENT
+                // ("Request contains an invalid argument."). Restrict GUI fallback to
+                // same-family models only.
+                const requestedFamily = getModelFamily(requestedModel);
+                for (const fb of getFallbackChain(requestedModel)) {
+                    if (getModelFamily(fb) !== requestedFamily) {
+                        logger.warn(`[GUI Interceptor] Skipping cross-family fallback ${fb} for ${requestedModel} (would be rejected by Gemini backend)`);
+                        continue;
+                    }
+                    const fbResult = accountManager.selectAccount(fb, {
+                        apiProfile: req?.apiProfile,
+                        incomingTokenEmail,
+                    });
+                    if (fbResult.account) {
+                        account = fbResult.account;
+                        fallbackModel = fb;
+
+                        if (isMidSession) {
                             const convId = extractConversationId(requestBodyObj);
                             const handover = getOrCreateHandoverAdvisory(convId, requestBodyObj, fallbackModel);
                             fallbackSessionId = handover.fallbackSessionId;
                             handoverAdvisoryText = handover.injectedPrefixText;
-                            break;
                         }
+                        break;
                     }
-                } else {
-                    logger.warn(`[GUI Interceptor] Refusing fallback for new session on ${requestedModel} (Out of Capacity)`);
+                }
+
+                if (!account && !isMidSession) {
+                    logger.warn(`[GUI Interceptor] Refusing fallback for new session on ${requestedModel} (Out of Capacity — no same-family tier with available accounts)`);
                 }
             }
 
@@ -1395,6 +1485,49 @@ app.use(async (req, res, next) => {
                         reason: 'No accounts available in pool and no fallback model available',
                     });
                     logger.warn(`[GUI Interceptor] No accounts available for AI request to ${reqPath}`);
+
+                    // 3c. AG→NIM overflow (test-only, behind AG_NIM_OVERFLOW=1):
+                    // last resort before the 503. Only fires when the credit-guarded
+                    // keyring says NVIDIA overflow is armed AND we have a real AI body.
+                    if (isAIRequest && requestBodyText != null && isAgNimOverflowArmed()) {
+                        try {
+                            const overflow = await streamAgToNim(requestBodyText);
+                            if (overflow.ok && overflow.stream) {
+                                logRoutingTelemetry('NIM_OVERFLOW', {
+                                    requestedModel,
+                                    actualModel: NIM_OVERFLOW_MODEL,
+                                    nativeAccount,
+                                    selectedAccount: null,
+                                    reason: 'Gemini pool exhausted — NVIDIA overflow (test flag ON)',
+                                });
+                                logger.warn(`[GUI Interceptor] AG→NIM overflow handoff: ${requestedModel} → ${NIM_OVERFLOW_MODEL} (${overflow.estimatedTokens} tok est)`);
+                                res.writeHead(200, {
+                                    'Content-Type': 'text/event-stream; charset=utf-8',
+                                    'Cache-Control': 'no-cache',
+                                    'Connection': 'keep-alive',
+                                });
+                                let clientGone = false;
+                                const onClose = () => { clientGone = true; };
+                                res.on('close', onClose);
+                                try {
+                                    for await (const chunk of overflow.stream()) {
+                                        if (clientGone) break;
+                                        res.write(chunk);
+                                    }
+                                } finally {
+                                    res.removeListener('close', onClose);
+                                }
+                                if (!clientGone) res.end();
+                                return;
+                            }
+                            if (overflow.error && overflow.error !== 'overflow-not-armed') {
+                                logger.warn(`[GUI Interceptor] AG→NIM overflow unavailable (${overflow.error}) — falling through to 503`);
+                            }
+                        } catch (overflowErr) {
+                            logger.warn(`[GUI Interceptor] AG→NIM overflow error: ${overflowErr.message} — falling through to 503`);
+                        }
+                    }
+
                     quotaRefreshSoon();
                     return res.status(503).json({ error: 'No accounts available in pool' });
                 }
@@ -1714,7 +1847,14 @@ async function refreshAllQuotas() {
                 }
                 probed++;
                 const token = await accountManager.getTokenForAccount(account);
-                const projectId = account.subscription?.projectId || null;
+                // The shared free-tier alias (aicode-consumers) is bound to every
+                // account, but Google's fetchAvailableModels reports all-zeros for
+                // that project even for models that generate fine. Quota truth is
+                // per-account (null = account's own default project), so only use a
+                // real per-account project when one exists; never probe the shared
+                // alias (it self-poisons selection with fake 0% on every model).
+                const storedProject = account.subscription?.projectId || null;
+                const projectId = (storedProject && storedProject !== 'aicode-consumers') ? storedProject : null;
                 const quotas = await getModelQuotas(token, projectId);
                 const formattedQuotas = {};
                 for (const [modelId, info] of Object.entries(quotas)) {
@@ -1726,6 +1866,18 @@ async function refreshAllQuotas() {
                 }
                 account._cachedFormattedQuotas = formattedQuotas;
                 account._lastQuotaFetchTime = Date.now();
+                // Anti-poisoning guard: an all-zero result (every known model at 0%
+                // with a future reset) is what the shared aicode-consumers alias
+                // returns even for models that generate fine. Treat it as a failed
+                // probe: keep prior quota state (or empty) instead of writing a
+                // self-perpetuating all-locked state that benches every account.
+                const tracked = Object.values(formattedQuotas).filter(q => q.remainingFraction !== null && q.remainingFraction !== undefined);
+                const allZeroWithFutureReset = tracked.length > 0 &&
+                    tracked.every(q => q.remainingFraction <= 0.05 && q.resetTime && new Date(q.resetTime).getTime() > Date.now());
+                if (allZeroWithFutureReset) {
+                    logger.warn(`[Server] Quota sweep for ${account.email}: all-zero result looks poisoned (project ${projectId || '(default)'}); keeping prior quota state.`);
+                    return;
+                }
                 if (!account.quota) account.quota = {};
                 if (!account.quota.models) account.quota.models = {};
                 for (const [modelId, info] of Object.entries(formattedQuotas)) {
@@ -2185,7 +2337,13 @@ app.get('/account-limits', async (req, res) => {
 
                 try {
                     const token = await accountManager.getTokenForAccount(account);
-                    const projectId = account.subscription?.projectId || 'aicode-consumers';
+                    // Never probe the shared free-tier alias (aicode-consumers): it
+                    // returns all-zeros even for models that generate fine, and its
+                    // near-zero records self-persist here and bench selection. Use a
+                    // real per-account project when one exists, else the account's
+                    // own default (null).
+                    const storedProject = account.subscription?.projectId || null;
+                    const projectId = (storedProject && storedProject !== 'aicode-consumers') ? storedProject : null;
 
                     // Fetch fresh quotas using cached project ID
                     let quotas = {};
@@ -2199,6 +2357,18 @@ app.get('/account-limits', async (req, res) => {
 
                     // If quotas returned empty, preserve previous cache if exists
                     if (Object.keys(quotas).length === 0 && account.quota?.models && Object.keys(account.quota.models).length > 0) {
+                        quotas = account.quota.models;
+                    }
+
+                    // Anti-poisoning guard: an all-zero result (every model at 0%
+                    // with a future reset) is the shared-alias lie pattern. Fall
+                    // back to prior cache instead of persisting self-poisoning
+                    // near-zero records.
+                    const tracked = Object.values(quotas).filter(q => q && q.remainingFraction !== null && q.remainingFraction !== undefined);
+                    const allZeroWithFutureReset = tracked.length > 0 &&
+                        tracked.every(q => q.remainingFraction <= 0.05 && q.resetTime && new Date(q.resetTime).getTime() > Date.now());
+                    if (allZeroWithFutureReset && account.quota?.models && Object.keys(account.quota.models).length > 0) {
+                        logger.warn(`[Server] /account-limits quota for ${account.email}: all-zero result looks poisoned (project ${projectId || '(default)'}); keeping prior quota state.`);
                         quotas = account.quota.models;
                     }
 
@@ -2571,11 +2741,11 @@ app.post('/v1/messages', requireBillingGate, async (req, res) => {
             temperature
         } = req.body;
 
-        // Resolve model mapping if configured
+        // Resolve model mapping if configured (same-family only)
         let requestedModel = model || 'claude-3-5-sonnet-20241022';
         const modelMapping = config.modelMapping || {};
-        if (modelMapping[requestedModel] && modelMapping[requestedModel].mapping) {
-            const targetModel = modelMapping[requestedModel].mapping;
+        const targetModel = resolveModelMapping(requestedModel, modelMapping);
+        if (targetModel !== requestedModel) {
             logger.info(`[Server] Mapping model ${requestedModel} -> ${targetModel}`);
             requestedModel = targetModel;
         }

@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from 'fs';
+import fs, { readFileSync, writeFileSync } from 'fs';
 import { join } from 'path';
 import { homedir } from 'os';
 import puppeteer from 'puppeteer-core';
@@ -13,9 +13,6 @@ const VAULT_FILE = join(homedir(), '.config', 'antigravity-proxy', 'swarm-recove
 const DEFAULT_PASSWORD = process.env.DEFAULT_PASSWORD || 'Swarmd6f9b714!!2026';
 const TARGET_EMAIL = process.env.TARGET_EMAIL || '';
 const RECOVERY_EMAIL = process.env.RECOVERY_EMAIL || 'apps@reseller.mysolidstate.ca';
-// Headless by default so the script works from agents/launchd/SSH sessions.
-// Set HEADLESS=false to watch the login flow in a visible Chrome window.
-const HEADLESS = process.env.HEADLESS === 'false' ? false : 'new';
 
 const BATCH_SIZE = parseInt(process.env.BATCH_SIZE || '5', 10);
 const TARGET_DOMAIN = process.env.DOMAIN || '';
@@ -45,28 +42,13 @@ async function autoAuth() {
     }
     
     console.log(`Found ${pendingAccounts.length} accounts to authenticate.`);
-    console.log('Launching browser in incognito mode...');
-    
-    // Launch user's Chrome in an isolated incognito context
-    const browser = await puppeteer.launch({
-        executablePath: '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-        headless: HEADLESS,
-        defaultViewport: null,
-                args: [
-            '--window-size=1200,800',
-            '--disable-blink-features=AutomationControlled',
-            '--incognito',
-            '--no-first-run',
-            '--no-default-browser-check',
-            '--disable-sync',
-            '--disable-features=ProfilePickerOnStartup,SigninProfileCreation,EnterpriseProfileCreation,ProfileCustomization,Sync'
-        ]
-    });
 
-    // Keep base blank page open so browser process stays alive across loop
-    const basePages = await browser.pages();
-    const basePage = basePages[0] || await browser.newPage();
-    try { await basePage.goto('about:blank'); } catch (e) {}
+    // Attach to the already-running SolidStack Chrome fleet (Chrome_Automation on :9222).
+    // We never launch a private browser instance — operate on what's already open.
+    const browser = await puppeteer.connect({
+        browserURL: 'http://localhost:9222',
+        defaultViewport: null
+    });
 
     let successCount = 0;
 
@@ -80,14 +62,11 @@ async function autoAuth() {
             const authUrl = getAuthorizationUrl(redirectUri);
             const { promise, abort } = startCallbackServer(authUrl.state);
 
-            const page = await browser.newPage();
-            
-            // Clear all cookies and session data to ensure fresh login
-            try {
-                const client = await page.target().createCDPSession();
-                await client.send('Network.clearBrowserCookies');
-                await client.send('Network.clearBrowserCache');
-            } catch (e) {}
+            // Fresh incognito context per account — guaranteed-clean cookies for the
+            // OAuth flow WITHOUT touching the fleet's signed-in profiles/sessions.
+            const context = await browser.createBrowserContext();
+            const page = await context.newPage();
+            try { await context.clearCookies(); } catch (e) {}
 
             // Navigate to Google OAuth
             console.log(`Navigating to Google OAuth...`);
@@ -137,45 +116,30 @@ async function autoAuth() {
                     }
 
                     // 2. Handle "Try another way" if present
-                    const tryAnotherWay = await page.evaluate(() => {
-                        const buttons = Array.from(document.querySelectorAll('button, [role="button"], a'));
-                        for (const b of buttons) {
-                            if ((b.innerText || '').trim().toLowerCase() === 'try another way' && !b.disabled) {
-                                if (!b.id) b.id = 'try_another_' + Math.random().toString(36).slice(2);
-                                return '#' + b.id;
-                            }
+                    try {
+                        const tryAnotherWay = await page.$('aria/Try another way');
+                        if (tryAnotherWay) {
+                            await tryAnotherWay.click();
+                            console.log('Selected "Try another way"...');
+                            await new Promise(r => setTimeout(r, 1000));
+                            lastActionTime = Date.now();
+                            isActionInFlight = false;
+                            return;
                         }
-                        return null;
-                    });
-                    if (tryAnotherWay) {
-                        await page.click(tryAnotherWay);
-                        console.log('Selected "Try another way"...');
-                        await new Promise(r => setTimeout(r, 1000));
-                        lastActionTime = Date.now();
-                        isActionInFlight = false;
-                        return;
-                    }
+                    } catch (e) {}
 
                     // 3. Handle Backup Code Option Click
-                    const backupOption = await page.evaluate(() => {
-                        const els = Array.from(document.querySelectorAll('div[role="link"], div[role="button"], li, div[data-challengetype]'));
-                        for (const el of els) {
-                            const text = (el.innerText || '').toLowerCase();
-                            if ((text.includes('backup code') || text.includes('8-digit')) && !el.disabled) {
-                                if (!el.id) el.id = 'backup_opt_' + Math.random().toString(36).slice(2);
-                                return '#' + el.id;
-                            }
+                    try {
+                        const backupOption = await page.$('aria/Enter one of your 8-digit backup codes, aria/Get a verification code');
+                        if (backupOption) {
+                            await backupOption.click();
+                            console.log('Selected Backup Code option...');
+                            await new Promise(r => setTimeout(r, 1000));
+                            lastActionTime = Date.now();
+                            isActionInFlight = false;
+                            return;
                         }
-                        return null;
-                    });
-                    if (backupOption) {
-                        await page.click(backupOption);
-                        console.log('Selected Backup Code option...');
-                        await new Promise(r => setTimeout(r, 1000));
-                        lastActionTime = Date.now();
-                        isActionInFlight = false;
-                        return;
-                    }
+                    } catch (e) {}
 
                     // 4. Handle Backup Code Input Field
                     const backupInput = await page.$('input[type="tel"][name="idvPin"], input[name="Pin"], input[id="backupCodePin"], input[type="tel"]');
@@ -205,26 +169,17 @@ async function autoAuth() {
                     }
 
                     // 5. Handle Consent / Terms of Service ("I understand", "Accept", "Allow", "Continue")
-                    const consentSelector = await page.evaluate(() => {
-                        const targetTexts = ['i understand', 'accept', 'allow', 'continue', 'agree', 'confirm'];
-                        const elements = Array.from(document.querySelectorAll('button, [role="button"], a[role="button"]'));
-                        for (const el of elements) {
-                            const text = (el.innerText || el.textContent || '').trim().toLowerCase();
-                            if (targetTexts.some(t => text === t || text.includes(t)) && !el.disabled) {
-                                if (!el.id) el.id = 'target_consent_' + Math.random().toString(36).slice(2);
-                                return '#' + el.id;
-                            }
+                    try {
+                        const consentSelector = await page.$('aria/I understand, aria/Accept, aria/Allow, aria/Continue, aria/Agree, aria/Confirm');
+                        if (consentSelector) {
+                            await new Promise(r => setTimeout(r, 800)); // Natural pause before agreeing
+                            await consentSelector.click();
+                            console.log('Clicked consent / terms agreement button via Accessibility Tree.');
+                            lastActionTime = Date.now();
+                            isActionInFlight = false;
+                            return;
                         }
-                        return null;
-                    });
-                    if (consentSelector) {
-                        await new Promise(r => setTimeout(r, 800)); // Natural pause before agreeing
-                        await page.click(consentSelector);
-                        console.log('Clicked consent / terms agreement button.');
-                        lastActionTime = Date.now();
-                        isActionInFlight = false;
-                        return;
-                    }
+                    } catch (e) {}
 
                 } catch (e) {
                     // Ignore DOM navigation transient errors
@@ -291,7 +246,7 @@ async function autoAuth() {
             }
             
             try {
-                if (!page.isClosed()) await page.close();
+                if (!context.isClosed()) await context.close();
             } catch (e) {}
             
             // Brief pause between account logins
@@ -299,13 +254,15 @@ async function autoAuth() {
             
         } catch (error) {
             console.error(`❌ Failed to authenticate ${account.email}:`, error.message);
+            // Clean up any incognito context left mid-flow so nothing lingers on the fleet
+            try { if (typeof context !== 'undefined' && !context.isClosed()) await context.close(); } catch (e) {}
             console.log('Waiting 5s before trying next account...');
             await new Promise(r => setTimeout(r, 5000));
         }
     }
 
     console.log(`\nFinished! Successfully authenticated ${successCount}/${pendingAccounts.length} accounts.`);
-    try { await browser.close(); } catch (e) {}
+    try { await browser.disconnect(); } catch (e) {}
     process.exit(0);
 }
 

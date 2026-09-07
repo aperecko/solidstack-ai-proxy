@@ -236,7 +236,7 @@
              style="display: none;"></div>
 
         <!-- Sidebar -->
-        <div class="fixed top-14 bottom-0 left-0 z-40 bg-space-900 border-r border-space-border transition-all duration-300 shadow-2xl overflow-hidden lg:static lg:h-auto lg:shadow-none lg:flex-shrink-0"
+        <div class="fixed top-14 bottom-0 left-0 z-40 bg-space-900 border-r border-space-border transition-all duration-300 shadow-2xl overflow-hidden lg:static lg:h-full lg:shadow-none lg:flex-shrink-0"
              :class="{
                  'translate-x-0': sidebarOpen,
                  '-translate-x-full': !sidebarOpen,
@@ -247,7 +247,7 @@
              }">
              
             <!-- Inner Sidebar Content (Fixed Width to prevent squashing) -->
-            <div class="w-64 flex flex-col h-full pt-6 pb-4 flex-shrink-0">
+            <div class="w-64 flex flex-col h-full pt-6 pb-4 flex-shrink-0 overflow-y-auto custom-scrollbar">
                 <!-- Mobile Menu Header -->
                 <div class="flex items-center justify-between px-4 mb-6 lg:hidden">
                     <span class="text-sm font-bold text-white" x-text="$store.global.t('menu')">Menu</span>
@@ -380,6 +380,18 @@
                         <span>Infrastructure</span>
                     </button>
                     <button
+                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-cyan-500/10"
+                        :class="{'bg-cyan-500/20 text-cyan-400 shadow-[0_0_15px_rgba(6,182,212,0.2)]': $store.global.activeTab === 'location'}"
+                        @click="$store.global.activeTab = 'location'">
+                        <svg class="w-5 h-5 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                        <span>Travel & Location</span>
+                    </button>
+                    <button
                         class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-emerald-500/10"
                         :class="{'bg-emerald-500/20 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.2)]': $store.global.activeTab === 'philosophy'}"
                         @click="$store.global.activeTab = 'philosophy'">
@@ -429,97 +441,236 @@
                         </svg>
                         <span>Overnight Loop</span>
                     </button>
-
-                    <div class="px-4 mt-6">
-                        <button @click="fetch('/api/orchestrate/ai-stack', { method: 'POST' }).then(r => r.ok ? $store.global.showToast('AI Stack Orchestration Dispatched', 'success') : $store.global.showToast('Stack dispatch returned: ' + r.status, 'warning')).catch(e => $store.global.showToast('Dispatch error: ' + e.message, 'error'))" 
-                            class="w-full p-3 rounded-xl flex items-center justify-center gap-2 transition-all bg-emerald-500/20 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.2)] hover:bg-emerald-500/30 font-bold font-mono text-xs" 
-                            title="Start AI Stack (Port 1987)">
-                            <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                            </svg>
-                            Start AI Stack
-                        </button>
-                    </div>
                 </nav>
 
-                    <button
-                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
-                        :class="{'active': $store.global.activeTab === 'swarm'}"
-                        @click="$store.global.activeTab = 'swarm'">
-                        <span>Swarm</span>
-                    </button>
-                    <button
-                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
-                        :class="{'active': $store.global.activeTab === 'research'}"
-                        @click="$store.global.activeTab = 'research'">
-                        <span>Research</span>
-                    </button>
-                    <button
-                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
-                        :class="{'active': $store.global.activeTab === 'prompt'}"
-                        @click="$store.global.activeTab = 'prompt'">
-                        <span>Prompt</span>
-                    </button>
+                <!-- Self-Improvement -->
+                <div class="px-4 mt-8 mb-2 text-xs font-bold text-rose-500 uppercase tracking-widest hidden lg:block">
+                    Self-Improvement
+                </div>
+                <nav class="flex flex-col gap-1">
                     <button
                         class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
                         :class="{'active': $store.global.activeTab === 'evolution'}"
                         @click="$store.global.activeTab = 'evolution'">
+                        <svg class="w-5 h-5 text-rose-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                        </svg>
                         <span>Evolution</span>
+                    </button>
+                    <button
+                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
+                        :class="{'active': $store.global.activeTab === 'memory'}"
+                        @click="$store.global.activeTab = 'memory'">
+                        <svg class="w-5 h-5 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                        </svg>
+                        <span>Memory Router</span>
                     </button>
                     <button
                         class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
                         :class="{'active': $store.global.activeTab === 'consideration'}"
                         @click="$store.global.activeTab = 'consideration'">
+                        <svg class="w-5 h-5 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                        </svg>
                         <span>Consideration</span>
                     </button>
                     <button
                         class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
                         :class="{'active': $store.global.activeTab === 'alignment'}"
                         @click="$store.global.activeTab = 'alignment'">
+                        <svg class="w-5 h-5 text-teal-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                        </svg>
                         <span>Alignment</span>
                     </button>
                     <button
                         class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
                         :class="{'active': $store.global.activeTab === 'audit'}"
                         @click="$store.global.activeTab = 'audit'">
+                        <svg class="w-5 h-5 text-orange-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
                         <span>Audit</span>
                     </button>
                     <button
                         class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
                         :class="{'active': $store.global.activeTab === 'ui-evolution'}"
                         @click="$store.global.activeTab = 'ui-evolution'">
+                        <svg class="w-5 h-5 text-pink-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" />
+                        </svg>
                         <span>UI Evolution</span>
-                    </button>
-                    <button
-                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
-                        :class="{'active': $store.global.activeTab === 'network'}"
-                        @click="$store.global.activeTab = 'network'">
-                        <span>Network</span>
-                    </button>
-                    <button
-                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
-                        :class="{'active': $store.global.activeTab === 'openclaw'}"
-                        @click="$store.global.activeTab = 'openclaw'">
-                        <span>OpenClaw</span>
-                    </button>
-                    <button
-                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
-                        :class="{'active': $store.global.activeTab === 'workspace'}"
-                        @click="$store.global.activeTab = 'workspace'">
-                        <span>Workspace</span>
                     </button>
                     <button
                         class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
                         :class="{'active': $store.global.activeTab === 'containment'}"
                         @click="$store.global.activeTab = 'containment'">
+                        <svg class="w-5 h-5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+                        </svg>
                         <span>Containment</span>
+                    </button>
+                </nav>
+
+                <!-- Operator Support -->
+                <div class="px-4 mt-8 mb-2 text-xs font-bold text-rose-400 uppercase tracking-widest hidden lg:block">
+                    Operator Support
+                </div>
+                <nav class="flex flex-col gap-1">
+                    <button
+                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-rose-500/10"
+                        :class="{'bg-rose-500/20 text-rose-300 shadow-[0_0_15px_rgba(244,63,94,0.2)]': $store.global.activeTab === 'challenges'}"
+                        @click="$store.global.activeTab = 'challenges'">
+                        <svg class="w-5 h-5 text-rose-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" />
+                        </svg>
+                        <span>Challenges & Support</span>
+                    </button>
+                </nav>
+
+                <!-- Studios & Tools -->
+                <div class="px-4 mt-8 mb-2 text-xs font-bold text-sky-500 uppercase tracking-widest hidden lg:block">
+                    Studios & Tools
+                </div>
+                <nav class="flex flex-col gap-1">
+                    <button
+                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
+                        :class="{'active': $store.global.activeTab === 'swarm'}"
+                        @click="$store.global.activeTab = 'swarm'">
+                        <svg class="w-5 h-5 text-yellow-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                        </svg>
+                        <span>Swarm</span>
+                    </button>
+                    <button
+                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
+                        :class="{'active': $store.global.activeTab === 'research'}"
+                        @click="$store.global.activeTab = 'research'">
+                        <svg class="w-5 h-5 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
+                        <span>Research</span>
+                    </button>
+                    <button
+                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
+                        :class="{'active': $store.global.activeTab === 'prompt'}"
+                        @click="$store.global.activeTab = 'prompt'">
+                        <svg class="w-5 h-5 text-violet-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                        </svg>
+                        <span>Prompt Genius</span>
+                    </button>
+                    <button
+                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
+                        :class="{'active': $store.global.activeTab === 'openclaw'}"
+                        @click="$store.global.activeTab = 'openclaw'">
+                        <svg class="w-5 h-5 text-lime-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                        <span>OpenClaw</span>
+                    </button>
+                </nav>
+
+                <!-- Infrastructure -->
+                <div class="px-4 mt-8 mb-2 text-xs font-bold text-cyan-500 uppercase tracking-widest hidden lg:block">
+                    Infrastructure
+                </div>
+                <nav class="flex flex-col gap-1">
+                    <button
+                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
+                        :class="{'active': $store.global.activeTab === 'network'}"
+                        @click="$store.global.activeTab = 'network'">
+                        <svg class="w-5 h-5 text-cyan-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
+                        </svg>
+                        <span>Network</span>
+                    </button>
+                    <button
+                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
+                        :class="{'active': $store.global.activeTab === 'telemetry'}"
+                        @click="$store.global.activeTab = 'telemetry'">
+                        <svg class="w-5 h-5 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                        </svg>
+                        <span>Telemetry</span>
+                    </button>
+                    <button
+                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
+                        :class="{'active': $store.global.activeTab === 'workspace'}"
+                        @click="$store.global.activeTab = 'workspace'">
+                        <svg class="w-5 h-5 text-blue-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4" />
+                        </svg>
+                        <span>Workspace & DWD</span>
                     </button>
                     <button
                         class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
                         :class="{'active': $store.global.activeTab === 'compute'}"
                         @click="$store.global.activeTab = 'compute'">
-                        <span>Compute</span>
+                        <svg class="w-5 h-5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" />
+                        </svg>
+                        <span>Compute Fleet</span>
                     </button>
+                </nav>
+
+                <!-- Recovered Capabilities -->
+                <div class="px-4 mt-8 mb-2 text-xs font-bold text-fuchsia-400 uppercase tracking-widest hidden lg:block">
+                    Recovered Capabilities
+                </div>
+                <nav class="flex flex-col gap-1">
+                    <button
+                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
+                        :class="{'active': $store.global.activeTab === 'intent-lifecycle'}"
+                        @click="$store.global.activeTab = 'intent-lifecycle'">
+                        <svg class="w-5 h-5 text-fuchsia-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 10l-2 1m0 0l-2-1m2 1v2.5M20 7l-2 1m2-1l-2-1m2 1v2.5M14 4l-2-1-2 1M4 7l2-1M4 7l2 1M4 7v2.5M12 21l-2-1m2 1l2-1m-2 1v-2.5M6 18l-2-1v-2.5M18 18l2-1v-2.5" />
+                        </svg>
+                        <span>Intent & Lifecycle</span>
+                    </button>
+                    <button
+                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
+                        :class="{'active': $store.global.activeTab === 'daemons-cadence'}"
+                        @click="$store.global.activeTab = 'daemons-cadence'">
+                        <svg class="w-5 h-5 text-fuchsia-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <span>Daemons & Cadence</span>
+                    </button>
+                    <button
+                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
+                        :class="{'active': $store.global.activeTab === 'playbooks-experiments'}"
+                        @click="$store.global.activeTab = 'playbooks-experiments'">
+                        <svg class="w-5 h-5 text-fuchsia-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 002-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                        </svg>
+                        <span>Playbooks & Research</span>
+                    </button>
+                    <button
+                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
+                        :class="{'active': $store.global.activeTab === 'demos-proficiency'}"
+                        @click="$store.global.activeTab = 'demos-proficiency'">
+                        <svg class="w-5 h-5 text-fuchsia-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                        </svg>
+                        <span>Demos & Proficiency</span>
+                    </button>
+                </nav>
+
+
+                <!-- Orchestration Action -->
+                <div class="px-4 mt-6">
+                    <button @click="fetch('/api/orchestrate/ai-stack', { method: 'POST' }).then(r => r.ok ? $store.global.showToast('AI Stack Orchestration Dispatched', 'success') : $store.global.showToast('Stack dispatch returned: ' + r.status, 'warning')).catch(e => $store.global.showToast('Dispatch error: ' + e.message, 'error'))" 
+                        class="w-full p-3 rounded-xl flex items-center justify-center gap-2 transition-all bg-emerald-500/20 text-emerald-400 shadow-[0_0_15px_rgba(16,185,129,0.2)] hover:bg-emerald-500/30 font-bold font-mono text-xs" 
+                        title="Start AI Stack (Port 1987)">
+                        <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                        </svg>
+                        Start AI Stack
+                    </button>
+                </div>
                 <div class="px-4 mt-8 mb-2 text-xs font-bold text-gray-600 uppercase tracking-widest"
                     x-text="$store.global.t('system')">System</div>
                 <nav class="flex flex-col gap-1">
@@ -622,7 +773,7 @@
                 class="w-full"></div>
 
             <!-- Agent Skills -->
-            <div x-show="$store.global.activeTab === 'agent-skills'" x-load-view="'skills'"
+            <div x-show="$store.global.activeTab === 'agent-skills' || $store.global.activeTab === 'skills'" x-load-view="'skills'"
                 x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from"
                 class="w-full h-full flex flex-col"></div>
 
@@ -637,6 +788,11 @@
                 class="w-full h-full"></div>
 
             <!-- Philosophy & Domains -->
+            
+            <div x-show="$store.global.activeTab === 'challenges'" x-load-view="'challenges'"
+                 x-transition:enter="transition-all ease-in-out duration-300"
+                 x-transition:enter-start="opacity-0 translate-y-4"
+                 x-transition:enter-end="opacity-100 translate-y-0" class="h-full"></div>
             <div x-show="$store.global.activeTab === 'philosophy'" x-load-view="'philosophy'"
                 x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from"
                 class="w-full h-full"></div>
@@ -654,16 +810,25 @@
             <div x-show="$store.global.activeTab === 'swarm'" x-load-view="'swarm'" x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from" class="w-full"></div>
             <div x-show="$store.global.activeTab === 'research'" x-load-view="'research'" x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from" class="w-full"></div>
             <div x-show="$store.global.activeTab === 'prompt'" x-load-view="'prompt'" x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from" class="w-full"></div>
+            <div x-show="$store.global.activeTab === 'openclaw'" x-load-view="'openclaw'" x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from" class="w-full"></div>
             <div x-show="$store.global.activeTab === 'evolution'" x-load-view="'evolution'" x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from" class="w-full"></div>
+            <div x-show="$store.global.activeTab === 'ui-evolution'" x-load-view="'ui-evolution'" x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from" class="w-full"></div>
+
+            <!-- Recovered Capability Views -->
+            <div x-show="$store.global.activeTab === 'memory'" x-load-view="'memory'" x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from" class="w-full"></div>
+            <div x-show="$store.global.activeTab === 'intent-lifecycle'" x-load-view="'intent-lifecycle'" x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from" class="w-full"></div>
+            <div x-show="$store.global.activeTab === 'daemons-cadence'" x-load-view="'daemons-cadence'" x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from" class="w-full"></div>
+            <div x-show="$store.global.activeTab === 'playbooks-experiments'" x-load-view="'playbooks-experiments'" x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from" class="w-full"></div>
+            <div x-show="$store.global.activeTab === 'demos-proficiency'" x-load-view="'demos-proficiency'" x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from" class="w-full"></div>
             <div x-show="$store.global.activeTab === 'consideration'" x-load-view="'consideration'" x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from" class="w-full"></div>
             <div x-show="$store.global.activeTab === 'alignment'" x-load-view="'alignment'" x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from" class="w-full"></div>
             <div x-show="$store.global.activeTab === 'audit'" x-load-view="'audit'" x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from" class="w-full"></div>
-            <div x-show="$store.global.activeTab === 'ui-evolution'" x-load-view="'ui-evolution'" x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from" class="w-full"></div>
             <div x-show="$store.global.activeTab === 'network'" x-load-view="'network'" x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from" class="w-full"></div>
-            <div x-show="$store.global.activeTab === 'openclaw'" x-load-view="'openclaw'" x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from" class="w-full"></div>
+            <div x-show="$store.global.activeTab === 'telemetry'" x-load-view="'telemetry'" x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from" class="w-full h-full"></div>
             <div x-show="$store.global.activeTab === 'workspace'" x-load-view="'workspace'" x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from" class="w-full"></div>
             <div x-show="$store.global.activeTab === 'containment'" x-load-view="'containment'" x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from" class="w-full"></div>
             <div x-show="$store.global.activeTab === 'compute'" x-load-view="'compute'" x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from" class="w-full"></div>
+            <div x-show="$store.global.activeTab === 'location'" x-load-view="'location'" x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from" class="w-full h-full"></div>
         </div>
     </div>
 
@@ -1060,6 +1225,7 @@
     <script src="js/components/network.js"></script>
     <script src="js/components/keyring.js"></script>
     <script src="js/components/evolution.js"></script>
+    <script src="js/components/openclaw.js"></script>
 
     <!-- 4. App (registers Alpine components from window.Components) -->
     <script src="app.js?v=3.2.0"></script>

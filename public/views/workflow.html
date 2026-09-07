@@ -9,8 +9,15 @@
             </div>
         </div>
         <div class="flex items-center gap-3">
+            <!-- Search Bar -->
+            <div class="relative">
+                <input type="text" x-model="searchQuery" placeholder="Search 54 tasks..." 
+                       class="h-8 px-3 pr-8 rounded-lg bg-space-900 border border-space-border/60 text-xs font-mono text-white placeholder-gray-500 focus:border-neon-purple focus:outline-none w-48 sm:w-60 transition-all" />
+                <span x-show="searchQuery" @click="searchQuery = ''" class="absolute right-2.5 top-2 text-xs text-gray-500 hover:text-white cursor-pointer">&times;</span>
+            </div>
+
             <!-- Role Filter Pills -->
-            <div class="flex items-center gap-1.5" x-show="roles && roles.length > 1">
+            <div class="hidden sm:flex items-center gap-1.5" x-show="roles && roles.length > 1">
                 <template x-for="r in roles" :key="r">
                     <button @click="selectedRole = r" 
                             class="px-2.5 py-1 rounded-lg text-xs font-mono transition-all border"
@@ -19,10 +26,34 @@
                     </button>
                 </template>
             </div>
-            <button class="btn btn-sm bg-neon-purple hover:bg-purple-600 border-none text-white shadow-lg shadow-neon-purple/20 gap-2 font-mono text-xs" @click="syncWorkflow()" :disabled="isSyncing">
+            <button class="btn btn-sm bg-neon-purple hover:bg-purple-600 border-none text-white shadow-lg shadow-neon-purple/20 gap-2 font-mono text-xs cursor-pointer" @click="syncWorkflow()" :disabled="isSyncing">
                 <svg class="w-3.5 h-3.5" :class="{'animate-spin': isSyncing}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
                 <span x-text="isSyncing ? 'Syncing...' : 'Sync Workflow'"></span>
             </button>
+        </div>
+    </div>
+
+    <!-- Summary Metrics Row -->
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
+        <div class="bg-space-900/60 border border-space-border/40 rounded-xl p-3">
+            <div class="text-[10px] uppercase font-mono text-gray-400 mb-0.5">Total Tasks</div>
+            <div class="text-xl font-mono font-bold text-white" x-text="`${activeTasks.length + pendingTasks.length + completedTasks.length} tasks`">54 tasks</div>
+            <div class="text-[10px] text-gray-500">TASK_QUEUE.md registry</div>
+        </div>
+        <div class="bg-space-900/60 border border-space-border/40 rounded-xl p-3">
+            <div class="text-[10px] uppercase font-mono text-gray-400 mb-0.5">Active In-Progress</div>
+            <div class="text-xl font-mono font-bold text-neon-green" x-text="`${activeTasks.length} active`">2 active</div>
+            <div class="text-[10px] text-gray-500">Currently executing</div>
+        </div>
+        <div class="bg-space-900/60 border border-space-border/40 rounded-xl p-3">
+            <div class="text-[10px] uppercase font-mono text-gray-400 mb-0.5">Pending Queue</div>
+            <div class="text-xl font-mono font-bold text-amber-400" x-text="`${pendingTasks.length} queued`">25 queued</div>
+            <div class="text-[10px] text-gray-500">Staged work items</div>
+        </div>
+        <div class="bg-space-900/60 border border-space-border/40 rounded-xl p-3">
+            <div class="text-[10px] uppercase font-mono text-gray-400 mb-0.5">Completed</div>
+            <div class="text-xl font-mono font-bold text-neon-cyan" x-text="`${completedTasks.length} verified`">26 verified</div>
+            <div class="text-[10px] text-gray-500">Merged & production-ready</div>
         </div>
     </div>
 

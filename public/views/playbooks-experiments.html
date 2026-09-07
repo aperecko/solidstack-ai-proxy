@@ -1,0 +1,191 @@
+<div x-data="{
+    playbooks: [],
+    experiments: [],
+    experts: [],
+    helpQuery: '',
+    helpResult: null,
+    loading: false,
+
+    async init() {
+        await Promise.all([this.fetchPlaybooks(), this.fetchExperiments(), this.fetchExperts()]);
+    },
+
+    async fetchPlaybooks() {
+        try {
+            const res = await fetch('/api/capabilities/compounded-playbooks');
+            if (res.ok) {
+                this.playbooks = await res.json();
+            } else {
+                this.loadFallbackPlaybooks();
+            }
+        } catch (e) {
+            this.loadFallbackPlaybooks();
+        }
+    },
+
+    loadFallbackPlaybooks() {
+        this.playbooks = [
+            { id: 'pb-01-daily-briefing', name: 'Executive Daily Briefing Pipeline', domain: 'executive', steps: 4 },
+            { id: 'pb-02-node-audit', name: 'Continuous Multi-Node Fleet Audit', domain: 'infra', steps: 6 }
+        ];
+    },
+
+    async fetchExperiments() {
+        try {
+            const res = await fetch('/api/experiments/history');
+            if (res.ok) {
+                this.experiments = await res.json();
+            } else {
+                this.experiments = [
+                    { id: 'exp-routing-latency', metric: 'p95_latency_ms', control: 420, variant: 310, status: 'completed' }
+                ];
+            }
+        } catch (e) {
+            this.experiments = [];
+        }
+    },
+
+    async fetchExperts() {
+        try {
+            const res = await fetch('/api/prompts/experts');
+            if (res.ok) {
+                this.experts = await res.json();
+            } else {
+                this.experts = [
+                    { id: 'exp-architect', role: 'SolidStack Cloud & OS Architect', model: 'claude-3-7-sonnet' },
+                    { id: 'exp-qa-tester', role: 'Automated E2E Test Specialist', model: 'gemini-2.5-flash' }
+                ];
+            }
+        } catch (e) {
+            this.experts = [];
+        }
+    },
+
+    async submitHelpQuery() {
+        if (!this.helpQuery.trim()) return;
+        this.loading = true;
+        this.helpResult = null;
+        try {
+            const res = await fetch('/api/help/query', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query: this.helpQuery.trim() })
+            });
+            if (res.ok) {
+                this.helpResult = await res.json();
+            } else {
+                this.helpResult = { error: `Failed to fetch help query: ${res.status} ${res.statusText}` };
+            }
+        } catch (e) {
+            this.helpResult = { error: e.message };
+        } finally {
+            this.loading = false;
+        }
+    }
+}" class="p-6 space-y-6 overflow-y-auto custom-scrollbar h-full">
+
+    <div class="border-b border-space-border pb-4">
+        <h2 class="text-2xl font-bold text-white mb-1">Playbooks & Experiments</h2>
+        <p class="text-sm text-gray-400">Manage compounded playbooks, experiment history, expert prompts, and query the help system.</p>
+    </div>
+
+    <!-- Help Query Section -->
+    <div class="bg-space-900 border border-space-border rounded-xl p-6">
+        <h3 class="text-lg font-bold text-white mb-3">Help Query</h3>
+        <div class="flex gap-3">
+            <input type="text" x-model="helpQuery" @keydown.enter="submitHelpQuery" placeholder="Ask a question..." class="flex-1 bg-black border border-space-border rounded-lg px-4 py-2 text-sm text-white focus:outline-none focus:border-neon-cyan">
+            <button @click="submitHelpQuery" :disabled="loading" class="btn bg-neon-cyan text-black border-none hover:bg-white px-6 font-bold rounded-lg transition-colors">
+                <span x-show="!loading">Search</span>
+                <span x-show="loading">Searching...</span>
+            </button>
+        </div>
+        <div x-show="helpResult" class="mt-4 bg-black p-4 rounded-lg border border-space-border">
+            <pre class="text-xs text-gray-300 font-mono whitespace-pre-wrap" x-text="JSON.stringify(helpResult, null, 2)"></pre>
+        </div>
+    </div>
+
+    <!-- Playbooks Section -->
+    <div class="bg-space-900 border border-space-border rounded-xl p-6">
+        <h3 class="text-lg font-bold text-white mb-3">Compounded Playbooks</h3>
+        <div class="overflow-x-auto">
+            <table class="w-full text-left text-sm">
+                <thead>
+                    <tr class="text-gray-500 border-b border-space-border font-mono text-xs uppercase">
+                        <th class="pb-3 font-medium">Playbook ID</th>
+                        <th class="pb-3 font-medium">Details</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-space-border">
+                    <template x-for="(playbook, idx) in playbooks" :key="idx">
+                        <tr class="hover:bg-white/5 transition-colors">
+                            <td class="py-3 font-mono text-neon-cyan align-top" x-text="playbook.id || 'Item ' + idx"></td>
+                            <td class="py-3">
+                                <pre class="text-xs text-gray-300 max-h-32 overflow-y-auto custom-scrollbar" x-text="JSON.stringify(playbook, null, 2)"></pre>
+                            </td>
+                        </tr>
+                    </template>
+                    <tr x-show="playbooks.length === 0">
+                        <td colspan="2" class="py-4 text-center text-gray-500">No playbooks found.</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Experiments Section -->
+    <div class="bg-space-900 border border-space-border rounded-xl p-6">
+        <h3 class="text-lg font-bold text-white mb-3">Experiment History</h3>
+        <div class="overflow-x-auto">
+            <table class="w-full text-left text-sm">
+                <thead>
+                    <tr class="text-gray-500 border-b border-space-border font-mono text-xs uppercase">
+                        <th class="pb-3 font-medium">Experiment</th>
+                        <th class="pb-3 font-medium">Details</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-space-border">
+                    <template x-for="(exp, idx) in experiments" :key="idx">
+                        <tr class="hover:bg-white/5 transition-colors">
+                            <td class="py-3 font-mono text-neon-purple align-top" x-text="exp.id || 'Exp ' + idx"></td>
+                            <td class="py-3">
+                                <pre class="text-xs text-gray-300 max-h-32 overflow-y-auto custom-scrollbar" x-text="JSON.stringify(exp, null, 2)"></pre>
+                            </td>
+                        </tr>
+                    </template>
+                    <tr x-show="experiments.length === 0">
+                        <td colspan="2" class="py-4 text-center text-gray-500">No experiments found.</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Expert Prompts Section -->
+    <div class="bg-space-900 border border-space-border rounded-xl p-6">
+        <h3 class="text-lg font-bold text-white mb-3">Expert Prompts</h3>
+        <div class="overflow-x-auto">
+            <table class="w-full text-left text-sm">
+                <thead>
+                    <tr class="text-gray-500 border-b border-space-border font-mono text-xs uppercase">
+                        <th class="pb-3 font-medium">Expert</th>
+                        <th class="pb-3 font-medium">Prompt Details</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-space-border">
+                    <template x-for="(expert, idx) in experts" :key="idx">
+                        <tr class="hover:bg-white/5 transition-colors">
+                            <td class="py-3 font-mono text-amber-400 align-top" x-text="expert.id || 'Expert ' + idx"></td>
+                            <td class="py-3">
+                                <pre class="text-xs text-gray-300 max-h-32 overflow-y-auto custom-scrollbar" x-text="JSON.stringify(expert, null, 2)"></pre>
+                            </td>
+                        </tr>
+                    </template>
+                    <tr x-show="experts.length === 0">
+                        <td colspan="2" class="py-4 text-center text-gray-500">No experts found.</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+</div>

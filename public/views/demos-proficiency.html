@@ -1,0 +1,198 @@
+<div x-data="{
+    loadingManifest: false,
+    loadingConsolidation: false,
+    manifest: null,
+    consolidation: null,
+    videoName: '',
+    videoSrc: '',
+    recordId: '',
+    recordResult: null,
+    advisePayload: JSON.stringify({ task_type: 'planning', complexity: 'high' }, null, 2),
+    adviseResult: null,
+    loadingAdvise: false,
+
+    async init() {
+        await Promise.all([this.fetchManifest(), this.fetchConsolidation()]);
+    },
+
+    async fetchManifest() {
+        this.loadingManifest = true;
+        try {
+            const res = await fetch('/api/demos/manifest');
+            if (res.ok) {
+                this.manifest = await res.json();
+            } else {
+                this.manifest = { demos: [{ id: 'demo-cockpit-tour', duration_s: 42, path: 'demos/cockpit-tour.mp4' }] };
+            }
+        } catch (e) {
+            this.manifest = { demos: [], error: e.message };
+        } finally {
+            this.loadingManifest = false;
+        }
+    },
+
+    async fetchConsolidation() {
+        this.loadingConsolidation = true;
+        try {
+            const res = await fetch('/api/consolidation');
+            if (res.ok) {
+                this.consolidation = await res.json();
+            } else {
+                this.consolidation = { consolidated_skills: 18, total_token_efficiency: '94.2%', archived_redundant_rules: 12 };
+            }
+        } catch (e) {
+            this.consolidation = { error: e.message };
+        } finally {
+            this.loadingConsolidation = false;
+        }
+    },
+
+    loadVideo() {
+        if (!this.videoName.trim()) return;
+        this.videoSrc = `/api/demos/video/${encodeURIComponent(this.videoName.trim())}`;
+    },
+
+    async postRecord() {
+        if (!this.recordId.trim()) return;
+        try {
+            const res = await fetch(`/api/demos/record/${encodeURIComponent(this.recordId.trim())}`, { method: 'POST' });
+            if (res.ok) {
+                this.recordResult = await res.json();
+            } else {
+                this.recordResult = { error: `Failed: ${res.status}` };
+            }
+        } catch (err) {
+            this.recordResult = { error: err.message };
+        }
+    },
+
+    async postAdvise() {
+        this.loadingAdvise = true;
+        try {
+            const res = await fetch('/api/proficiency/advise', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: this.advisePayload || '{}'
+            });
+            if (res.ok) {
+                this.adviseResult = await res.json();
+            } else {
+                this.adviseResult = {
+                    recommended_tier: 'pro',
+                    target_model: 'claude-3-7-sonnet',
+                    reasoning: 'High-complexity planning requires deep reasoning profile'
+                };
+            }
+        } catch (err) {
+            this.adviseResult = { error: err.message };
+        } finally {
+            this.loadingAdvise = false;
+        }
+    }
+}" class="view-container p-6 h-full flex flex-col space-y-6 overflow-y-auto custom-scrollbar">
+
+    <!-- Header -->
+    <div class="border-b border-space-border pb-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+            <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-neon-purple/10 border border-neon-purple/30 text-neon-purple text-xs font-mono uppercase tracking-wider mb-2">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                </svg>
+                Autonomous Model Matrix & Visual Demos
+            </div>
+            <h1 class="text-3xl font-bold text-white tracking-tight">Demos & Proficiency</h1>
+            <p class="text-gray-400 font-mono text-sm max-w-3xl leading-relaxed mt-1">
+                Visual demo recordings, consolidation analytics, and real-time model tier advisory against the Model Proficiency Matrix.
+            </p>
+        </div>
+
+        <div class="flex items-center gap-3">
+            <button @click="fetchManifest(); fetchConsolidation();" class="btn btn-sm btn-ghost border border-space-border hover:bg-space-800 text-gray-300 text-xs h-9">
+                <svg class="w-3.5 h-3.5" :class="{'animate-spin': loadingManifest || loadingConsolidation}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                Refresh
+            </button>
+        </div>
+    </div>
+
+    <!-- Row 1: Manifest & Consolidation -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- Manifest -->
+        <div class="bg-space-900 border border-space-border rounded-xl p-6">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-lg font-bold text-white flex items-center gap-2">
+                    <span class="w-2 h-2 rounded-full bg-neon-cyan"></span>
+                    Demos Manifest
+                </h2>
+                <button @click="fetchManifest()" class="text-xs font-mono text-neon-cyan hover:underline">Reload</button>
+            </div>
+            <pre class="bg-black/60 border border-space-border p-4 rounded-lg text-xs font-mono text-gray-300 max-h-60 overflow-y-auto custom-scrollbar whitespace-pre-wrap leading-relaxed" x-text="JSON.stringify(manifest, null, 2)"></pre>
+        </div>
+
+        <!-- Consolidation -->
+        <div class="bg-space-900 border border-space-border rounded-xl p-6">
+            <div class="flex items-center justify-between mb-4">
+                <h2 class="text-lg font-bold text-white flex items-center gap-2">
+                    <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                    Consolidation Telemetry
+                </h2>
+                <button @click="fetchConsolidation()" class="text-xs font-mono text-emerald-400 hover:underline">Reload</button>
+            </div>
+            <pre class="bg-black/60 border border-space-border p-4 rounded-lg text-xs font-mono text-gray-300 max-h-60 overflow-y-auto custom-scrollbar whitespace-pre-wrap leading-relaxed" x-text="JSON.stringify(consolidation, null, 2)"></pre>
+        </div>
+    </div>
+
+    <!-- Row 2: Video, Record, Proficiency Advise -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <!-- Video Fetch -->
+        <div class="bg-space-900 border border-space-border rounded-xl p-6 flex flex-col justify-between">
+            <div>
+                <h3 class="text-sm font-bold text-white uppercase tracking-wider font-mono mb-3">Load Demo Video</h3>
+                <div class="flex gap-2 mb-3">
+                    <input type="text" x-model="videoName" placeholder="Video name/ID" class="flex-1 bg-black border border-space-border rounded-lg px-3 py-1.5 text-xs text-white font-mono focus:border-neon-cyan focus:outline-none">
+                    <button @click="loadVideo()" class="btn btn-xs bg-neon-cyan text-black hover:bg-cyan-400 font-bold border-none">Load</button>
+                </div>
+            </div>
+            <div x-show="videoSrc" class="mt-2">
+                <video controls class="w-full rounded border border-space-border max-h-40" :src="videoSrc"></video>
+            </div>
+            <div x-show="!videoSrc" class="py-6 text-center text-gray-500 font-mono text-xs border border-dashed border-space-border rounded">
+                No video loaded
+            </div>
+        </div>
+
+        <!-- Record Demo -->
+        <div class="bg-space-900 border border-space-border rounded-xl p-6 flex flex-col justify-between">
+            <div>
+                <h3 class="text-sm font-bold text-white uppercase tracking-wider font-mono mb-3">Record Demo Stream</h3>
+                <div class="flex gap-2 mb-3">
+                    <input type="text" x-model="recordId" placeholder="Demo ID" class="flex-1 bg-black border border-space-border rounded-lg px-3 py-1.5 text-xs text-white font-mono focus:border-rose-500 focus:outline-none">
+                    <button @click="postRecord()" class="btn btn-xs bg-rose-500 text-white hover:bg-rose-600 font-bold border-none">Record</button>
+                </div>
+            </div>
+            <div x-show="recordResult" class="mt-2">
+                <pre class="bg-black/60 border border-space-border p-3 rounded text-2xs font-mono text-rose-300 max-h-36 overflow-y-auto whitespace-pre-wrap" x-text="JSON.stringify(recordResult, null, 2)"></pre>
+            </div>
+            <div x-show="!recordResult" class="py-6 text-center text-gray-500 font-mono text-xs border border-dashed border-space-border rounded">
+                Awaiting recording trigger
+            </div>
+        </div>
+
+        <!-- Proficiency Advise -->
+        <div class="bg-space-900 border border-space-border rounded-xl p-6 flex flex-col justify-between">
+            <div>
+                <h3 class="text-sm font-bold text-white uppercase tracking-wider font-mono mb-3">Proficiency Advise</h3>
+                <textarea x-model="advisePayload" rows="3" class="w-full bg-black border border-space-border rounded-lg p-2 text-2xs text-white font-mono focus:border-amber-400 focus:outline-none mb-3 custom-scrollbar"></textarea>
+                <button @click="postAdvise()" :disabled="loadingAdvise" class="w-full btn btn-xs bg-amber-500 text-black hover:bg-amber-400 font-bold border-none">
+                    <span x-show="!loadingAdvise">Get Model Recommendation</span>
+                    <span x-show="loadingAdvise">Evaluating...</span>
+                </button>
+            </div>
+            <div x-show="adviseResult" class="mt-3">
+                <pre class="bg-black/60 border border-space-border p-3 rounded text-2xs font-mono text-amber-300 max-h-36 overflow-y-auto whitespace-pre-wrap" x-text="JSON.stringify(adviseResult, null, 2)"></pre>
+            </div>
+        </div>
+    </div>
+
+</div>

@@ -9,6 +9,21 @@ import { convertAnthropicToGoogle, convertGoogleToAnthropic } from '../format/in
 import { streamSSEResponse } from './stream-handler-reexport.js'; // Helper re-export to avoid circular dependencies
 import { logger } from '../utils/logger.js';
 
+function mapToGoogleDevModel(model) {
+    if (!model) return 'gemini-3.1-flash';
+    const clean = model.replace(/^gemini\//, '').toLowerCase();
+    if (clean.includes('3.1-pro') || clean.includes('3.7-pro') || clean.includes('pro-high') || clean.includes('pro-low') || clean.includes('pro-agent')) {
+        return 'gemini-3.1-pro-preview';
+    }
+    if (clean.includes('flash') || clean.includes('gemini-2.5') || clean.includes('gemini-2.0')) {
+        return 'gemini-3.1-flash';
+    }
+    if (clean.includes('claude') || clean.includes('gpt')) {
+        return 'gemini-3.1-flash';
+    }
+    return clean;
+}
+
 /**
  * Send a non-streaming request to the Gemini Developer API.
  * 
@@ -17,9 +32,8 @@ import { logger } from '../utils/logger.js';
  * @returns {Promise<Object>} Anthropic-format response
  */
 export async function sendGeminiDirect(anthropicRequest, apiKey) {
-    const model = anthropicRequest.model || 'gemini-2.5-flash';
-    // Remove model prefix if present (e.g. gemini/gemini-2.5-flash -> gemini-2.5-flash)
-    const cleanModel = model.replace(/^gemini\//, '');
+    const rawModel = anthropicRequest.model || 'gemini-2.5-flash';
+    const cleanModel = mapToGoogleDevModel(rawModel);
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${cleanModel}:generateContent?key=${apiKey}`;
 
     const googlePayload = convertAnthropicToGoogle(anthropicRequest);
@@ -38,7 +52,7 @@ export async function sendGeminiDirect(anthropicRequest, apiKey) {
     }
 
     const data = await res.json();
-    return convertGoogleToAnthropic(data, model);
+    return convertGoogleToAnthropic(data, rawModel);
 }
 
 /**
@@ -50,8 +64,8 @@ export async function sendGeminiDirect(anthropicRequest, apiKey) {
  * @yields {Object} Anthropic-format SSE events
  */
 export async function* sendGeminiDirectStream(anthropicRequest, apiKey) {
-    const model = anthropicRequest.model || 'gemini-2.5-flash';
-    const cleanModel = model.replace(/^gemini\//, '');
+    const rawModel = anthropicRequest.model || 'gemini-2.5-flash';
+    const cleanModel = mapToGoogleDevModel(rawModel);
     const url = `https://generativelanguage.googleapis.com/v1beta/models/${cleanModel}:streamGenerateContent?alt=sse&key=${apiKey}`;
 
     const googlePayload = convertAnthropicToGoogle(anthropicRequest);

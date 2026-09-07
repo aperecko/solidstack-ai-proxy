@@ -8,7 +8,7 @@
 
 // Default configuration (matches opencode-antigravity-auth)
 const DEFAULT_CONFIG = {
-    initial: 70,           // Starting score for new accounts
+    initial: 100,          // Starting score for new accounts (changed from 70 to prevent starvation)
     successReward: 1,      // Points on successful request
     rateLimitPenalty: -10, // Points on rate limit
     failurePenalty: -20,   // Points on other failures

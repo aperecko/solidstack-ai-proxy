@@ -1,162 +1,290 @@
-<div x-data="uad" class="view-container">
-    <div class="flex flex-wrap items-center justify-between gap-4 mb-6">
-        <div class="flex flex-wrap items-center gap-4">
-            <h1 class="text-2xl font-bold text-white tracking-tight">Universal Action Dispatcher (UAD)</h1>
-            <div class="flex items-center h-6 px-3 rounded-full bg-space-800/80 border border-space-border/50 shadow-sm backdrop-blur-sm">
-                <span class="text-[10px] font-mono text-gray-400 uppercase tracking-wider">
-                    Domain: <code class="text-neon-cyan">mcp (19874)</code>
-                </span>
+<div x-data="uad" class="view-container max-w-7xl mx-auto space-y-6 pb-12">
+    <!-- View Header -->
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-space-border pb-6">
+        <div>
+            <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-neon-cyan/10 border border-neon-cyan/30 text-neon-cyan text-xs font-mono uppercase tracking-wider mb-2">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                SolidStack Tool Registry &amp; Action Dispatcher
             </div>
+            <h1 class="text-3xl font-bold text-white tracking-tight">Interactive Tool Hub &amp; Operations Manual</h1>
+            <p class="text-sm text-gray-400 mt-1 max-w-3xl leading-relaxed">
+                Every tool in SolidStack has a dedicated architectural explainer detailing <strong class="text-white">how it is intended to work</strong>, its safety invariants, and live execution controls. Click on any tool card below to inspect its manual.
+            </p>
         </div>
         <div class="flex items-center gap-3">
             <!-- Search Input -->
-            <div class="relative w-48 sm:w-64">
-                <input type="text" x-model="searchQuery" placeholder="Search actions..." 
-                       class="w-full h-8 bg-space-950 border border-space-border rounded-xl text-xs font-mono pl-8 pr-3 text-white focus:border-neon-cyan focus:outline-none">
-                <svg class="w-3.5 h-3.5 text-gray-500 absolute left-2.5 top-2.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <div class="relative w-56 sm:w-72">
+                <input type="text" x-model="searchQuery" placeholder="Search tools, ports, tags..." 
+                       class="w-full h-10 bg-space-950 border border-space-border/80 rounded-xl text-xs font-mono pl-9 pr-3 text-white focus:border-neon-cyan focus:outline-none transition-all shadow-inner">
+                <svg class="w-4 h-4 text-gray-500 absolute left-3 top-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
                 </svg>
             </div>
-            <button class="btn btn-xs btn-outline border-space-border text-gray-400 hover:text-white transition-all gap-2 h-8" @click="fetchActions()">
+            <button class="btn btn-sm btn-outline border-space-border text-gray-300 hover:text-white hover:border-neon-cyan transition-all gap-2 h-10 px-4 font-mono text-xs" @click="fetchActions()">
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
-                <span>Refresh</span>
+                <span>Sync Tools</span>
             </button>
         </div>
     </div>
 
     <!-- Category Filter Pills -->
-    <div class="flex flex-wrap items-center gap-2 mb-6" x-show="categories && categories.length > 1">
+    <div class="flex flex-wrap items-center gap-2" x-show="categories && categories.length > 1">
+        <span class="text-xs font-mono text-gray-500 mr-1 uppercase">Filter:</span>
         <template x-for="cat in categories" :key="cat">
             <button @click="selectedCategory = cat"
-                    class="px-3 py-1 rounded-full text-xs font-mono transition-all border"
-                    :class="selectedCategory === cat ? 'bg-neon-cyan/20 border-neon-cyan/50 text-neon-cyan font-bold shadow-[0_0_10px_rgba(6,182,212,0.2)]' : 'bg-space-900 border-space-border/60 text-gray-400 hover:text-white'"
+                    class="px-3 py-1.5 rounded-xl text-xs font-mono transition-all border cursor-pointer"
+                    :class="selectedCategory === cat ? 'bg-neon-cyan/20 border-neon-cyan/50 text-neon-cyan font-bold shadow-[0_0_12px_rgba(6,182,212,0.25)] scale-105' : 'bg-space-900 border-space-border/60 text-gray-400 hover:text-white hover:border-gray-600'"
                     x-text="cat.toUpperCase()">
             </button>
         </template>
     </div>
 
-    <!-- Action Cards Grid -->
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+    <!-- Tool Cards Grid (Every Card Is Clickable) -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
         <template x-for="action in filteredActions" :key="action.name">
-            <div class="view-card flex flex-col justify-between h-full border border-space-border/60 bg-space-900/60 hover:border-neon-cyan/40 hover:bg-space-900 transition-all group">
-                <div>
-                    <div class="flex justify-between items-start mb-2">
-                        <h3 class="text-neon-cyan font-mono font-bold text-sm group-hover:text-white transition-colors" x-text="action.name"></h3>
-                        <span class="badge badge-sm bg-space-800 text-gray-300 font-mono text-[10px] border border-space-border/50" x-text="action.ui_section || 'Core'"></span>
+            <div @click="openToolExplainer(action)"
+                 class="view-card flex flex-col justify-between h-full border border-space-border/70 bg-space-900/60 hover:border-neon-cyan/50 hover:bg-space-900 transition-all duration-200 group cursor-pointer p-6 rounded-2xl shadow-sm hover:shadow-lg hover:shadow-neon-cyan/5 hover:-translate-y-0.5">
+                <div class="space-y-3">
+                    <div class="flex justify-between items-start gap-3">
+                        <div>
+                            <span class="text-[10px] font-mono text-neon-cyan font-bold uppercase tracking-wider block mb-1" x-text="action.domain || 'core:19870'"></span>
+                            <h3 class="text-white font-mono font-bold text-base group-hover:text-neon-cyan transition-colors" x-text="action.title || action.name"></h3>
+                            <code class="text-[11px] text-gray-500 font-mono" x-text="action.name"></code>
+                        </div>
+                        <span class="badge badge-sm bg-space-950 text-gray-300 font-mono text-[10px] border border-space-border/60 shrink-0" x-text="action.ui_section || 'General'"></span>
                     </div>
-                    <p class="text-xs text-gray-400 mb-4 leading-relaxed" x-text="action.description"></p>
+
+                    <p class="text-xs text-gray-300 leading-relaxed line-clamp-2" x-text="action.description"></p>
+
+                    <!-- Click to view manual prompt -->
+                    <div class="bg-black/40 rounded-xl p-2.5 border border-white/5 space-y-1">
+                        <span class="text-[10px] font-mono text-emerald-400 uppercase font-bold flex items-center gap-1.5">
+                            <span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                            How It Works Preview
+                        </span>
+                        <p class="text-[11px] text-gray-400 font-sans line-clamp-2" x-text="action.how_it_works ? action.how_it_works.split('\n')[0] : 'Click to inspect complete operational workflow and contracts.'"></p>
+                    </div>
                 </div>
-                <div>
-                    <div class="flex gap-1.5 flex-wrap mb-4">
-                        <template x-for="tag in action.tags">
-                            <span class="text-[10px] px-2 py-0.5 rounded bg-space-950 font-mono text-gray-400 border border-space-border/40" x-text="'#' + tag"></span>
+
+                <div class="pt-4 border-t border-space-border/40 mt-4 space-y-3">
+                    <div class="flex gap-1.5 flex-wrap">
+                        <template x-for="tag in (action.tags || [])">
+                            <span class="text-[10px] px-2 py-0.5 rounded-md bg-space-950 font-mono text-gray-400 border border-space-border/40" x-text="'#' + tag"></span>
                         </template>
                     </div>
-                    <button class="btn btn-sm btn-outline border-neon-cyan/30 text-neon-cyan hover:bg-neon-cyan hover:text-black w-full font-mono text-xs gap-2" @click="openConfigure(action)">
-                        <span>Configure & Execute</span>
-                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>
-                    </button>
+
+                    <div class="flex items-center justify-between text-xs font-mono text-neon-cyan group-hover:underline">
+                        <span>Open Explainer &amp; Run ➔</span>
+                        <span class="text-[10px] text-gray-500 font-sans">Click to inspect</span>
+                    </div>
                 </div>
             </div>
         </template>
 
         <template x-if="filteredActions.length === 0">
-            <div class="col-span-full py-12 text-center text-gray-500 font-mono text-xs">
-                No actions match your search filter.
+            <div class="col-span-full py-16 text-center text-gray-500 font-mono text-xs border border-dashed border-space-border rounded-2xl">
+                No tools match your query. Try searching for a different keyword or category.
             </div>
         </template>
     </div>
 
-    <!-- Execution Modal -->
-    <div x-show="executingAction" style="display: none;" class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm transition-opacity">
-        <div class="bg-space-900 border border-space-border rounded-2xl w-full max-w-2xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden animate-scale-in" @click.away="closeModal()">
+    <!-- Dedicated Tool Explainer Page / Modal (Multi-Tab) -->
+    <div x-show="executingAction" style="display: none;" 
+         class="fixed inset-0 z-50 flex items-center justify-center p-4 sm:p-6 bg-black/85 backdrop-blur-md transition-opacity">
+        <div class="bg-space-900 border border-space-border rounded-2xl w-full max-w-3xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden animate-scale-in" 
+             @click.away="closeModal()">
             
-            <div class="p-5 border-b border-space-border flex justify-between items-center bg-space-950">
-                <div class="flex items-center gap-2 font-mono">
-                    <span class="w-2 h-2 rounded-full bg-neon-cyan"></span>
-                    <h3 class="text-base font-bold text-white" x-text="executingAction?.name"></h3>
+            <!-- Modal Header -->
+            <div class="p-6 border-b border-space-border flex justify-between items-start bg-space-950">
+                <div class="space-y-1">
+                    <div class="flex items-center gap-2 font-mono">
+                        <span class="w-2 h-2 rounded-full bg-neon-cyan animate-pulse"></span>
+                        <span class="text-xs text-neon-cyan uppercase font-bold" x-text="executingAction?.domain || 'core:19870'"></span>
+                        <span class="text-gray-600">•</span>
+                        <code class="text-xs text-gray-400" x-text="executingAction?.name"></code>
+                    </div>
+                    <h2 class="text-xl font-bold text-white tracking-tight" x-text="executingAction?.title || executingAction?.name"></h2>
                 </div>
-                <button @click="closeModal()" class="text-gray-400 hover:text-white p-1">
-                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                <div class="flex items-center gap-2">
+                    <button @click="copyCli()" class="btn btn-xs btn-outline border-space-border text-gray-300 hover:text-white font-mono gap-1" title="Copy CLI execution command">
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+                        <span>Copy CLI</span>
+                    </button>
+                    <button @click="closeModal()" class="text-gray-400 hover:text-white p-1 rounded-lg hover:bg-space-800 transition-colors">
+                        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Explainer Modal Nav Tabs -->
+            <div class="flex items-center gap-2 px-6 pt-3 border-b border-space-border bg-space-950/60 font-mono text-xs">
+                <button @click="activeModalTab = 'how_it_works'" 
+                        class="px-4 py-2 border-b-2 transition-all"
+                        :class="activeModalTab === 'how_it_works' ? 'border-neon-cyan text-neon-cyan font-bold' : 'border-transparent text-gray-400 hover:text-white'">
+                    📖 How It Works
+                </button>
+                <button @click="activeModalTab = 'params'" 
+                        class="px-4 py-2 border-b-2 transition-all"
+                        :class="activeModalTab === 'params' ? 'border-neon-cyan text-neon-cyan font-bold' : 'border-transparent text-gray-400 hover:text-white'">
+                    ⚙️ Parameters &amp; Input
+                </button>
+                <button @click="activeModalTab = 'cli'" 
+                        class="px-4 py-2 border-b-2 transition-all"
+                        :class="activeModalTab === 'cli' ? 'border-neon-cyan text-neon-cyan font-bold' : 'border-transparent text-gray-400 hover:text-white'">
+                    💻 CLI &amp; Architecture
+                </button>
+                <button @click="activeModalTab = 'output'" 
+                        class="px-4 py-2 border-b-2 transition-all flex items-center gap-1.5"
+                        :class="activeModalTab === 'output' ? 'border-neon-cyan text-neon-cyan font-bold' : 'border-transparent text-gray-400 hover:text-white'">
+                    <span>🚀 Live Output</span>
+                    <span x-show="executionResult" class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
                 </button>
             </div>
 
-            <div class="p-6 overflow-y-auto flex-grow custom-scrollbar">
-                <p class="text-xs text-gray-300 mb-6 bg-space-950 p-3 rounded-xl border border-space-border/60" x-text="executingAction?.description"></p>
-
-                <!-- Dynamic Form Generation based on Schema -->
-                <div class="space-y-4 mb-6" x-show="executingAction?.input_schema?.properties && Object.keys(executingAction.input_schema.properties).length > 0">
-                    <h4 class="text-xs font-bold text-neon-cyan uppercase font-mono tracking-wider mb-3 pb-1 border-b border-space-border/50">Configuration Parameters</h4>
-                    
-                    <template x-for="[key, prop] in Object.entries(executingAction?.input_schema?.properties || {})" :key="key">
-                        <div class="form-control w-full">
-                            <label class="label pt-0 pb-1">
-                                <span class="label-text text-xs text-gray-200 font-mono font-bold" x-text="key"></span>
-                                <span class="label-text-alt text-[10px] text-gray-500 font-mono" x-text="prop.type"></span>
-                            </label>
-
-                            <!-- String / Text Input -->
-                            <template x-if="prop.type === 'string'">
-                                <input type="text" x-model="formPayload[key]" class="input input-sm input-bordered bg-space-950 border-space-border w-full text-xs font-mono text-white focus:border-neon-cyan" :placeholder="prop.description || ''" />
-                            </template>
-
-                            <!-- Integer / Number Input -->
-                            <template x-if="prop.type === 'integer' || prop.type === 'number'">
-                                <input type="number" x-model="formPayload[key]" class="input input-sm input-bordered bg-space-950 border-space-border w-full text-xs font-mono text-white focus:border-neon-cyan" />
-                            </template>
-
-                            <!-- Boolean Toggle -->
-                            <template x-if="prop.type === 'boolean'">
-                                <label class="cursor-pointer label justify-start gap-3 py-1">
-                                    <input type="checkbox" x-model="formPayload[key]" class="toggle toggle-xs toggle-primary" />
-                                    <span class="text-xs text-gray-300 font-mono" x-text="prop.description || 'Enable / Disable'"></span>
-                                </label>
-                            </template>
-                            
-                            <p class="text-[10px] text-gray-500 mt-1 font-mono" x-text="prop.description"></p>
-                        </div>
-                    </template>
-                </div>
+            <!-- Modal Body Content -->
+            <div class="p-6 overflow-y-auto flex-grow space-y-6 custom-scrollbar">
                 
-                <div x-show="!executingAction?.input_schema?.properties || Object.keys(executingAction.input_schema.properties).length === 0" class="mb-6">
-                    <span class="text-xs text-gray-500 font-mono italic">No input parameters required for this action.</span>
+                <!-- TAB 1: HOW IT WORKS & INTENT -->
+                <div x-show="activeModalTab === 'how_it_works'" class="space-y-5 animate-in fade-in">
+                    <div>
+                        <h4 class="text-xs font-bold text-gray-400 uppercase font-mono tracking-wider mb-2">Tool Purpose &amp; Intent</h4>
+                        <p class="text-sm text-gray-200 leading-relaxed bg-space-950 p-4 rounded-xl border border-space-border/60" x-text="executingAction?.description"></p>
+                    </div>
+
+                    <div>
+                        <h4 class="text-xs font-bold text-emerald-400 uppercase font-mono tracking-wider mb-2 flex items-center gap-1.5">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                            Operational Execution Workflow
+                        </h4>
+                        <div class="bg-space-950 p-4 rounded-xl border border-space-border/60 space-y-2">
+                            <template x-for="(line, idx) in (executingAction?.how_it_works || 'Direct zero-touch dispatch via SolidStack supervisor.').split('\n')" :key="idx">
+                                <div class="text-xs text-gray-300 leading-relaxed font-sans flex items-start gap-2">
+                                    <span class="text-emerald-400 font-mono font-bold shrink-0">•</span>
+                                    <span x-text="line"></span>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div class="p-4 rounded-xl bg-space-950 border border-space-border/60 space-y-1">
+                            <span class="text-[10px] font-mono uppercase text-gray-500 font-bold">Subsystem Domain</span>
+                            <div class="text-xs font-mono text-neon-cyan font-bold" x-text="executingAction?.domain || 'core:19870'"></div>
+                            <p class="text-[11px] text-gray-400 font-sans">Enforces isolated port contracts &amp; capability boundary.</p>
+                        </div>
+
+                        <div class="p-4 rounded-xl bg-space-950 border border-space-border/60 space-y-1">
+                            <span class="text-[10px] font-mono uppercase text-gray-500 font-bold">Safety &amp; Guardrails</span>
+                            <div class="text-xs font-mono text-emerald-400 font-bold" x-text="executingAction?.safety_contract || 'Deterministic execution'"></div>
+                            <p class="text-[11px] text-gray-400 font-sans">Guarded against destructive accidental overrides.</p>
+                        </div>
+                    </div>
                 </div>
 
-                <!-- Output Terminal View -->
-                <div x-show="executionResult" class="mt-6">
-                    <div class="flex items-center justify-between mb-2">
-                        <h4 class="text-xs font-bold text-gray-300 font-mono uppercase tracking-wider">Execution Output</h4>
-                        <div class="flex items-center gap-1.5">
-                            <button @click="localStorage.setItem('solidstack_draft_tech', `Review UAD Action Execution for ${executingAction?.name}:\n\n${executionResult}`); if ($store.global?.showToast) $store.global.showToast('Output injected into Agent Chat draft!', 'success'); $store.global.activeTab = 'agent-chat'; closeModal();" 
+                <!-- TAB 2: PARAMETERS & SCHEMA FORM -->
+                <div x-show="activeModalTab === 'params'" class="space-y-5 animate-in fade-in">
+                    <div class="flex items-center justify-between">
+                        <h4 class="text-xs font-bold text-neon-cyan uppercase font-mono tracking-wider">Input Parameter Configuration</h4>
+                        <button @click="copyPayload()" class="btn btn-xs btn-ghost text-gray-400 hover:text-white font-mono text-[10px]">
+                            Copy Payload JSON
+                        </button>
+                    </div>
+
+                    <div class="space-y-4" x-show="executingAction?.input_schema?.properties && Object.keys(executingAction.input_schema.properties).length > 0">
+                        <template x-for="[key, prop] in Object.entries(executingAction?.input_schema?.properties || {})" :key="key">
+                            <div class="form-control w-full bg-space-950 p-4 rounded-xl border border-space-border/60 space-y-2">
+                                <div class="flex justify-between items-center">
+                                    <label class="label-text text-xs text-white font-mono font-bold flex items-center gap-1.5">
+                                        <span x-text="key"></span>
+                                        <template x-if="executingAction?.input_schema?.required?.includes(key)">
+                                            <span class="text-rose-400 text-[10px] font-bold">*required</span>
+                                        </template>
+                                    </label>
+                                    <span class="badge badge-xs bg-space-800 text-gray-400 font-mono text-[10px]" x-text="prop.type"></span>
+                                </div>
+
+                                <p class="text-xs text-gray-400" x-text="prop.description || 'No description provided'"></p>
+
+                                <!-- String / Text Input -->
+                                <template x-if="prop.type === 'string'">
+                                    <input type="text" x-model="formPayload[key]" 
+                                           class="w-full bg-space-900 border border-space-border rounded-lg px-3 py-2 text-xs font-mono text-white focus:border-neon-cyan focus:outline-none" 
+                                           :placeholder="prop.default || prop.description || ''" />
+                                </template>
+
+                                <!-- Integer / Number Input -->
+                                <template x-if="prop.type === 'integer' || prop.type === 'number'">
+                                    <input type="number" x-model.number="formPayload[key]" 
+                                           class="w-full bg-space-900 border border-space-border rounded-lg px-3 py-2 text-xs font-mono text-white focus:border-neon-cyan focus:outline-none" />
+                                </template>
+
+                                <!-- Boolean Toggle -->
+                                <template x-if="prop.type === 'boolean'">
+                                    <label class="cursor-pointer flex items-center gap-3 pt-1">
+                                        <input type="checkbox" x-model="formPayload[key]" class="toggle toggle-sm toggle-primary" />
+                                        <span class="text-xs text-gray-300 font-mono" x-text="formPayload[key] ? 'Enabled (True)' : 'Disabled (False)'"></span>
+                                    </label>
+                                </template>
+                            </div>
+                        </template>
+                    </div>
+
+                    <div x-show="!executingAction?.input_schema?.properties || Object.keys(executingAction.input_schema.properties).length === 0" 
+                         class="p-6 text-center text-gray-500 font-mono text-xs bg-space-950 rounded-xl border border-space-border/50">
+                        This tool requires no configuration parameters and executes immediately on invocation.
+                    </div>
+                </div>
+
+                <!-- TAB 3: CLI & ARCHITECTURE -->
+                <div x-show="activeModalTab === 'cli'" class="space-y-5 animate-in fade-in">
+                    <div>
+                        <h4 class="text-xs font-bold text-gray-400 uppercase font-mono tracking-wider mb-2">Canonical CLI Command</h4>
+                        <div class="bg-black p-4 rounded-xl border border-space-border flex items-center justify-between gap-4 font-mono text-xs text-neon-cyan">
+                            <code x-text="executingAction?.cli_command || ('ss uad execute ' + executingAction?.name)"></code>
+                            <button @click="copyCli()" class="btn btn-xs btn-outline border-space-border text-gray-300 hover:text-white">Copy</button>
+                        </div>
+                    </div>
+
+                    <div>
+                        <h4 class="text-xs font-bold text-gray-400 uppercase font-mono tracking-wider mb-2">JSON-RPC / REST Dispatch Payload</h4>
+                        <pre class="bg-black p-4 rounded-xl border border-space-border font-mono text-xs text-emerald-400 overflow-x-auto" 
+                             x-text="JSON.stringify({ action: executingAction?.name, payload: formPayload }, null, 2)"></pre>
+                    </div>
+                </div>
+
+                <!-- TAB 4: LIVE OUTPUT -->
+                <div x-show="activeModalTab === 'output'" class="space-y-4 animate-in fade-in">
+                    <div class="flex items-center justify-between">
+                        <h4 class="text-xs font-bold text-gray-300 font-mono uppercase tracking-wider">Execution Stream</h4>
+                        <div class="flex items-center gap-1.5" x-show="executionResult">
+                            <button @click="localStorage.setItem('solidstack_draft_tech', `Review UAD Tool Execution for ${executingAction?.name}:\n\n${executionResult}`); if ($store.global?.showToast) $store.global.showToast('Output injected into Agent Chat draft!', 'success'); $store.global.activeTab = 'agent-chat'; closeModal();" 
                                     type="button" 
-                                    class="btn btn-xs bg-neon-purple/20 border border-neon-purple/50 text-neon-purple hover:bg-neon-purple/30 font-mono text-[10px]"
-                                    title="Send this execution output to Tech Agent in Agent Chat">
+                                    class="btn btn-xs bg-neon-purple/20 border border-neon-purple/50 text-neon-purple hover:bg-neon-purple/30 font-mono text-[10px]">
                                 💬 Send to Agent Chat
                             </button>
-                            <button @click="fetch('/api/skills/escalate-idea', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ title: `UAD Task: ${executingAction?.name}`, summary: executionResult, role: 'TECH', priority: 'NORMAL' }) }); if ($store.global?.showToast) $store.global.showToast('Created Workflow Task!', 'success'); $store.global.activeTab = 'workflow'; closeModal();" 
-                                    type="button" 
-                                    class="btn btn-xs bg-space-900 border border-space-border hover:border-neon-cyan hover:text-neon-cyan font-mono text-[10px]"
-                                    title="Convert this execution output to a Workflow Kanban task">
-                                📋 To Workflow
-                            </button>
                             <button @click="copyOutput()" type="button" class="btn btn-xs btn-ghost text-neon-cyan hover:bg-neon-cyan/10 gap-1 font-mono">
-                                <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
-                                <span>Copy</span>
+                                <span>Copy Output</span>
                             </button>
                         </div>
                     </div>
-                    <pre class="bg-black border border-space-border p-4 rounded-xl text-xs font-mono text-emerald-400 whitespace-pre-wrap overflow-x-auto max-h-60 custom-scrollbar" x-text="executionResult"></pre>
+
+                    <pre class="bg-black border border-space-border p-4 rounded-xl text-xs font-mono text-emerald-400 whitespace-pre-wrap overflow-x-auto min-h-[160px] max-h-72 custom-scrollbar" 
+                         x-text="executionResult || 'Ready for execution. Click Dispatch Action below to test tool.'"></pre>
                 </div>
             </div>
 
-            <div class="p-4 border-t border-space-border bg-space-950 flex justify-end gap-3 font-mono">
-                <button class="btn btn-sm btn-ghost text-gray-400 hover:text-white" @click="closeModal()">Close</button>
-                <button class="btn btn-sm bg-neon-cyan text-black hover:bg-white border-none gap-2 font-bold" @click="runExecution()" :disabled="isRunning">
-                    <template x-if="isRunning">
-                        <svg class="animate-spin -ml-1 mr-1 h-3.5 w-3.5 text-black" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-                    </template>
-                    <span x-text="isRunning ? 'Dispatching...' : 'Dispatch Action'"></span>
-                </button>
+            <!-- Modal Footer -->
+            <div class="p-4 border-t border-space-border bg-space-950 flex justify-between items-center font-mono">
+                <button class="btn btn-sm btn-ghost text-gray-400 hover:text-white" @click="closeModal()">Close Manual</button>
+                <div class="flex items-center gap-3">
+                    <button class="btn btn-sm bg-neon-cyan text-black hover:bg-white border-none gap-2 font-bold shadow-lg shadow-neon-cyan/20" 
+                            @click="runExecution()" :disabled="isRunning">
+                        <template x-if="isRunning">
+                            <svg class="animate-spin -ml-1 mr-1 h-3.5 w-3.5 text-black" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                        </template>
+                        <span x-text="isRunning ? 'Executing...' : 'Dispatch / Test Tool'"></span>
+                    </button>
+                </div>
             </div>
         </div>
     </div>

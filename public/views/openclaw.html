@@ -1,0 +1,550 @@
+<div x-data="openclaw" class="view-container p-6 h-full flex flex-col space-y-6 overflow-y-auto custom-scrollbar relative">
+
+    <!-- Top Header -->
+    <div class="border-b border-space-border pb-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+            <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-neon-purple/10 border border-neon-purple/30 text-neon-purple text-xs font-mono uppercase tracking-wider mb-2">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+                Autonomous Agent Gateway &amp; Orchestration Bus
+            </div>
+            <h1 class="text-3xl font-bold text-white tracking-tight">OpenClaw Gateway</h1>
+            <p class="text-gray-400 font-mono text-sm max-w-3xl leading-relaxed mt-1">
+                Supervises the OpenClaw agent runtime on port 18790, upstream proxy routing through port 1987, and autonomous task playbook executions.
+            </p>
+        </div>
+
+        <!-- Action Controls -->
+        <div class="flex items-center gap-2.5 flex-wrap font-mono">
+            <!-- 1-Click Open Control UI with Token -->
+            <button @click="openControlUi()" class="btn btn-sm bg-neon-purple hover:bg-purple-600 border-none text-white text-xs gap-2 shadow-lg shadow-neon-purple/25 h-9 font-bold">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                </svg>
+                <span>Open Control UI</span>
+                <span class="text-[10px] px-1.5 py-0.5 rounded bg-black/30 border border-white/20 uppercase">Token</span>
+            </button>
+
+            <!-- Settings & Configuration Modal Trigger -->
+            <button @click="openSettings('gateway')" class="btn btn-sm bg-space-900 hover:bg-space-800 border-space-border text-gray-300 hover:text-white text-xs gap-2 h-9">
+                <svg class="w-4 h-4 text-neon-cyan" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                <span>Settings</span>
+            </button>
+
+            <!-- Gateway Restart -->
+            <button @click="restartGateway()" :disabled="isRestarting" class="btn btn-sm bg-space-900 hover:bg-space-800 border-space-border text-gray-300 hover:text-white text-xs gap-2 h-9">
+                <svg class="w-4 h-4" :class="{'animate-spin': isRestarting}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                <span x-text="isRestarting ? 'Restarting...' : 'Restart'">Restart</span>
+            </button>
+
+            <!-- Refresh Button -->
+            <button @click="fetchData()" class="btn btn-sm bg-space-900 hover:bg-space-800 border-space-border text-gray-300 hover:text-white text-xs h-9">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- Quick Access & Gateway Token Card -->
+    <div class="bg-space-900/90 border border-neon-purple/30 rounded-2xl p-4 shadow-lg flex flex-col md:flex-row items-start md:items-center justify-between gap-4 font-mono">
+        <div class="flex items-center gap-3.5 flex-1 min-w-0">
+            <div class="w-10 h-10 rounded-xl bg-neon-purple/10 border border-neon-purple/30 flex items-center justify-center shrink-0">
+                <svg class="w-5 h-5 text-neon-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+                </svg>
+            </div>
+            <div class="min-w-0 flex-1">
+                <div class="flex items-center gap-2">
+                    <span class="text-xs font-bold text-white uppercase tracking-wider">Gateway Auth Token</span>
+                    <span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 uppercase">Loopback Only</span>
+                </div>
+                <div class="flex items-center gap-2 mt-1 flex-wrap">
+                    <div class="bg-space-950 px-3 py-1 rounded-lg border border-space-border/80 text-xs text-gray-300 font-mono tracking-wider flex items-center gap-2 select-all">
+                        <span x-text="tokenVisible ? getToken() : getMaskedToken()" class="truncate max-w-[280px] sm:max-w-md"></span>
+                    </div>
+
+                    <!-- Toggle Visibility -->
+                    <button @click="toggleTokenVisibility()" class="btn btn-xs bg-space-950 hover:bg-space-800 border-space-border text-gray-400 hover:text-white" title="Toggle visibility">
+                        <template x-if="!tokenVisible">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                            </svg>
+                        </template>
+                        <template x-if="tokenVisible">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l18 18" />
+                            </svg>
+                        </template>
+                    </button>
+
+                    <!-- Copy Token Button -->
+                    <button @click="copyToken()" class="btn btn-xs bg-space-950 hover:bg-space-800 border-space-border text-neon-cyan hover:text-white gap-1">
+                        <template x-if="!copiedToken">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                            </svg>
+                        </template>
+                        <template x-if="copiedToken">
+                            <svg class="w-3 h-3 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                            </svg>
+                        </template>
+                        <span x-text="copiedToken ? 'Copied!' : 'Copy Token'">Copy Token</span>
+                    </button>
+
+                    <!-- Copy URL Button -->
+                    <button @click="copyDashboardUrl()" class="btn btn-xs bg-space-950 hover:bg-space-800 border-space-border text-gray-300 hover:text-white gap-1">
+                        <template x-if="!copiedUrl">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101" />
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.828 14.828a4 4 0 015.656 0l4 4a4 4 0 01-5.656 5.656l-1.102-1.101" />
+                            </svg>
+                        </template>
+                        <template x-if="copiedUrl">
+                            <svg class="w-3 h-3 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                            </svg>
+                        </template>
+                        <span x-text="copiedUrl ? 'Copied URL!' : 'Copy Full URL'">Copy Full URL</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-3 shrink-0 self-end md:self-center">
+            <a :href="getDashboardUrl()" target="_blank" class="btn btn-xs bg-space-950 hover:bg-space-800 text-neon-purple hover:text-white border border-neon-purple/40 gap-1.5 py-1 px-3 h-7">
+                <span>Launch Control UI ↗</span>
+            </a>
+        </div>
+    </div>
+
+    <!-- Metrics Row -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 font-mono">
+        <div class="bg-space-900 border border-space-border rounded-2xl p-5">
+            <div class="text-xs text-gray-500 uppercase tracking-wider font-bold">Gateway Daemon</div>
+            <div class="text-3xl font-bold text-neon-green mt-1 flex items-center gap-2">
+                <span x-text="gatewayStatus.status.toUpperCase()">ONLINE</span>
+                <span class="w-2.5 h-2.5 rounded-full bg-neon-green animate-pulse"></span>
+            </div>
+            <div class="text-[10px] text-gray-400 mt-1">Port <span class="text-white font-bold" x-text="gatewayStatus.port">18790</span> • Up <span x-text="gatewayStatus.uptime"></span></div>
+        </div>
+
+        <div class="bg-space-900 border border-neon-cyan/20 rounded-2xl p-5">
+            <div class="text-xs text-neon-cyan uppercase tracking-wider font-bold">Upstream Route</div>
+            <div class="text-xl font-bold text-white mt-1 truncate" x-text="gatewayStatus.upstream_model">ssc/default</div>
+            <div class="text-[10px] text-neon-cyan mt-1 truncate" x-text="gatewayStatus.upstream_url">http://127.0.0.1:1987/v1</div>
+        </div>
+
+        <div class="bg-space-900 border border-neon-purple/20 rounded-2xl p-5">
+            <div class="text-xs text-neon-purple uppercase tracking-wider font-bold">Active Sessions</div>
+            <div class="text-3xl font-bold text-neon-purple mt-1" x-text="gatewayStatus.sessions_active">3</div>
+            <div class="text-[10px] text-gray-400 mt-1"><span x-text="gatewayStatus.tokens_routed"></span> tokens processed</div>
+        </div>
+
+        <div class="bg-space-900 border border-space-border rounded-2xl p-5">
+            <div class="text-xs text-gray-500 uppercase tracking-wider font-bold">Playbooks Ready</div>
+            <div class="text-3xl font-bold text-white mt-1" x-text="playbooks.length">4</div>
+            <div class="text-[10px] text-gray-400 mt-1">Headless automation routines</div>
+        </div>
+    </div>
+
+    <!-- OpenClaw Bridge Architecture Panel -->
+    <div class="bg-space-900 border border-space-border rounded-2xl p-5">
+        <div class="flex items-center justify-between mb-4 border-b border-space-border/50 pb-3 font-mono">
+            <div class="flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-neon-purple animate-pulse"></span>
+                <span class="text-xs font-bold text-white uppercase tracking-wider">Gateway Bridge &amp; Provider Architecture</span>
+            </div>
+            <span class="text-[10px] text-gray-400">LaunchAgent: <code class="text-neon-cyan">ai.openclaw.gateway</code></span>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 font-mono text-xs">
+            <div class="bg-space-950 p-4 rounded-xl border border-space-border/60 flex flex-col justify-between">
+                <div>
+                    <div class="text-[10px] text-gray-500 uppercase font-bold mb-1">Inbound Clients</div>
+                    <div class="text-white font-bold text-sm">OpenClaw Channels</div>
+                    <p class="text-gray-400 text-[11px] font-sans mt-1">Telegram, Slack, WebSocket, and local REST loopback sessions.</p>
+                </div>
+                <div class="text-neon-cyan text-[11px] mt-3 pt-2 border-t border-space-border/40">Listening on 127.0.0.1:18790</div>
+            </div>
+
+            <div class="bg-space-950 p-4 rounded-xl border border-neon-purple/30 flex flex-col justify-between">
+                <div>
+                    <div class="text-[10px] text-neon-purple uppercase font-bold mb-1">OpenClaw Core Runtime</div>
+                    <div class="text-white font-bold text-sm">Agent Gateway Engine</div>
+                    <p class="text-gray-400 text-[11px] font-sans mt-1">Executes system prompts, context aggregation, and tool calling loops.</p>
+                </div>
+                <div class="text-neon-purple text-[11px] mt-3 pt-2 border-t border-space-border/40">Model Provider: 'ssc'</div>
+            </div>
+
+            <div class="bg-space-950 p-4 rounded-xl border border-space-border/60 flex flex-col justify-between">
+                <div>
+                    <div class="text-[10px] text-gray-500 uppercase font-bold mb-1">Upstream AI Proxy</div>
+                    <div class="text-white font-bold text-sm">Port 1987 Routing Hub</div>
+                    <p class="text-gray-400 text-[11px] font-sans mt-1">Distributes requests to Claude Sonnet/Opus, Gemini Pro, and Local Gemma.</p>
+                </div>
+                <div class="text-emerald-400 text-[11px] mt-3 pt-2 border-t border-space-border/40">Zero-Outbound / Direct Auth</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Two-Column Layout: Channel Status & Playbook Dispatcher -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 flex-1">
+        <!-- Connected Channels & Gateways -->
+        <div class="bg-space-900 border border-space-border rounded-2xl p-5 flex flex-col justify-between">
+            <div>
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-sm font-bold text-white font-mono uppercase tracking-wider">Gateway Channels</h3>
+                    <span class="text-[10px] font-mono text-gray-400"><span x-text="channels.length"></span> Active Interfaces</span>
+                </div>
+
+                <div class="space-y-3">
+                    <template x-for="ch in channels" :key="ch.id">
+                        <div class="p-3.5 rounded-xl bg-space-950 border border-space-border/60 flex items-center justify-between font-mono text-xs">
+                            <div class="flex items-center gap-3">
+                                <div class="w-2.5 h-2.5 rounded-full"
+                                     :class="ch.status === 'connected' ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'"></div>
+                                <div>
+                                    <div class="font-bold text-white" x-text="ch.name"></div>
+                                    <div class="text-[10px] text-gray-500" x-text="ch.protocol"></div>
+                                </div>
+                            </div>
+                            <div class="text-right">
+                                <div class="text-neon-cyan text-[11px]" x-text="ch.latency"></div>
+                                <div class="text-[10px] text-gray-500" x-text="`${ch.events_today} events`"></div>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+            <!-- Emit Event Drawer -->
+            <div class="mt-6 pt-4 border-t border-space-border/50">
+                <div class="text-xs font-mono text-gray-400 mb-2 font-bold uppercase">Broadcast Event to Gateway Bus:</div>
+                <div class="space-y-2 font-mono">
+                    <textarea x-model="eventPayload" rows="2" class="textarea textarea-bordered w-full bg-space-950 border-space-border text-gray-300 text-xs"></textarea>
+                    <div class="flex justify-end">
+                        <button @click="emitEvent()" :disabled="isEmitting" class="btn btn-xs bg-neon-purple hover:bg-purple-600 text-white border-none text-[11px]">
+                            <span x-text="isEmitting ? 'Broadcasting...' : 'Emit Event'">Emit Event</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Automation Playbooks Catalog -->
+        <div class="bg-space-900 border border-space-border rounded-2xl p-5 flex flex-col justify-between">
+            <div>
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-sm font-bold text-white font-mono uppercase tracking-wider">Playbook Dispatcher</h3>
+                    <span class="text-[10px] font-mono text-neon-purple font-bold">Autonomous Procedures</span>
+                </div>
+
+                <div class="space-y-3">
+                    <template x-for="pb in playbooks" :key="pb.id">
+                        <div class="p-3.5 rounded-xl bg-space-950 border border-space-border/60 flex flex-col justify-between hover:border-neon-purple/40 transition-colors">
+                            <div class="flex items-start justify-between mb-2">
+                                <div>
+                                    <div class="flex items-center gap-2">
+                                        <span class="font-bold text-white font-mono text-xs" x-text="pb.name"></span>
+                                        <span class="text-[9px] font-mono px-1.5 py-0.5 rounded bg-space-900 border border-space-border text-gray-400 uppercase" x-text="pb.category"></span>
+                                    </div>
+                                    <p class="text-gray-400 font-sans text-xs mt-1 leading-relaxed" x-text="pb.description"></p>
+                                </div>
+                            </div>
+
+                            <div class="flex items-center justify-between pt-2 border-t border-space-border/30 font-mono text-[10px]">
+                                <span class="text-gray-500">Cadence: <span class="text-gray-400" x-text="pb.cadence"></span> • Last: <span class="text-neon-cyan" x-text="pb.last_run"></span></span>
+                                <button class="btn btn-xs bg-neon-purple/20 hover:bg-neon-purple/30 text-neon-purple border border-neon-purple/30 text-[10px]" 
+                                        :disabled="isRunningPlaybook"
+                                        @click="runPlaybook(pb)">
+                                    Dispatch Playbook
+                                </button>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+            <div class="mt-4 pt-3 border-t border-space-border/40 font-mono text-[11px] text-gray-500 text-center">
+                Playbooks executed with sandboxed child processes and authenticated context.
+            </div>
+        </div>
+    </div>
+
+    <!-- ========================================================================= -->
+    <!-- OpenClaw Settings & Configuration Modal -->
+    <!-- ========================================================================= -->
+    <dialog class="modal backdrop-blur-sm" :class="{ 'modal-open': showSettingsModal }">
+        <div class="modal-box bg-space-900 border border-neon-purple/50 max-w-4xl p-0 overflow-hidden shadow-2xl flex flex-col max-h-[85vh]">
+            
+            <!-- Modal Header -->
+            <div class="p-5 border-b border-space-border bg-space-950 flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                    <div class="w-9 h-9 rounded-xl bg-neon-purple/15 border border-neon-purple/30 flex items-center justify-center">
+                        <svg class="w-5 h-5 text-neon-purple" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        </svg>
+                    </div>
+                    <div>
+                        <h3 class="text-base font-bold text-white font-mono flex items-center gap-2">
+                            <span>OpenClaw Configuration &amp; Settings</span>
+                            <span class="text-[10px] px-2 py-0.5 rounded-full bg-neon-purple/20 text-neon-purple border border-neon-purple/40">Port 18790</span>
+                        </h3>
+                        <p class="text-xs text-gray-400 font-mono mt-0.5">
+                            Config: <code class="text-gray-300" x-text="settings?.config_path || '~/.openclaw/openclaw.json'">~/.openclaw/openclaw.json</code>
+                        </p>
+                    </div>
+                </div>
+
+                <div class="flex items-center gap-2">
+                    <button @click="fetchSettings()" class="btn btn-xs bg-space-900 hover:bg-space-800 border-space-border text-gray-300 hover:text-white" title="Reload settings">
+                        <svg class="w-3.5 h-3.5" :class="{'animate-spin': settingsLoading}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                        </svg>
+                    </button>
+                    <button @click="closeSettings()" class="btn btn-sm btn-circle btn-ghost text-gray-400 hover:text-white">✕</button>
+                </div>
+            </div>
+
+            <!-- Tab Navigation -->
+            <div class="flex border-b border-space-border bg-space-950/80 px-5 gap-4 font-mono text-xs">
+                <button @click="settingsTab = 'gateway'" 
+                        class="py-3 border-b-2 font-bold transition-colors"
+                        :class="settingsTab === 'gateway' ? 'border-neon-purple text-neon-purple' : 'border-transparent text-gray-400 hover:text-white'">
+                    Gateway &amp; Auth
+                </button>
+                <button @click="settingsTab = 'models'" 
+                        class="py-3 border-b-2 font-bold transition-colors"
+                        :class="settingsTab === 'models' ? 'border-neon-purple text-neon-purple' : 'border-transparent text-gray-400 hover:text-white'">
+                    Model Routing &amp; Policy
+                </button>
+                <button @click="settingsTab = 'channels'" 
+                        class="py-3 border-b-2 font-bold transition-colors"
+                        :class="settingsTab === 'channels' ? 'border-neon-purple text-neon-purple' : 'border-transparent text-gray-400 hover:text-white'">
+                    Channels &amp; Plugins
+                </button>
+                <button @click="settingsTab = 'raw'" 
+                        class="py-3 border-b-2 font-bold transition-colors"
+                        :class="settingsTab === 'raw' ? 'border-neon-purple text-neon-purple' : 'border-transparent text-gray-400 hover:text-white'">
+                    Raw JSON Config
+                </button>
+            </div>
+
+            <!-- Modal Body -->
+            <div class="p-6 overflow-y-auto custom-scrollbar flex-1 font-mono text-xs space-y-6">
+
+                <!-- Tab 1: Gateway & Auth -->
+                <div x-show="settingsTab === 'gateway'" class="space-y-5">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="bg-space-950 p-4 rounded-xl border border-space-border">
+                            <div class="text-[10px] text-gray-500 uppercase font-bold mb-1">Gateway Port</div>
+                            <div class="text-xl font-bold text-white flex items-center gap-2">
+                                <span x-text="settings?.port || gatewayStatus.port">18790</span>
+                                <span class="text-xs px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 uppercase">Loopback</span>
+                            </div>
+                            <div class="text-[11px] text-gray-400 mt-1">Bind: <code class="text-neon-cyan" x-text="settings?.bind || 'loopback'">loopback</code> (127.0.0.1)</div>
+                        </div>
+
+                        <div class="bg-space-950 p-4 rounded-xl border border-space-border">
+                            <div class="text-[10px] text-gray-500 uppercase font-bold mb-1">Authentication Mode</div>
+                            <div class="text-xl font-bold text-neon-purple flex items-center gap-2">
+                                <span x-text="(settings?.auth_mode || 'token').toUpperCase()">TOKEN</span>
+                                <span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+                            </div>
+                            <div class="text-[11px] text-gray-400 mt-1">Execution Mode: <code class="text-white" x-text="settings?.mode || 'local'">local</code></div>
+                        </div>
+                    </div>
+
+                    <!-- Direct Launch & Full URL Card -->
+                    <div class="bg-space-950 p-4 rounded-xl border border-neon-purple/30 space-y-3">
+                        <div class="flex items-center justify-between">
+                            <span class="text-white font-bold">Authenticated Control UI URL</span>
+                            <span class="text-[10px] text-neon-purple uppercase font-bold">1-Click Host Launch</span>
+                        </div>
+                        <div class="bg-space-900 p-2.5 rounded-lg border border-space-border flex items-center justify-between gap-2 overflow-hidden">
+                            <code class="text-neon-cyan text-xs truncate select-all" x-text="getDashboardUrl()"></code>
+                            <div class="flex items-center gap-2 shrink-0">
+                                <button @click="copyDashboardUrl()" class="btn btn-xs bg-space-950 hover:bg-space-800 border-space-border text-gray-300 hover:text-white">
+                                    <span x-text="copiedUrl ? 'Copied!' : 'Copy'">Copy</span>
+                                </button>
+                                <button @click="openControlUi()" class="btn btn-xs bg-neon-purple hover:bg-purple-600 text-white border-none">
+                                    Launch ↗
+                                </button>
+                            </div>
+                        </div>
+                        <p class="text-[11px] text-gray-400 font-sans">
+                            Appends the gateway bearer token directly to the URL hash (<code class="text-gray-300">#token=...</code>) so the web interface authenticates seamlessly without prompting.
+                        </p>
+                    </div>
+
+                    <!-- Raw Token Field -->
+                    <div class="bg-space-950 p-4 rounded-xl border border-space-border space-y-2">
+                        <div class="flex items-center justify-between">
+                            <span class="text-gray-400 font-bold uppercase text-[10px]">Gateway Auth Token</span>
+                            <button @click="copyToken()" class="btn btn-xs bg-space-900 hover:bg-space-800 border-space-border text-neon-cyan hover:text-white">
+                                <span x-text="copiedToken ? 'Copied Token!' : 'Copy Token'">Copy Token</span>
+                            </button>
+                        </div>
+                        <div class="bg-space-900 p-2.5 rounded-lg border border-space-border flex items-center justify-between">
+                            <code class="text-gray-300 text-xs truncate select-all" x-text="getToken()"></code>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab 2: Model Routing & Policy -->
+                <div x-show="settingsTab === 'models'" class="space-y-5">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="bg-space-950 p-4 rounded-xl border border-space-border">
+                            <div class="text-[10px] text-gray-500 uppercase font-bold mb-1">Primary Agent Model</div>
+                            <div class="text-base font-bold text-neon-cyan truncate" x-text="settings?.primary_model || 'ssc/meta/llama-3.2-11b-vision-instruct'"></div>
+                            <div class="text-[11px] text-gray-400 mt-1">Provider: <code class="text-white">ssc</code> (OpenAI-compatible)</div>
+                        </div>
+
+                        <div class="bg-space-950 p-4 rounded-xl border border-space-border">
+                            <div class="text-[10px] text-gray-500 uppercase font-bold mb-1">Upstream Proxy Base URL</div>
+                            <div class="text-base font-bold text-white truncate">http://127.0.0.1:1987/v1</div>
+                            <div class="text-[11px] text-emerald-400 mt-1">SolidStack AI Proxy • Transparent Router</div>
+                        </div>
+                    </div>
+
+                    <!-- Allowed Model Policy -->
+                    <div class="bg-space-950 p-4 rounded-xl border border-space-border space-y-3">
+                        <div class="flex items-center justify-between">
+                            <span class="text-white font-bold uppercase text-[10px]">Model Policy Allowlist</span>
+                            <span class="text-[10px] text-gray-400" x-text="`${(settings?.allowed_models || []).length} Models Authorized`"></span>
+                        </div>
+                        <div class="flex flex-wrap gap-1.5 max-h-48 overflow-y-auto custom-scrollbar p-1">
+                            <template x-for="m in (settings?.allowed_models || [])" :key="m">
+                                <span class="px-2 py-0.5 rounded bg-space-900 border border-space-border/80 text-[11px] text-gray-300" x-text="m"></span>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab 3: Channels & Plugins -->
+                <div x-show="settingsTab === 'channels'" class="space-y-5">
+                    <!-- Configured Channels -->
+                    <div class="space-y-2">
+                        <div class="text-[10px] text-gray-500 uppercase font-bold">Integrated Inbound Channels</div>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            <div class="bg-space-950 p-3.5 rounded-xl border border-space-border flex items-center justify-between">
+                                <div class="flex items-center gap-2.5">
+                                    <div class="w-2.5 h-2.5 rounded-full" :class="settings?.channels?.slack?.enabled ? 'bg-emerald-400 animate-pulse' : 'bg-gray-600'"></div>
+                                    <div>
+                                        <div class="font-bold text-white text-xs">Slack Gateway</div>
+                                        <div class="text-[10px] text-gray-400" x-text="`Mode: ${settings?.channels?.slack?.mode || 'socket'}`"></div>
+                                    </div>
+                                </div>
+                                <span class="text-[10px] px-2 py-0.5 rounded uppercase"
+                                      :class="settings?.channels?.slack?.enabled ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'bg-gray-800 text-gray-400'">
+                                    <span x-text="settings?.channels?.slack?.enabled ? 'Active' : 'Disabled'"></span>
+                                </span>
+                            </div>
+
+                            <div class="bg-space-950 p-3.5 rounded-xl border border-space-border flex items-center justify-between">
+                                <div class="flex items-center gap-2.5">
+                                    <div class="w-2.5 h-2.5 rounded-full" :class="settings?.channels?.telegram?.enabled ? 'bg-emerald-400 animate-pulse' : 'bg-gray-600'"></div>
+                                    <div>
+                                        <div class="font-bold text-white text-xs">Telegram Bot</div>
+                                        <div class="text-[10px] text-gray-400">MTProto Gateway</div>
+                                    </div>
+                                </div>
+                                <span class="text-[10px] px-2 py-0.5 rounded uppercase"
+                                      :class="settings?.channels?.telegram?.enabled ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'bg-gray-800 text-gray-400'">
+                                    <span x-text="settings?.channels?.telegram?.enabled ? 'Active' : 'Disabled'"></span>
+                                </span>
+                            </div>
+
+                            <div class="bg-space-950 p-3.5 rounded-xl border border-space-border flex items-center justify-between">
+                                <div class="flex items-center gap-2.5">
+                                    <div class="w-2.5 h-2.5 rounded-full" :class="settings?.channels?.whatsapp?.enabled ? 'bg-emerald-400' : 'bg-gray-600'"></div>
+                                    <div>
+                                        <div class="font-bold text-white text-xs">WhatsApp Direct</div>
+                                        <div class="text-[10px] text-gray-400">Self-Chat Gateway</div>
+                                    </div>
+                                </div>
+                                <span class="text-[10px] px-2 py-0.5 rounded uppercase"
+                                      :class="settings?.channels?.whatsapp?.enabled ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'bg-gray-800 text-gray-400'">
+                                    <span x-text="settings?.channels?.whatsapp?.enabled ? 'Active' : 'Standby'"></span>
+                                </span>
+                            </div>
+
+                            <div class="bg-space-950 p-3.5 rounded-xl border border-space-border flex items-center justify-between">
+                                <div class="flex items-center gap-2.5">
+                                    <div class="w-2.5 h-2.5 rounded-full" :class="settings?.channels?.imessage?.enabled ? 'bg-emerald-400' : 'bg-gray-600'"></div>
+                                    <div>
+                                        <div class="font-bold text-white text-xs">Apple iMessage</div>
+                                        <div class="text-[10px] text-gray-400">macOS chat.db Bridge</div>
+                                    </div>
+                                </div>
+                                <span class="text-[10px] px-2 py-0.5 rounded uppercase"
+                                      :class="settings?.channels?.imessage?.enabled ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30' : 'bg-gray-800 text-gray-400'">
+                                    <span x-text="settings?.channels?.imessage?.enabled ? 'Active' : 'Disabled'"></span>
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Enabled Plugins -->
+                    <div class="space-y-2">
+                        <div class="text-[10px] text-gray-500 uppercase font-bold">Enabled Plugins &amp; Integrations</div>
+                        <div class="flex flex-wrap gap-2">
+                            <template x-for="p in (settings?.plugins?.allow || [])" :key="p">
+                                <span class="px-2.5 py-1 rounded-lg bg-space-950 border border-neon-cyan/30 text-neon-cyan text-xs flex items-center gap-1.5">
+                                    <span class="w-1.5 h-1.5 rounded-full bg-neon-cyan"></span>
+                                    <span x-text="p"></span>
+                                </span>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab 4: Raw JSON Config -->
+                <div x-show="settingsTab === 'raw'" class="space-y-3">
+                    <div class="flex items-center justify-between">
+                        <span class="text-gray-400 font-bold uppercase text-[10px]">Sanitized ~/.openclaw/openclaw.json</span>
+                        <button @click="copyRawConfig()" class="btn btn-xs bg-neon-purple hover:bg-purple-600 text-white border-none gap-1">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                            </svg>
+                            <span x-text="copiedConfig ? 'Copied JSON!' : 'Copy Config'">Copy Config</span>
+                        </button>
+                    </div>
+                    <pre class="bg-space-950 p-4 rounded-xl border border-space-border text-xs text-gray-300 font-mono overflow-auto max-h-96 select-all leading-relaxed" 
+                         x-text="JSON.stringify(settings?.config || {}, null, 2)"></pre>
+                </div>
+
+            </div>
+
+            <!-- Modal Footer -->
+            <div class="p-4 border-t border-space-border bg-space-950 flex items-center justify-between">
+                <span class="text-[11px] text-gray-500 font-mono">
+                    Token changes take effect immediately on next gateway restart.
+                </span>
+                <div class="flex items-center gap-2 font-mono">
+                    <button @click="openControlUi()" class="btn btn-xs bg-neon-purple hover:bg-purple-600 text-white border-none px-3">
+                        Launch Control UI (with Token) ↗
+                    </button>
+                    <button @click="closeSettings()" class="btn btn-xs bg-space-900 hover:bg-space-800 border-space-border text-gray-300 hover:text-white px-3">
+                        Close
+                    </button>
+                </div>
+            </div>
+
+        </div>
+        <form method="dialog" class="modal-backdrop" @click="closeSettings()">
+            <button>close</button>
+        </form>
+    </dialog>
+
+</div>

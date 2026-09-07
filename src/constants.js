@@ -88,11 +88,15 @@ export const CLIENT_METADATA = {
 };
 
 // Cloud Code API endpoints (in fallback order)
+const ANTIGRAVITY_ENDPOINT_SANDBOX = 'https://daily-cloudcode-pa.sandbox.googleapis.com';
 const ANTIGRAVITY_ENDPOINT_DAILY = 'https://daily-cloudcode-pa.googleapis.com';
 const ANTIGRAVITY_ENDPOINT_PROD = 'https://cloudcode-pa.googleapis.com';
 
-// Endpoint fallback order (daily → prod)
+// Endpoint fallback order (sandbox → daily → prod)
+// Sandbox first: the daily/prod hosts may be redirected to localhost for client
+// interception, so only the sandbox endpoint reliably reaches real Google upstream.
 export const ANTIGRAVITY_ENDPOINT_FALLBACKS = [
+    ANTIGRAVITY_ENDPOINT_SANDBOX,
     ANTIGRAVITY_ENDPOINT_DAILY,
     ANTIGRAVITY_ENDPOINT_PROD
 ];
@@ -162,7 +166,7 @@ export const MAX_WAIT_BEFORE_ERROR_MS = config?.maxWaitBeforeErrorMs || 120000; 
 export const RATE_LIMIT_DEDUP_WINDOW_MS = config?.rateLimitDedupWindowMs || 2000; // 2 seconds
 export const RATE_LIMIT_STATE_RESET_MS = config?.rateLimitStateResetMs || 120000; // 2 minutes - reset consecutive429 after inactivity
 export const FIRST_RETRY_DELAY_MS = config?.firstRetryDelayMs || 1000; // Quick 1s retry on first 429
-export const SWITCH_ACCOUNT_DELAY_MS = config?.switchAccountDelayMs || 5000; // Delay before switching accounts
+export const SWITCH_ACCOUNT_DELAY_MS = config?.switchAccountDelayMs ?? 50; // Fast 50ms rotation before trying next account
 
 // Consecutive failure tracking - extended cooldown after repeated failures
 export const MAX_CONSECUTIVE_FAILURES = config?.maxConsecutiveFailures || 5;
@@ -235,7 +239,36 @@ export function getModelFamily(modelName) {
     const lower = (modelName || '').toLowerCase();
     if (lower.includes('claude')) return 'claude';
     if (lower.includes('gemini')) return 'gemini';
+    // NVIDIA NIM open-weights providers (DeepSeek, Llama, etc.) form their own family
+    if (lower.includes('/')) return 'nim';
     return 'unknown';
+}
+
+/**
+ * Resolve a model through the configured modelMapping, enforcing that the
+ * target stays within the SAME model family as the requested model.
+ *
+ * Cross-family mappings (e.g. claude-sonnet-4-6 -> gemini-3.8-flash-high, or
+ * gemini-3.7-flash-low -> deepseek NIM) are not allowed — they waste a pooled
+ * slot of one family to answer a request for another. If the mapping would cross
+ * families, the requested model is returned unchanged.
+ *
+ * @param {string} requestedModel - Model requested by the client.
+ * @param {object} modelMapping - The config.modelMapping table (optional).
+ * @returns {string} The resolved model, or the original request if mapping is
+ *                   absent, self-mapping, or would cross model families.
+ */
+export function resolveModelMapping(requestedModel, modelMapping = {}) {
+    const mapping = modelMapping[requestedModel];
+    if (!requestedModel || !mapping?.mapping) return requestedModel;
+    const target = mapping.mapping;
+    if (target === requestedModel) return requestedModel;
+    const srcFamily = getModelFamily(requestedModel);
+    const dstFamily = getModelFamily(target);
+    if (srcFamily !== 'unknown' && dstFamily !== 'unknown' && srcFamily !== dstFamily) {
+        return requestedModel;
+    }
+    return target;
 }
 
 /**
@@ -337,41 +370,35 @@ export function buildFallbackMap(liveModels) {
         byFamily[family].push(id);
     }
 
-    const families = Object.keys(byFamily);
-
     for (const id of liveModels) {
         const myFamily = getModelFamily(id);
-        // Find the best match in a different family
-        for (const otherFamily of families) {
-            if (otherFamily === myFamily || otherFamily === 'unknown') continue;
+        // Fallbacks are strictly same-family: never route a model of one
+        // family (claude/gemini/nim) onto a pooled slot of another.
+        const candidates = byFamily[myFamily] || [];
+        let bestMatch = null;
 
-            const candidates = byFamily[otherFamily];
-            let bestMatch = null;
+        if (MODEL_TIERS.isThinking(id)) {
+            // Thinking model → find another thinking model, or heavy model
+            bestMatch = candidates.find(c => MODEL_TIERS.isThinking(c))
+                     || candidates.find(c => MODEL_TIERS.isHeavy(c))
+                     || candidates[0];
+        } else if (MODEL_TIERS.isFast(id)) {
+            // Fast model → find another fast model, or mid-tier
+            bestMatch = candidates.find(c => MODEL_TIERS.isFast(c))
+                     || candidates.find(c => MODEL_TIERS.isMid(c))
+                     || candidates[0];
+        } else if (MODEL_TIERS.isMid(id)) {
+            // Mid model → find another mid model, or fast
+            bestMatch = candidates.find(c => MODEL_TIERS.isMid(c))
+                     || candidates.find(c => MODEL_TIERS.isFast(c))
+                     || candidates[0];
+        } else {
+            // Default: just pick the first available model in the same family
+            bestMatch = candidates[0];
+        }
 
-            if (MODEL_TIERS.isThinking(id)) {
-                // Thinking model → find another thinking model, or heavy model
-                bestMatch = candidates.find(c => MODEL_TIERS.isThinking(c))
-                         || candidates.find(c => MODEL_TIERS.isHeavy(c))
-                         || candidates[0];
-            } else if (MODEL_TIERS.isFast(id)) {
-                // Fast model → find another fast model, or mid-tier
-                bestMatch = candidates.find(c => MODEL_TIERS.isFast(c))
-                         || candidates.find(c => MODEL_TIERS.isMid(c))
-                         || candidates[0];
-            } else if (MODEL_TIERS.isMid(id)) {
-                // Mid model → find another mid model, or fast
-                bestMatch = candidates.find(c => MODEL_TIERS.isMid(c))
-                         || candidates.find(c => MODEL_TIERS.isFast(c))
-                         || candidates[0];
-            } else {
-                // Default: just pick the first available model in the other family
-                bestMatch = candidates[0];
-            }
-
-            if (bestMatch) {
-                map[id] = bestMatch;
-                break; // Use the first alternative family found
-            }
+        if (bestMatch && bestMatch !== id) {
+            map[id] = bestMatch;
         }
     }
 

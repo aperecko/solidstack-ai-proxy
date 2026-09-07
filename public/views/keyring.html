@@ -1,0 +1,239 @@
+<div x-data="keyringWizard" class="view-container animate-fade-in p-6 max-w-4xl mx-auto text-white">
+    <!-- Header -->
+    <div class="mb-8 border-b border-white/10 pb-4">
+        <h1 class="text-3xl font-bold tracking-tight text-emerald-400 flex items-center gap-3">
+            <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+            </svg>
+            Keyring Provisioning Hub
+        </h1>
+        <p class="text-gray-400 mt-2">Zero-touch automation & secure manual capture for Free Tier API providers.</p>
+    </div>
+
+    <!-- Stepper -->
+    <div class="flex items-center gap-2 mb-8">
+        <template x-for="step in [1,2,3,4]">
+            <div class="flex-1 h-2 rounded-full transition-colors duration-300"
+                 :class="activeStep >= step ? 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]' : 'bg-gray-800'"></div>
+        </template>
+    </div>
+
+    <!-- Step 1: Provider Selection -->
+    <div x-show="activeStep === 1" class="space-y-6 animate-fade-in">
+        <h2 class="text-xl font-semibold">1. Select a Provider</h2>
+        <p class="text-sm text-gray-400">Choose the provider you want to configure. NVIDIA NIM provides 1,000–5,000 trial credits (~1.3B tokens on 8B models).</p>
+        
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div @click="provider = 'nvidia'" class="p-4 rounded-xl border-2 cursor-pointer transition-all bg-gray-900/50 hover:bg-gray-800/80"
+                 :class="provider === 'nvidia' ? 'border-emerald-500' : 'border-transparent'">
+                <h3 class="font-bold text-lg text-emerald-400">NVIDIA NIM</h3>
+                <p class="text-xs text-gray-400 mt-1">Llama 3.3 70B, Qwen, DeepSeek</p>
+                <div class="mt-4 text-xs font-mono px-2 py-1 bg-black/40 rounded text-center">build.nvidia.com</div>
+            </div>
+            <div @click="provider = 'openrouter'" class="p-4 rounded-xl border-2 cursor-pointer transition-all bg-gray-900/50 hover:bg-gray-800/80"
+                 :class="provider === 'openrouter' ? 'border-emerald-500' : 'border-transparent'">
+                <h3 class="font-bold text-lg text-blue-400">OpenRouter Free</h3>
+                <p class="text-xs text-gray-400 mt-1">Free community endpoints</p>
+                <div class="mt-4 text-xs font-mono px-2 py-1 bg-black/40 rounded text-center">openrouter.ai</div>
+            </div>
+            <div @click="provider = 'groq'" class="p-4 rounded-xl border-2 cursor-pointer transition-all bg-gray-900/50 hover:bg-gray-800/80"
+                 :class="provider === 'groq' ? 'border-emerald-500' : 'border-transparent'">
+                <h3 class="font-bold text-lg text-orange-400">Groq</h3>
+                <p class="text-xs text-gray-400 mt-1">Ultra-low latency LPU inferencing</p>
+                <div class="mt-4 text-xs font-mono px-2 py-1 bg-black/40 rounded text-center">console.groq.com</div>
+            </div>
+        </div>
+
+        <div class="flex justify-end mt-8">
+            <button @click="nextStep()" class="px-6 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg transition-all">Next: Choose Method</button>
+        </div>
+    </div>
+
+    <!-- Step 2: Method Selection -->
+    <div x-show="activeStep === 2" class="space-y-6 animate-fade-in" style="display: none;">
+        <h2 class="text-xl font-semibold">2. Choose Provisioning Method</h2>
+        <p class="text-sm text-gray-400">How would you like to retrieve and store your API key?</p>
+        
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div @click="method = 'auto'" class="p-6 rounded-xl border-2 cursor-pointer transition-all bg-gray-900/50 hover:bg-gray-800/80 relative overflow-hidden"
+                 :class="method === 'auto' ? 'border-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.2)]' : 'border-transparent'">
+                <div class="absolute top-0 right-0 px-3 py-1 bg-emerald-500/20 text-emerald-400 text-[10px] font-bold rounded-bl-lg uppercase tracking-wider">Recommended</div>
+                <h3 class="font-bold text-lg">Zero-Touch Automation</h3>
+                <p class="text-sm text-gray-400 mt-2">We will launch a headless Chrome instance using Profile 24, navigate to the provider, authenticate via SSO, generate the key, and securely store it in your 1Password vault.</p>
+                <ul class="text-xs text-gray-500 mt-4 list-disc pl-4 space-y-1">
+                    <li>No friction, fully automated</li>
+                    <li>Uses isolated single-tenant profile</li>
+                    <li>Requires no manual copy-pasting</li>
+                </ul>
+            </div>
+            
+            <div @click="method = 'manual'" class="p-6 rounded-xl border-2 cursor-pointer transition-all bg-gray-900/50 hover:bg-gray-800/80"
+                 :class="method === 'manual' ? 'border-emerald-500' : 'border-transparent'">
+                <h3 class="font-bold text-lg">Guided Manual Capture</h3>
+                <p class="text-sm text-gray-400 mt-2">We will direct you to the exact page to log in and copy your API key. You will paste it here, and we will safely pipe it to 1Password and the proxy keyring.</p>
+                <ul class="text-xs text-gray-500 mt-4 list-disc pl-4 space-y-1">
+                    <li>Best if automation fails or is blocked by CAPTCHA</li>
+                    <li>Works with any browser profile</li>
+                </ul>
+            </div>
+        </div>
+
+        <div class="flex justify-between mt-8">
+            <button @click="prevStep()" class="px-6 py-2 bg-gray-700 hover:bg-gray-600 text-white font-bold rounded-lg transition-all">Back</button>
+            <button @click="nextStep()" class="px-6 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg transition-all">Next: Execute</button>
+        </div>
+    </div>
+
+    <!-- Step 3: Execution -->
+    <div x-show="activeStep === 3" class="space-y-6 animate-fade-in" style="display: none;">
+        
+        <!-- Auto Execution Mode -->
+        <template x-if="method === 'auto'">
+            <div class="space-y-4">
+                <h2 class="text-xl font-semibold">3. Zero-Touch Provisioning</h2>
+                <p class="text-sm text-gray-400">Click start to launch the background Playwright task for <span x-text="provider.toUpperCase()" class="font-bold text-white"></span>.</p>
+                
+                <div class="p-4 bg-black/60 rounded-lg border border-gray-800 font-mono text-xs text-green-400 h-64 overflow-y-auto whitespace-pre-wrap shadow-inner" x-text="provisionLogs"></div>
+
+                <div x-show="provisionError" class="p-3 bg-red-900/30 border border-red-500/50 text-red-400 rounded-lg text-sm">
+                    ⚠️ <span x-text="provisionError"></span>
+                </div>
+                
+                <div x-show="provisionSuccess" class="p-3 bg-emerald-900/30 border border-emerald-500/50 text-emerald-400 rounded-lg text-sm font-bold flex items-center gap-2">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                    Provisioning Complete & Key Captured!
+                </div>
+
+                <div class="flex justify-between mt-8">
+                    <button @click="prevStep()" :disabled="autoProvisioning" class="px-6 py-2 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-white font-bold rounded-lg transition-all">Back</button>
+                    <div class="flex gap-3">
+                        <button x-show="!provisionSuccess" @click="startAutoProvision()" :disabled="autoProvisioning" class="px-6 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold rounded-lg transition-all flex items-center gap-2">
+                            <svg x-show="autoProvisioning" class="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                            <span x-text="autoProvisioning ? 'Provisioning...' : 'Start Automation'"></span>
+                        </button>
+                        <button x-show="provisionSuccess" @click="nextStep()" class="px-6 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg transition-all">Next: View Status</button>
+                    </div>
+                </div>
+            </div>
+        </template>
+
+        <!-- Manual Execution Mode -->
+        <template x-if="method === 'manual'">
+            <div class="space-y-6">
+                <h2 class="text-xl font-semibold">3. Manual Key Capture</h2>
+                
+                <div class="p-5 rounded-lg border border-blue-500/30 bg-blue-900/10">
+                    <h3 class="font-bold text-blue-300 mb-2">Instructions for <span x-text="provider.toUpperCase()"></span>:</h3>
+                    <ol class="list-decimal pl-5 space-y-2 text-sm text-gray-300">
+                        <li>Navigate to 
+                            <a :href="provider === 'nvidia' ? 'https://build.nvidia.com/explore/discover' : (provider === 'groq' ? 'https://console.groq.com/keys' : 'https://openrouter.ai/keys')" 
+                               target="_blank" class="text-blue-400 hover:underline font-mono px-1">
+                               <span x-text="provider === 'nvidia' ? 'build.nvidia.com' : (provider === 'groq' ? 'console.groq.com' : 'openrouter.ai')"></span>
+                               <svg class="w-3 h-3 inline-block ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+                            </a>
+                        </li>
+                        <li>Log in or authenticate using your Google Account if required.</li>
+                        <li>Locate the "API Keys" section and generate a new API key.</li>
+                        <li>Copy the generated key exactly and paste it below.</li>
+                    </ol>
+                </div>
+
+                <div class="space-y-3">
+                    <div>
+                        <label class="block text-xs font-bold text-gray-400 mb-1">Key Label (For 1Password Vault)</label>
+                        <input type="text" x-model="manualLabel" class="w-full bg-black/40 border border-gray-700 rounded-lg px-4 py-2 focus:border-emerald-500 focus:outline-none text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-bold text-gray-400 mb-1">API Key</label>
+                        <input type="password" x-model="manualKey" placeholder="Paste your API key here..." class="w-full bg-black/40 border border-gray-700 rounded-lg px-4 py-2 focus:border-emerald-500 focus:outline-none font-mono text-sm">
+                    </div>
+                </div>
+
+                <div x-show="manualError" class="p-3 bg-red-900/30 border border-red-500/50 text-red-400 rounded-lg text-sm">
+                    ⚠️ <span x-text="manualError"></span>
+                </div>
+                
+                <div x-show="manualSuccess" class="p-3 bg-emerald-900/30 border border-emerald-500/50 text-emerald-400 rounded-lg text-sm font-bold flex items-center gap-2">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                    Key captured and synced securely!
+                </div>
+
+                <div class="flex justify-between mt-8">
+                    <button @click="prevStep()" :disabled="manualSaving" class="px-6 py-2 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-white font-bold rounded-lg transition-all">Back</button>
+                    <div class="flex gap-3">
+                        <button x-show="!manualSuccess" @click="saveManualKey()" :disabled="manualSaving || !manualKey" class="px-6 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white font-bold rounded-lg transition-all flex items-center gap-2">
+                            <svg x-show="manualSaving" class="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                            <span x-text="manualSaving ? 'Saving securely...' : 'Save & Capture'"></span>
+                        </button>
+                        <button x-show="manualSuccess" @click="nextStep()" class="px-6 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg transition-all">Next: View Status</button>
+                    </div>
+                </div>
+            </div>
+        </template>
+    </div>
+
+    <!-- Step 4: Status Dashboard -->
+    <div x-show="activeStep === 4" class="space-y-6 animate-fade-in" style="display: none;">
+        <div class="flex justify-between items-end">
+            <div>
+                <h2 class="text-xl font-semibold">4. Active Keyring Fleet Status</h2>
+                <p class="text-sm text-gray-400 mt-1">Live metrics from the SolidStack proxy keyring manager.</p>
+            </div>
+            <button @click="fetchStatus()" class="text-sm text-emerald-400 hover:text-emerald-300 flex items-center gap-1">
+                <svg :class="{'animate-spin': loadingStatus}" class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                Refresh
+            </button>
+        </div>
+
+        <template x-if="status">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                <template x-for="(provData, provName) in status.providers" :key="provName">
+                    <div class="p-4 rounded-xl border border-gray-800 bg-gray-900/50">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="font-bold text-lg uppercase" x-text="provName"
+                                :class="provName === 'nvidia' ? 'text-emerald-400' : (provName === 'openrouter' ? 'text-blue-400' : 'text-orange-400')"></h3>
+                            <span class="px-2 py-0.5 rounded text-[10px] font-bold"
+                                  :class="provData.enabled ? 'bg-green-900/50 text-green-400 border border-green-500/30' : 'bg-gray-800 text-gray-400 border border-gray-600'"
+                                  x-text="provData.enabled ? 'ENABLED' : 'DISABLED'"></span>
+                        </div>
+                        
+                        <div class="space-y-2 text-sm text-gray-300">
+                            <div class="flex justify-between">
+                                <span class="text-gray-500">Total Keys:</span>
+                                <span class="font-mono text-white" x-text="provData.keys.length"></span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-gray-500">Healthy Keys:</span>
+                                <span class="font-mono text-emerald-400" x-text="provData.keys.filter(k => !k.inCooldown).length"></span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span class="text-gray-500">Cooling Down:</span>
+                                <span class="font-mono text-yellow-500" x-text="provData.keys.filter(k => k.inCooldown).length"></span>
+                            </div>
+                        </div>
+
+                        <!-- Key List -->
+                        <div class="mt-4 space-y-1" x-show="provData.keys.length > 0">
+                            <template x-for="k in provData.keys" :key="k.id">
+                                <div class="flex justify-between items-center text-xs px-2 py-1 bg-black/40 rounded">
+                                    <span class="font-mono text-gray-400 truncate w-32" x-text="k.id"></span>
+                                    <span class="flex items-center gap-1">
+                                        <span class="w-1.5 h-1.5 rounded-full" :class="!k.inCooldown ? 'bg-green-500' : 'bg-yellow-500'"></span>
+                                        <span class="text-[10px] uppercase text-gray-500" x-text="k.inCooldown ? 'COOLDOWN' : 'ACTIVE'"></span>
+                                    </span>
+                                </div>
+                            </template>
+                        </div>
+                        
+                        <div x-show="provData.keys.length === 0" class="mt-4 text-xs text-gray-500 italic">No keys registered.</div>
+                    </div>
+                </template>
+            </div>
+        </template>
+
+        <div class="flex justify-between mt-8">
+            <button @click="activeStep = 1" class="px-6 py-2 bg-gray-700 hover:bg-gray-600 text-white font-bold rounded-lg transition-all">Provision Another</button>
+            <button @click="$store.global.activeTab = 'dashboard'" class="px-6 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg transition-all">Return to Dashboard</button>
+        </div>
+    </div>
+</div>

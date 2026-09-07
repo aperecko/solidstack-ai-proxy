@@ -6,6 +6,7 @@ window.Components.workflow = () => ({
     ownerRemediation: null,
     determination: null,
     isSyncing: false,
+    searchQuery: '',
     selectedRole: 'all',
     showAllCompleted: false,
 
@@ -17,17 +18,26 @@ window.Components.workflow = () => ({
         return ['all', ...Array.from(set)];
     },
 
+    matchesSearch(t) {
+        if (!this.searchQuery) return true;
+        const q = this.searchQuery.toLowerCase();
+        return (t.id && t.id.toLowerCase().includes(q)) ||
+               (t.title && t.title.toLowerCase().includes(q)) ||
+               (t.role && t.role.toLowerCase().includes(q)) ||
+               (t.summary && t.summary.toLowerCase().includes(q));
+    },
+
     get filteredActive() {
-        return this.activeTasks.filter(t => this.selectedRole === 'all' || t.role === this.selectedRole);
+        return this.activeTasks.filter(t => (this.selectedRole === 'all' || t.role === this.selectedRole) && this.matchesSearch(t));
     },
 
     get filteredPending() {
-        return this.pendingTasks.filter(t => this.selectedRole === 'all' || t.role === this.selectedRole);
+        return this.pendingTasks.filter(t => (this.selectedRole === 'all' || t.role === this.selectedRole) && this.matchesSearch(t));
     },
 
     get filteredCompleted() {
-        const list = this.completedTasks.filter(t => this.selectedRole === 'all' || t.role === this.selectedRole);
-        return this.showAllCompleted ? list : list.slice(0, 6);
+        const list = this.completedTasks.filter(t => (this.selectedRole === 'all' || t.role === this.selectedRole) && this.matchesSearch(t));
+        return this.showAllCompleted ? list : list.slice(0, 8);
     },
 
     async fetchStatus() {
@@ -41,9 +51,9 @@ window.Components.workflow = () => ({
             if (res && res.ok) {
                 const data = await res.json();
                 const tasks = data.tasks || [];
-                this.activeTasks = tasks.filter(t => t.status === 'active' || t.status === 'in-progress');
-                this.pendingTasks = tasks.filter(t => t.status === 'pending');
-                this.completedTasks = tasks.filter(t => t.status === 'complete' || t.status === 'completed');
+                this.activeTasks = tasks.filter(t => (t.canonical_status || t.status) === 'active' || (t.status || '').includes('active') || (t.status || '').includes('in-progress'));
+                this.pendingTasks = tasks.filter(t => (t.canonical_status || t.status) === 'pending' || (t.status || '').includes('pending'));
+                this.completedTasks = tasks.filter(t => (t.canonical_status || t.status) === 'completed' || (t.status || '').includes('complete') || (t.status || '').startsWith('done'));
             }
             if (remRes && remRes.ok) {
                 this.ownerRemediation = await remRes.json();

@@ -55,6 +55,8 @@ function getProductJsonPaths() {
     const paths = [];
 
     if (os === 'darwin') {
+        paths.push('/Applications/Antigravity IDE.app/Contents/Resources/app/product.json');
+        paths.push(join(homedir(), 'Applications', 'Antigravity IDE.app', 'Contents', 'Resources', 'app', 'product.json'));
         paths.push('/Applications/Antigravity.app/Contents/Resources/app/product.json');
         paths.push(join(homedir(), 'Applications', 'Antigravity.app', 'Contents', 'Resources', 'app', 'product.json'));
     } else if (os === 'win32') {

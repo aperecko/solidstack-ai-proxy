@@ -148,12 +148,14 @@ window.Components.accountManager = () => ({
         const poolsMap = {};
         for (const acc of pageAccs) {
             let poolName = 'Individual Accounts';
-            if (acc.email.endsWith('@adamassist.com')) {
+            if (FAMILY_MAP[acc.email]) {
+                poolName = FAMILY_MAP[acc.email];
+            } else if (acc.email === 'adam@adamassist.com') {
+                poolName = 'Individual Accounts';
+            } else if (acc.email.endsWith('@adamassist.com')) {
                 poolName = 'AdamAssist Swarm';
             } else if (acc.email.endsWith('@reseller.mysolidstate.ca')) {
                 poolName = 'Reseller Swarm';
-            } else if (FAMILY_MAP[acc.email]) {
-                poolName = FAMILY_MAP[acc.email];
             }
             
             const needsFixing = acc.isInvalid || (acc.status && acc.status !== 'active' && acc.status !== 'ready' && acc.status !== 'ok');
@@ -354,6 +356,8 @@ window.Components.accountManager = () => ({
             return;
         }
 
+
+
         // Otherwise launch clean OAuth window
         store.showToast(store.t('reauthenticating', { email: Redact.email(email) }) || `Re-authenticating ${email}...`, 'info');
         const password = store.webuiPassword;
@@ -520,8 +524,16 @@ window.Components.accountManager = () => ({
                 if (pct > maxGemini) {
                     maxGemini = pct;
                 }
-                if (l.resetTime && (!geminiReset || new Date(l.resetTime) < new Date(geminiReset))) {
-                    geminiReset = l.resetTime;
+                const isFlagship = id.includes('pro') || id.includes('3.7') || id.includes('3.6');
+                if (l.resetTime) {
+                    if (!geminiReset) {
+                        geminiReset = l.resetTime;
+                    } else if (pct < 100) {
+                        geminiReset = l.resetTime;
+                    } else if (isFlagship && new Date(l.resetTime) > new Date(geminiReset)) {
+                        // Prioritize the longer, more critical weekly flagship window when full
+                        geminiReset = l.resetTime;
+                    }
                 }
                 geminiModels.push({ modelId: id, pct, resetTime: l.resetTime, limit: l });
             } else {
@@ -558,7 +570,7 @@ window.Components.accountManager = () => ({
                 resetTime: claudeReset, 
                 models: claudeModels 
             } : null,
-            gemini: maxGemini > -1 ? { 
+            gemini: (!isEligibleClaude && maxGemini > -1) ? { 
                 name: 'Google Gemini Pool',
                 percent: maxGemini, 
                 resetTime: geminiReset, 
@@ -568,6 +580,28 @@ window.Components.accountManager = () => ({
             otherFamilies: Object.values(otherMap),
             totalModels
         };
+    },
+
+    formatResetDay(isoString) {
+        if (!isoString) return '';
+        try {
+            const date = new Date(isoString);
+            if (isNaN(date.getTime())) return '';
+
+            const now = new Date();
+            const diffMs = date.getTime() - now.getTime();
+            if (diffMs <= 0) return 'Resetting soon';
+
+            const diffHours = Math.round(diffMs / (1000 * 60 * 60));
+            const dayName = date.toLocaleDateString(undefined, { weekday: 'short' });
+            const timeStr = date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+
+            const isToday = date.toDateString() === now.toDateString();
+            const dayPrefix = isToday ? 'Today' : dayName;
+            return `${dayPrefix} ${timeStr} (${diffHours}h)`;
+        } catch (e) {
+            return '';
+        }
     },
 
     // Threshold settings
@@ -962,21 +996,24 @@ window.Components.accountManager = () => ({
 
     async autoOnboard(email) {
         try {
-            Alpine.store('global').showToast(`🤖 Starting Zero-Touch robot for ${email}...`, 'info');
-            const res = await fetch('/api/swarm/auto-onboard', {
+            Alpine.store('global').showToast(`Generating login link for ${email}...`, 'info');
+            
+            // 1. Get OAuth URL
+            const urlRes = await fetch('/api/auth/url?email=' + encodeURIComponent(email));
+            const urlData = await urlRes.json();
+            if (urlData.status !== 'ok') throw new Error(urlData.error);
+            
+            // 2. Open in Active Browser
+            await fetch('/api/swarm/launch-clean-window', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email })
+                body: JSON.stringify({ email, url: urlData.url })
             });
-            const data = await res.json();
-            if (data.status === 'ok') {
-                Alpine.store('global').showToast(`Zero-Touch robot running for ${email}! It will auto-type credentials, intercept verification codes, and activate the account.`, 'success');
-                this.credentialsModalOpen = false;
-            } else {
-                Alpine.store('global').showToast(`Error: ${data.error}`, 'error');
-            }
+            
+            Alpine.store('global').showToast(`Opened active browser for ${email}! Please click through the login.`, 'success');
+            if (this.credentialsModalOpen) this.credentialsModalOpen = false;
         } catch (e) {
-            Alpine.store('global').showToast(`Failed to launch auto-onboarding: ${e.message}`, 'error');
+            Alpine.store('global').showToast(`Failed to open active browser: ${e.message}`, 'error');
         }
     },
 

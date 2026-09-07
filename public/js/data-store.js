@@ -23,8 +23,16 @@ document.addEventListener('alpine:init', () => {
         loading: false,
         initialLoad: true, // Track first load for skeleton screen
         connectionStatus: 'connecting',
-        lastUpdated: '-',
         healthCheckTimer: null,
+        alignment: {
+            overall_score: 100,
+            quarantined_files: [],
+            reaped_processes: [],
+            rotated_logs: [],
+            divergent_items: [],
+            timestamp: null,
+            sweeping: false
+        },
 
         // Filters state
         filters: {
@@ -140,28 +148,6 @@ document.addEventListener('alpine:init', () => {
                 if (data.history) {
                     this.usageHistory = data.history;
                     
-                    // Apply the "Used Models Only" principle across the whole dashboard
-                    const usedModels = new Set([
-                        'claude-sonnet-4-6',     // Always keep core primary model
-                        'gemini-2.5-flash-lite', // Always keep core primary model
-                        'gemini-2.5-pro'         // Always keep core primary model
-                    ]);
-                    
-                    Object.values(this.usageHistory).forEach(hourData => {
-                        Object.entries(hourData).forEach(([family, stats]) => {
-                            if (family !== 'total' && family !== '_total' && typeof stats === 'object') {
-                                Object.entries(stats).forEach(([model, count]) => {
-                                    if (model !== '_subtotal' && count > 0) {
-                                        usedModels.add(model);
-                                    }
-                                });
-                            }
-                        });
-                    });
-                    
-                    if (this.models && this.models.length > 0) {
-                        this.models = this.models.filter(m => usedModels.has(m));
-                    }
                 }
 
                 this.saveToCache(); // Save fresh data
@@ -182,6 +168,7 @@ document.addEventListener('alpine:init', () => {
                 }
 
                 this.computeQuotaRows();
+                this.fetchAlignment();
 
                 this.lastUpdated = new Date().toLocaleTimeString();
             } catch (error) {
@@ -192,6 +179,37 @@ document.addEventListener('alpine:init', () => {
             } finally {
                 this.loading = false;
                 this.initialLoad = false; // Mark initial load as complete
+            }
+        },
+
+        async fetchAlignment() {
+            try {
+                const res = await fetch('/api/alignment/status');
+                if (res.ok) {
+                    const data = await res.json();
+                    this.alignment = { ...this.alignment, ...data };
+                }
+            } catch (e) {
+                console.warn('Failed to fetch alignment status:', e);
+            }
+        },
+
+        async triggerSweep() {
+            this.alignment.sweeping = true;
+            try {
+                const res = await fetch('/api/alignment/sweep', { method: 'POST' });
+                if (res.ok) {
+                    const data = await res.json();
+                    this.alignment = { ...this.alignment, ...data, sweeping: false };
+                    const store = Alpine.store('global');
+                    if (store && store.showToast) {
+                        store.showToast('Hygiene sweep complete: Score ' + (data.overall_score || 100) + '/100', 'success');
+                    }
+                }
+            } catch (e) {
+                console.error('Hygiene sweep failed:', e);
+            } finally {
+                this.alignment.sweeping = false;
             }
         },
 
@@ -381,6 +399,15 @@ document.addEventListener('alpine:init', () => {
                         hidden: !!isHidden,
                         maxEffectiveThreshold
                     };
+                } else {
+                    // For a pool, it is only hidden if ALL its models are hidden
+                    if (!isHidden) {
+                        groups[quotaProfileKey].hidden = false;
+                    }
+                    // For a pool, it is pinned if ANY of its models are pinned
+                    if (config.pinned) {
+                        groups[quotaProfileKey].pinned = true;
+                    }
                 }
                 groups[quotaProfileKey].modelIds.push(modelId);
                 if (minResetTime && (!groups[quotaProfileKey].minResetTime || new Date(minResetTime) < new Date(groups[quotaProfileKey].minResetTime))) {
@@ -388,9 +415,6 @@ document.addEventListener('alpine:init', () => {
                 }
                 if (maxEffectiveThreshold > groups[quotaProfileKey].maxEffectiveThreshold) {
                     groups[quotaProfileKey].maxEffectiveThreshold = maxEffectiveThreshold;
-                }
-                if (config.pinned) {
-                    groups[quotaProfileKey].pinned = true;
                 }
             });
 
@@ -416,12 +440,14 @@ document.addEventListener('alpine:init', () => {
 
                 g.quotaInfo.forEach(q => {
                     let groupName = 'Individual Accounts';
-                    if (q.fullEmail.endsWith('@adamassist.com')) {
+                    if (FAMILY_MAP[q.fullEmail]) {
+                        groupName = FAMILY_MAP[q.fullEmail];
+                    } else if (q.fullEmail === 'adam@adamassist.com') {
+                        groupName = 'Individual Accounts';
+                    } else if (q.fullEmail.endsWith('@adamassist.com')) {
                         groupName = 'AdamAssist Swarm';
                     } else if (q.fullEmail.endsWith('@reseller.mysolidstate.ca')) {
                         groupName = 'Reseller Swarm';
-                    } else if (FAMILY_MAP[q.fullEmail]) {
-                        groupName = FAMILY_MAP[q.fullEmail];
                     } else if (q.fullEmail.includes('virtual-gemini-key')) {
                         groupName = 'Virtual API Keys';
                     }

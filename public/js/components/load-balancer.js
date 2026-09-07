@@ -11,15 +11,19 @@ window.Components.loadBalancer = () => ({
         rateLimitCount: 0,
         failureCount: 0,
         successRate: 100,
-        history: []
+        history: [],
+        strategyLabel: 'Hybrid (Smart Distribution)'
     },
     
     selectedEmail: null,
     selectedType: 'oauth',
+    selectedModel: null,
     animating: false,
     pollInterval: null,
     mode: 'load_balancer',
-    nativeAccount: null,
+    nativeAccount: 'adamperecko@gmail.com',
+    lastHandledTimestamp: null,
+    isLiveTraffic: false,
     
     init() {
         this.fetchStats();
@@ -43,19 +47,33 @@ window.Components.loadBalancer = () => ({
                 const data = await res.json();
                 this.stats = data;
                 this.mode = data.mode || 'load_balancer';
-                this.nativeAccount = data.nativeAccount || null;
+                this.nativeAccount = data.nativeAccount || 'adamperecko@gmail.com';
                 
-                // If there are history records, highlight the last dispatched account
+                // If there are history records, check if a NEW request arrived
                 if (data.history && data.history.length > 0) {
                     const lastReq = data.history[0];
-                    if (this.selectedEmail !== lastReq.email) {
-                        this.triggerAnimation(lastReq.email, lastReq.email.includes('virtual-gemini-key') ? 'apikey' : 'oauth');
+                    const reqTime = new Date(lastReq.timestamp).getTime();
+                    const isNew = this.lastHandledTimestamp !== lastReq.timestamp;
+                    const isFresh = (Date.now() - reqTime) < 6000;
+                    
+                    if (isNew && isFresh) {
+                        this.lastHandledTimestamp = lastReq.timestamp;
+                        this.selectedEmail = lastReq.email;
+                        this.selectedModel = lastReq.model || null;
+                        this.selectedType = lastReq.email?.includes('virtual-gemini-key') ? 'apikey' : (lastReq.type === 'ollama' ? 'ollama' : 'oauth');
+                        this.triggerPacketAnimation();
+                        this.isLiveTraffic = true;
+                    } else if (!isFresh) {
+                        this.isLiveTraffic = false;
                     }
                     
-                    this.triggerPacketAnimation();
+                    // Keep last selected account recorded for visual status
+                    if (!this.selectedEmail) {
+                        this.selectedEmail = lastReq.email;
+                        this.selectedModel = lastReq.model || null;
+                        this.selectedType = lastReq.email?.includes('virtual-gemini-key') ? 'apikey' : (lastReq.type === 'ollama' ? 'ollama' : 'oauth');
+                    }
                 }
-                
-                this.stats = data;
             }
         } catch (e) {
             console.error('Failed to fetch routing stats:', e);
@@ -69,10 +87,10 @@ window.Components.loadBalancer = () => ({
             this.animating = true;
         }, 50);
         
-        // Keep selected email highlighted for 2.5 seconds
+        // Keep selected animation active for duration of travel
         setTimeout(() => {
             this.animating = false;
-        }, 2500);
+        }, 2200);
     },
     
     triggerAnimation(email, type) {
@@ -82,12 +100,20 @@ window.Components.loadBalancer = () => ({
 
     getAccountColor(email) {
         if (!email) return '#a855f7';
+        if (email.includes('adamperecko')) return '#f59e0b';
+        if (email.includes('assistaius')) return '#22c55e';
+        if (email.includes('apps000123000')) return '#06b6d4';
+        if (email.includes('aptsoultuions')) return '#3b82f6';
+        if (email.includes('adamtechnicalsolutions')) return '#a855f7';
+        if (email.includes('haliburtonarcher')) return '#ec4899';
+        if (email.includes('adampps')) return '#eab308';
+        
         let hash = 0;
         for (let i = 0; i < email.length; i++) {
             hash = email.charCodeAt(i) + ((hash << 5) - hash);
         }
         const hue = Math.abs(hash % 360);
-        return `hsl(${hue}, 95%, 60%)`;
+        return `hsl(${hue}, 90%, 65%)`;
     },
     
     getStatusColor(status) {
@@ -103,6 +129,25 @@ window.Components.loadBalancer = () => ({
             case 'success': return 'SUCCESS';
             case 'rate_limit': return 'THROTTLED (429)';
             default: return 'FAILED';
+        }
+    },
+
+    async toggleMode() {
+        const nextMode = this.mode === 'load_balancer' ? 'native_bypass' : 'load_balancer';
+        this.mode = nextMode;
+        try {
+            const res = await fetch('/api/routing-mode', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode: nextMode })
+            });
+            if (res.ok) {
+                const data = await res.json();
+                this.mode = data.mode || nextMode;
+                await this.fetchStats();
+            }
+        } catch (e) {
+            console.error('Failed to toggle routing mode:', e);
         }
     },
 

@@ -1,0 +1,670 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pip 3D Master Model Studio</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #060911; color: #e2e8f0; height: 100vh; display: flex; overflow: hidden; }
+        
+        /* 3D Viewport Stage */
+        #viewport-container {
+            flex: 1;
+            height: 100%;
+            position: relative;
+            width: calc(100vw - 360px);
+            background: radial-gradient(circle at 50% 45%, #152136 0%, #080c16 70%, #03060a 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            perspective: 1200px;
+            cursor: grab;
+            user-select: none;
+            overflow: hidden;
+        }
+        #viewport-container:active { cursor: grabbing; }
+
+        /* 3D World Scene */
+        #world {
+            position: relative;
+            width: 0;
+            height: 0;
+            transform-style: preserve-3d;
+            transform: translateY(30px) rotateX(10deg) rotateY(0deg) scale(1);
+            transition: transform 0.05s linear;
+        }
+
+        /* 3D Pedestal Base */
+        .pedestal {
+            position: absolute;
+            left: -220px;
+            top: 260px;
+            width: 440px;
+            height: 440px;
+            border-radius: 50%;
+            background: radial-gradient(circle, #17253d 0%, #0f172a 70%, transparent 100%);
+            border: 3px solid #38bdf8;
+            box-shadow: 0 0 30px rgba(56,189,248,0.4), inset 0 0 20px rgba(56,189,248,0.2);
+            transform: rotateX(90deg) translateZ(0px);
+            transform-style: preserve-3d;
+        }
+        .pedestal-ring {
+            position: absolute;
+            inset: 30px;
+            border-radius: 50%;
+            border: 1px dashed rgba(56,189,248,0.4);
+        }
+
+        /* 3D Character Root */
+        .character-root {
+            position: absolute;
+            left: 0;
+            top: 0;
+            transform-style: preserve-3d;
+        }
+
+        /* General 3D Cube / Sphere Part */
+        .part-3d {
+            position: absolute;
+            transform-style: preserve-3d;
+        }
+
+        /* 3D Volumetric Mesh Elements */
+        /* Torso */
+        .mesh-torso {
+            position: absolute;
+            left: -110px;
+            top: -20px;
+            width: 220px;
+            height: 260px;
+            background: radial-gradient(circle at 40% 30%, #5b839f 0%, #4a6b82 60%, #2f485b 100%);
+            border-radius: 110px 110px 120px 120px;
+            box-shadow: inset 0 -15px 30px rgba(0,0,0,0.5), inset 0 10px 20px rgba(255,255,255,0.2);
+            transform: translateZ(0px);
+        }
+        .mesh-torso-back {
+            position: absolute;
+            left: -110px;
+            top: -20px;
+            width: 220px;
+            height: 260px;
+            background: radial-gradient(circle at 50% 30%, #405e74 0%, #2e4454 80%, #1e2e3a 100%);
+            border-radius: 110px 110px 120px 120px;
+            box-shadow: inset 0 -15px 30px rgba(0,0,0,0.6);
+            transform: translateZ(-50px) rotateY(180deg);
+        }
+        .mesh-belly {
+            position: absolute;
+            left: -85px;
+            top: 25px;
+            width: 170px;
+            height: 200px;
+            background: radial-gradient(circle at 50% 30%, #ffffff 0%, #f7f4eb 60%, #e2ded0 100%);
+            border-radius: 85px 85px 95px 95px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.2), inset 0 -8px 15px rgba(0,0,0,0.1);
+            transform: translateZ(35px);
+        }
+
+        /* Head Group */
+        .head-group {
+            position: absolute;
+            left: 0;
+            top: -160px;
+            transform-style: preserve-3d;
+        }
+        .mesh-head {
+            position: absolute;
+            left: -125px;
+            top: -110px;
+            width: 250px;
+            height: 220px;
+            background: radial-gradient(circle at 40% 30%, #5b839f 0%, #4a6b82 60%, #2d4557 100%);
+            border-radius: 125px 125px 110px 110px;
+            box-shadow: inset 0 -15px 25px rgba(0,0,0,0.4), inset 0 12px 20px rgba(255,255,255,0.25);
+            transform: translateZ(10px);
+        }
+        .mesh-head-back {
+            position: absolute;
+            left: -125px;
+            top: -110px;
+            width: 250px;
+            height: 220px;
+            background: radial-gradient(circle at 50% 30%, #405e74 0%, #2e4454 80%, #1a2732 100%);
+            border-radius: 125px 125px 110px 110px;
+            box-shadow: inset 0 -15px 30px rgba(0,0,0,0.6);
+            transform: translateZ(-50px) rotateY(180deg);
+        }
+
+        /* Chubby Cream Cheeks */
+        .mesh-cheek-left {
+            position: absolute;
+            left: 45px;
+            top: -15px;
+            width: 105px;
+            height: 95px;
+            background: radial-gradient(circle at 60% 40%, #ffffff 0%, #f7f4eb 60%, #ded9c8 100%);
+            border-radius: 50%;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.25);
+            transform: translateZ(48px) rotateZ(-12deg);
+        }
+        .mesh-cheek-right {
+            position: absolute;
+            left: -150px;
+            top: -15px;
+            width: 105px;
+            height: 95px;
+            background: radial-gradient(circle at 40% 40%, #ffffff 0%, #f7f4eb 60%, #ded9c8 100%);
+            border-radius: 50%;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.25);
+            transform: translateZ(48px) rotateZ(12deg);
+        }
+
+        /* Muzzle & Nose */
+        .mesh-muzzle {
+            position: absolute;
+            left: -55px;
+            top: -5px;
+            width: 110px;
+            height: 75px;
+            background: radial-gradient(circle at 50% 30%, #ffffff 0%, #f7f4eb 70%, #d8d3c1 100%);
+            border-radius: 55px;
+            box-shadow: 0 8px 18px rgba(0,0,0,0.2);
+            transform: translateZ(65px);
+        }
+        .mesh-nose {
+            position: absolute;
+            left: -18px;
+            top: 10px;
+            width: 36px;
+            height: 24px;
+            background: radial-gradient(circle at 40% 30%, #444 0%, #18181b 70%, #000 100%);
+            border-radius: 18px 18px 14px 14px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+            transform: translateZ(85px);
+        }
+        .mesh-mouth {
+            position: absolute;
+            left: -20px;
+            top: 42px;
+            width: 40px;
+            height: 18px;
+            border-bottom: 3px solid #332222;
+            border-radius: 0 0 20px 20px;
+            transform: translateZ(72px);
+        }
+
+        /* Amber Eyes */
+        .mesh-eye {
+            position: absolute;
+            width: 44px;
+            height: 52px;
+            background: radial-gradient(circle at 45% 45%, #fbbf24 0%, #f59e0b 45%, #b45309 85%, #78350f 100%);
+            border-radius: 50%;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.4), inset 0 0 8px rgba(0,0,0,0.4);
+            transform-style: preserve-3d;
+        }
+        .mesh-eye-left { left: 32px; top: -50px; transform: translateZ(55px) rotateZ(-5deg); }
+        .mesh-eye-right { left: -76px; top: -50px; transform: translateZ(55px) rotateZ(5deg); }
+        .pupil {
+            position: absolute;
+            left: 12px;
+            top: 14px;
+            width: 20px;
+            height: 24px;
+            background: #0f172a;
+            border-radius: 50%;
+        }
+        .catchlight {
+            position: absolute;
+            left: 14px;
+            top: 10px;
+            width: 8px;
+            height: 8px;
+            background: #ffffff;
+            border-radius: 50%;
+            box-shadow: 0 0 6px #ffffff;
+        }
+
+        /* 3D Asymmetrical Ears */
+        /* Right Ear: Smooth Slate + Pink */
+        .ear-right {
+            position: absolute;
+            left: -130px;
+            top: -210px;
+            width: 90px;
+            height: 140px;
+            background: linear-gradient(135deg, #5b839f 0%, #4a6b82 60%, #2f485b 100%);
+            clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
+            transform: translateZ(5px) rotateZ(-24deg) rotateY(-15deg);
+            transform-style: preserve-3d;
+        }
+        .ear-right-inner {
+            position: absolute;
+            left: 18px;
+            top: 35px;
+            width: 54px;
+            height: 90px;
+            background: linear-gradient(135deg, #fecaca 0%, #f87171 70%, #ef4444 100%);
+            clip-path: polygon(50% 0%, 100% 100%, 0% 100%);
+            transform: translateZ(6px);
+        }
+
+        /* Left Ear: DARK NAVY + DISTINCT V-NOTCH */
+        .ear-left {
+            position: absolute;
+            left: 40px;
+            top: -210px;
+            width: 90px;
+            height: 140px;
+            background: linear-gradient(135deg, #2d4557 0%, #223545 60%, #15222d 100%);
+            /* V-Notch cut out on the outer upper edge */
+            clip-path: polygon(50% 0%, 82% 32%, 72% 38%, 100% 100%, 0% 100%);
+            transform: translateZ(5px) rotateZ(24deg) rotateY(15deg);
+            transform-style: preserve-3d;
+        }
+        .ear-left-inner {
+            position: absolute;
+            left: 18px;
+            top: 35px;
+            width: 54px;
+            height: 90px;
+            background: linear-gradient(135deg, #fecaca 0%, #f87171 70%, #ef4444 100%);
+            clip-path: polygon(50% 0%, 82% 32%, 72% 38%, 100% 100%, 0% 100%);
+            transform: translateZ(6px);
+        }
+
+        /* 3D Arms & Cream Paws */
+        .mesh-arm-left {
+            position: absolute;
+            left: 100px;
+            top: 30px;
+            width: 60px;
+            height: 150px;
+            background: linear-gradient(to bottom, #4a6b82 0%, #4a6b82 70%, #f7f4eb 70%, #f7f4eb 100%);
+            border-radius: 30px;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.35);
+            transform: translateZ(10px) rotateZ(-18deg);
+        }
+        .mesh-arm-right {
+            position: absolute;
+            left: -160px;
+            top: 30px;
+            width: 60px;
+            height: 150px;
+            background: linear-gradient(to bottom, #4a6b82 0%, #4a6b82 70%, #f7f4eb 70%, #f7f4eb 100%);
+            border-radius: 30px;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.35);
+            transform: translateZ(10px) rotateZ(18deg);
+        }
+
+        /* 3D Legs & Cream Feet */
+        .mesh-leg-left {
+            position: absolute;
+            left: 30px;
+            top: 210px;
+            width: 70px;
+            height: 70px;
+            background: #4a6b82;
+            border-radius: 35px 35px 20px 20px;
+            transform: translateZ(10px);
+        }
+        .mesh-foot-left {
+            position: absolute;
+            left: 20px;
+            top: 245px;
+            width: 85px;
+            height: 45px;
+            background: #f7f4eb;
+            border-radius: 25px;
+            box-shadow: 0 6px 15px rgba(0,0,0,0.4);
+            transform: translateZ(35px);
+        }
+        .mesh-leg-right {
+            position: absolute;
+            left: -100px;
+            top: 210px;
+            width: 70px;
+            height: 70px;
+            background: #4a6b82;
+            border-radius: 35px 35px 20px 20px;
+            transform: translateZ(10px);
+        }
+        .mesh-foot-right {
+            position: absolute;
+            left: -105px;
+            top: 245px;
+            width: 85px;
+            height: 45px;
+            background: #f7f4eb;
+            border-radius: 25px;
+            box-shadow: 0 6px 15px rgba(0,0,0,0.4);
+            transform: translateZ(35px);
+        }
+
+        /* 3D S-Curved Fluffy Tail */
+        .tail-group {
+            position: absolute;
+            left: 0;
+            top: 140px;
+            transform-style: preserve-3d;
+        }
+        .tail-seg-1 {
+            position: absolute;
+            left: -35px;
+            top: 0;
+            width: 70px;
+            height: 70px;
+            background: #4a6b82;
+            border-radius: 50%;
+            transform: translateZ(-60px);
+        }
+        .tail-seg-2 {
+            position: absolute;
+            left: -40px;
+            top: -40px;
+            width: 85px;
+            height: 85px;
+            background: #4a6b82;
+            border-radius: 50%;
+            transform: translateZ(-110px);
+        }
+        .tail-seg-3 {
+            position: absolute;
+            left: -45px;
+            top: -90px;
+            width: 95px;
+            height: 95px;
+            background: #4a6b82;
+            border-radius: 50%;
+            transform: translateZ(-150px);
+        }
+        .tail-seg-4 {
+            position: absolute;
+            left: -45px;
+            top: -150px;
+            width: 105px;
+            height: 105px;
+            background: #f7f4eb;
+            border-radius: 50%;
+            box-shadow: 0 0 15px rgba(247,244,235,0.3);
+            transform: translateZ(-180px);
+        }
+        .tail-seg-5 {
+            position: absolute;
+            left: -35px;
+            top: -210px;
+            width: 85px;
+            height: 85px;
+            background: #ffffff;
+            border-radius: 50%;
+            transform: translateZ(-195px);
+        }
+
+        /* Sidebar UI */
+        #sidebar { width: 360px; background: #0c1322; border-left: 1px solid #1e293b; padding: 22px; display: flex; flex-direction: column; gap: 16px; overflow-y: auto; flex-shrink: 0; }
+        h1 { font-size: 1.15rem; font-weight: 800; color: #38bdf8; display: flex; align-items: center; gap: 8px; letter-spacing: -0.02em; }
+        .badge { font-size: 0.7rem; background: linear-gradient(135deg, #0284c7, #6366f1); color: white; padding: 3px 9px; border-radius: 9999px; font-weight: 700; }
+        .card { background: #131c2e; border: 1px solid #23334d; border-radius: 12px; padding: 14px; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
+        .card-title { font-size: 0.72rem; font-family: monospace; text-transform: uppercase; color: #94a3b8; font-weight: 700; letter-spacing: 0.05em; }
+        .btn { background: #38bdf8; color: #070d19; border: none; padding: 10px 14px; border-radius: 8px; font-weight: 700; font-size: 0.85rem; cursor: pointer; transition: all 0.2s; display: flex; align-items: center; justify-content: center; gap: 6px; text-decoration: none; }
+        .btn:hover { background: #7dd3fc; transform: translateY(-1px); box-shadow: 0 0 15px rgba(56,189,248,0.4); }
+        .btn-secondary { background: #1e293b; color: #cbd5e1; border: 1px solid #334155; }
+        .btn-secondary:hover { background: #334155; color: white; }
+        .btn-active { background: #10b981; color: black; box-shadow: 0 0 15px rgba(16,185,129,0.4); }
+        .toggle-row { display: flex; justify-content: space-between; align-items: center; font-size: 0.82rem; color: #cbd5e1; }
+        .overlay-badge { position: absolute; top: 16px; left: 16px; background: rgba(12,19,34,0.85); backdrop-filter: blur(12px); border: 1px solid rgba(56,189,248,0.3); padding: 8px 16px; border-radius: 10px; font-family: monospace; font-size: 0.8rem; color: #38bdf8; pointer-events: none; z-index: 10; display: flex; align-items: center; gap: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.4); }
+        .dot { width: 8px; height: 8px; border-radius: 50%; background: #10b981; box-shadow: 0 0 10px #10b981; animation: pulse 2s infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(0.85); } }
+        .snap-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+        .angle-readout { position: absolute; bottom: 16px; left: 16px; background: rgba(6,9,17,0.85); backdrop-filter: blur(8px); border: 1px solid rgba(56,189,248,0.3); padding: 8px 16px; border-radius: 8px; font-family: monospace; font-size: 0.78rem; color: #38bdf8; pointer-events: none; }
+    </style>
+</head>
+<body>
+
+    <div id="viewport-container">
+        <div class="overlay-badge">
+            <span class="dot"></span>
+            <span>PIP TRUE 3D VOLUMETRIC MODEL • 360° LIVE ORBIT</span>
+        </div>
+
+        <!-- 3D Scene Root -->
+        <div id="world">
+            <!-- 3D Pedestal Base -->
+            <div class="pedestal">
+                <div class="pedestal-ring"></div>
+            </div>
+
+            <!-- 3D Character Rig -->
+            <div class="character-root" id="character-root">
+                
+                <!-- 3D Torso & Belly -->
+                <div class="mesh-torso"></div>
+                <div class="mesh-torso-back"></div>
+                <div class="mesh-belly"></div>
+
+                <!-- 3D Head Group -->
+                <div class="head-group" id="head-group">
+                    <div class="mesh-head"></div>
+                    <div class="mesh-head-back"></div>
+                    
+                    <!-- Chubby Cream Cheeks -->
+                    <div class="mesh-cheek-left"></div>
+                    <div class="mesh-cheek-right"></div>
+
+                    <!-- Muzzle & Nose -->
+                    <div class="mesh-muzzle"></div>
+                    <div class="mesh-nose"></div>
+                    <div class="mesh-mouth"></div>
+
+                    <!-- Amber Eyes -->
+                    <div class="mesh-eye mesh-eye-left">
+                        <div class="pupil"></div>
+                        <div class="catchlight"></div>
+                    </div>
+                    <div class="mesh-eye mesh-eye-right">
+                        <div class="pupil"></div>
+                        <div class="catchlight"></div>
+                    </div>
+
+                    <!-- Asymmetrical Ears -->
+                    <!-- Right Ear (Smooth Slate + Pink Inner) -->
+                    <div class="ear-right">
+                        <div class="ear-right-inner"></div>
+                    </div>
+
+                    <!-- Left Ear (Dark Navy + Physical Notch) -->
+                    <div class="ear-left">
+                        <div class="ear-left-inner"></div>
+                    </div>
+                </div>
+
+                <!-- 3D Arms & Paws -->
+                <div class="mesh-arm-left"></div>
+                <div class="mesh-arm-right"></div>
+
+                <!-- 3D Legs & Feet -->
+                <div class="mesh-leg-left"></div>
+                <div class="mesh-foot-left"></div>
+                <div class="mesh-leg-right"></div>
+                <div class="mesh-foot-right"></div>
+
+                <!-- 3D S-Curved Fluffy Tail -->
+                <div class="tail-group" id="tail-group">
+                    <div class="tail-seg-1"></div>
+                    <div class="tail-seg-2"></div>
+                    <div class="tail-seg-3"></div>
+                    <div class="tail-seg-4"></div>
+                    <div class="tail-seg-5"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="angle-readout" id="angle-readout">Camera Pitch: 10° | Yaw: 0° (Front View)</div>
+    </div>
+
+    <!-- Sidebar Controls -->
+    <div id="sidebar">
+        <div>
+            <h1>Pip 3D Master Model <span class="badge">NATIVE 3D</span></h1>
+            <p style="font-size: 0.75rem; color: #94a3b8; margin-top: 4px; line-height: 1.4;">
+                Volumetric 3D character mesh with asymmetrical notched ear, chubby cheeks, amber eyes, cream belly, and S-curved tail in physical 3D space.
+            </p>
+        </div>
+
+        <!-- Turntable Controls -->
+        <div class="card">
+            <div class="card-title">360° Turntable Controls</div>
+            <button id="rotate-btn" class="btn btn-active" onclick="toggleAutoRotate()">⏸ Pause 360° Rotation</button>
+            <div class="toggle-row" style="margin-top: 4px;">
+                <span>Rotation Speed</span>
+                <input type="range" id="speed-slider" min="0.2" max="3.0" step="0.1" value="1.0" style="width: 120px; accent-color: #38bdf8;" oninput="updateSpeed(this.value)">
+            </div>
+            <div class="toggle-row" style="margin-top: 4px;">
+                <span>Zoom Scale</span>
+                <input type="range" id="zoom-slider" min="0.6" max="1.8" step="0.05" value="1.0" style="width: 120px; accent-color: #38bdf8;" oninput="updateZoom(this.value)">
+            </div>
+        </div>
+
+        <!-- Camera Angle Snapping -->
+        <div class="card">
+            <div class="card-title">Camera Angle Snapping</div>
+            <div class="snap-grid">
+                <button class="btn btn-secondary" onclick="snapCamera(10, 0)">Front (0°)</button>
+                <button class="btn btn-secondary" onclick="snapCamera(10, 45)">Quarter (45°)</button>
+                <button class="btn btn-secondary" onclick="snapCamera(10, 90)">Right (90°)</button>
+                <button class="btn btn-secondary" onclick="snapCamera(10, 180)">Back (180°)</button>
+                <button class="btn btn-secondary" onclick="snapCamera(10, 270)">Left (270°)</button>
+                <button class="btn btn-secondary" onclick="snapCamera(45, 45)">Top Isometric</button>
+            </div>
+        </div>
+
+        <!-- Production 3D Downloads -->
+        <div class="card">
+            <div class="card-title">3D Production Downloads</div>
+            <a href="/character/pip_model.glb" download="pip_master_model.glb" class="btn">
+                📥 Download Native .GLB (3D Mesh)
+            </a>
+            <a href="/character/pip_model.obj" download="pip_master_model.obj" class="btn btn-secondary">
+                📥 Download .OBJ + .MTL
+            </a>
+            <a href="/character/pip_5view_complete_master.png" download="pip_8k_master_blueprint.png" class="btn btn-secondary">
+                📥 Download 8K Blueprint
+            </a>
+        </div>
+    </div>
+
+    <script>
+        const world = document.getElementById('world');
+        const container = document.getElementById('viewport-container');
+        const readout = document.getElementById('angle-readout');
+        const rotateBtn = document.getElementById('rotate-btn');
+        const headGroup = document.getElementById('head-group');
+        const tailGroup = document.getElementById('tail-group');
+
+        let yaw = 0;      // 0 to 360 deg
+        let pitch = 10;   // -60 to 60 deg
+        let zoom = 1.0;
+        let autoRotate = true;
+        let rotateSpeed = 1.0;
+
+        let isDragging = false;
+        let lastX = 0;
+        let lastY = 0;
+
+        // Mouse Drag Orbit (Yaw & Pitch)
+        container.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            lastX = e.clientX;
+            lastY = e.clientY;
+            autoRotate = false;
+            updateRotateBtn();
+        });
+
+        window.addEventListener('mouseup', () => { isDragging = false; });
+
+        window.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+            const dx = e.clientX - lastX;
+            const dy = e.clientY - lastY;
+            lastX = e.clientX;
+            lastY = e.clientY;
+
+            yaw = (yaw + dx * 0.65 + 360) % 360;
+            pitch = Math.max(-45, Math.min(60, pitch - dy * 0.45));
+            updateTransform();
+        });
+
+        // Wheel Zoom
+        container.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            zoom -= e.deltaY * 0.001;
+            zoom = Math.max(0.6, Math.min(1.8, zoom));
+            document.getElementById('zoom-slider').value = zoom;
+            updateTransform();
+        }, { passive: false });
+
+        function updateZoom(val) {
+            zoom = parseFloat(val);
+            updateTransform();
+        }
+
+        function updateSpeed(val) {
+            rotateSpeed = parseFloat(val);
+        }
+
+        function toggleAutoRotate() {
+            autoRotate = !autoRotate;
+            updateRotateBtn();
+        }
+
+        function updateRotateBtn() {
+            rotateBtn.innerText = autoRotate ? '⏸ Pause 360° Rotation' : '▶ Resume 360° Rotation';
+            rotateBtn.className = autoRotate ? 'btn btn-active' : 'btn';
+        }
+
+        function snapCamera(p, y) {
+            autoRotate = false;
+            updateRotateBtn();
+            pitch = p;
+            yaw = y;
+            updateTransform();
+        }
+
+        function updateTransform() {
+            world.style.transform = `translateY(30px) rotateX(${pitch}deg) rotateY(${yaw}deg) scale(${zoom})`;
+
+            const yNorm = Math.round(((yaw % 360) + 360) % 360);
+            let label = `${yNorm}°`;
+            if (yNorm >= 338 || yNorm <= 22) label += ' (Front View)';
+            else if (yNorm >= 68 && yNorm <= 112) label += ' (Right Profile)';
+            else if (yNorm >= 158 && yNorm <= 202) label += ' (Back View)';
+            else if (yNorm >= 248 && yNorm <= 292) label += ' (Left Profile)';
+
+            readout.innerText = `Camera Pitch: ${Math.round(pitch)}° | Yaw: ${label}`;
+        }
+
+        // 60fps Animation Loop
+        let lastTime = performance.now();
+        function loop(now) {
+            const dt = (now - lastTime) / 1000;
+            lastTime = now;
+
+            if (autoRotate) {
+                yaw = (yaw + dt * 40 * rotateSpeed) % 360;
+                updateTransform();
+            }
+
+            // Subtle Organic Breathing & Tail Sway Physics
+            const t = now * 0.001;
+            const breath = Math.sin(t * 2.8) * 4;
+            headGroup.style.transform = `translateY(${breath * 0.4}px) rotateZ(${Math.sin(t * 1.5) * 1.5}deg)`;
+            tailGroup.style.transform = `rotateZ(${Math.sin(t * 2.2) * 5}deg)`;
+
+            requestAnimationFrame(loop);
+        }
+
+        requestAnimationFrame(loop);
+    </script>
+</body>
+</html>

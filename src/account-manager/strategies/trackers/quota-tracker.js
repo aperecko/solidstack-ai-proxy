@@ -8,8 +8,8 @@
 
 // Default configuration
 const DEFAULT_CONFIG = {
-    lowThreshold: 0.10,       // 10% - reduce score
-    criticalThreshold: 0.05,  // 5% - exclude from candidates
+    lowThreshold: 0.05,       // 5% - reduce score
+    criticalThreshold: 0,     // 0% - exclude from candidates (only exclude if completely empty)
     staleMs: 300000,          // 5 min - max age of quota data to trust
     unknownScore: 50          // Score for accounts with unknown quota
 };

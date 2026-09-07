@@ -7,12 +7,21 @@ document.addEventListener('alpine:init', () => {
     Alpine.store('global', {
         init() {
             // Hash-based routing
-            const validTabs = ['dashboard', 'models', 'accounts', 'logs', 'settings', 'processes', 'infrastructure', 'skills', 'load-balancer', 'philosophy', 'agent-chat', 'overnight', 'uad', 'workflow', 'economics'];
+            const validTabs = [
+                'dashboard', 'models', 'accounts', 'logs', 'settings', 'processes', 'infrastructure',
+                'skills', 'agent-skills', 'capabilities', 'challenges', 'character', 'daemons-cadence',
+                'demos-proficiency', 'intent-lifecycle', 'keyring', 'load-balancer', 'memory',
+                'philosophy', 'playbooks-experiments', 'agent-chat', 'overnight', 'uad', 'workflow',
+                'economics', 'swarm', 'research', 'prompt', 'evolution', 'consideration', 'alignment',
+                'audit', 'ui-evolution', 'network', 'openclaw', 'workspace', 'containment', 'compute',
+                'telemetry', 'voicememos'
+            ];
             const validSettingsTabs = ['ui', 'claude', 'models', 'server'];
             const getHash = () => window.location.hash.substring(1);
 
             const parseHash = (hash) => {
-                const [tab, subtab] = hash.split('/');
+                let [tab, subtab] = hash.split('/');
+                if (tab === 'skills') tab = 'agent-skills';
                 return { tab, subtab };
             };
 

@@ -8,6 +8,7 @@
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { streamSSEResponse } from './stream-handler-reexport.js';
+import { logRoutingDecision } from './routing-logger.js';
 
 /**
  * Convert Anthropic request payload to OpenAI format for local engines.
@@ -37,10 +38,13 @@ export function anthropicToOpenaiPayload(anthropicRequest, targetModel) {
         openaiMessages.push({ role, content });
     }
 
-    const defaultModel = config?.localEngine?.defaultModel || 'gemma-4-26b-a4b';
+    const defaultModel = config?.localEngine?.defaultModel || 'gemma-4-26b-a4b-it';
+    const modelToUse = isLocalModel(targetModel) 
+        ? (targetModel === 'gemma-4-26b-a4b' ? 'gemma-4-26b-a4b-it' : targetModel) 
+        : defaultModel;
 
     return {
-        model: targetModel || defaultModel,
+        model: modelToUse,
         messages: openaiMessages,
         max_tokens: max_tokens || 2048,
         temperature: temperature ?? 0.7,
@@ -81,8 +85,19 @@ export async function isOllamaAvailable() {
  * Resolve active local provider ('turbo-fieldfare' | 'ollama' | null)
  * @returns {Promise<{provider: string, endpoint: string}|null>}
  */
-export async function resolveActiveLocalEngine() {
+export async function resolveActiveLocalEngine(targetModel = null) {
     const pref = config?.localEngine?.provider || 'auto';
+    const lowerModel = (targetModel || '').toLowerCase();
+
+    // If request explicitly targets Ollama or Ollama Cloud models, route directly to Ollama
+    if (lowerModel.includes(':cloud') || lowerModel.includes('ollama') || lowerModel.includes('glm') || lowerModel.includes('minimax') || lowerModel.includes('qwen')) {
+        if (await isOllamaAvailable()) {
+            return {
+                provider: 'ollama',
+                endpoint: config?.localEngine?.ollamaEndpoint || 'http://127.0.0.1:11434/v1'
+            };
+        }
+    }
 
     if (pref === 'turbo-fieldfare' || pref === 'auto') {
         if (await isTurboFieldfareAvailable()) {
@@ -112,7 +127,7 @@ let idleShutdownTimer = null;
 const IDLE_SHUTDOWN_TIMEOUT_MS = Number(process.env.LOCAL_ENGINE_IDLE_TIMEOUT_MS || 5 * 60 * 1000); // 5 minutes default
 
 /**
- * Check if a requested model ID is a local engine model.
+ * Check if a requested model ID is a local or ollama engine model.
  * @param {string} modelId
  * @returns {boolean}
  */
@@ -122,7 +137,11 @@ export function isLocalModel(modelId) {
     return lower.includes('gemma-4') || 
            lower.includes('turbo-fieldfare') || 
            lower.includes('turbofieldfare') || 
-           lower.startsWith('local/');
+           lower.includes(':cloud') ||
+           lower.includes('glm') ||
+           lower.includes('minimax') ||
+           lower.startsWith('local/') ||
+           lower.startsWith('ollama/');
 }
 
 /**
@@ -195,11 +214,12 @@ export async function isLocalEngineAvailable() {
  * @returns {Promise<Object>} Anthropic-formatted response
  */
 export async function sendLocalEngineRequest(anthropicRequest, targetModel) {
+    const startTime = Date.now();
     touchLocalEngineUsage();
-    let active = await resolveActiveLocalEngine();
+    let active = await resolveActiveLocalEngine(targetModel);
     if (!active && config?.localEngine?.autoStart !== false) {
         await autoStartLocalEngines();
-        active = await resolveActiveLocalEngine();
+        active = await resolveActiveLocalEngine(targetModel);
     }
     if (!active) {
         throw new Error('No local engine (Turbo Fieldfare or Ollama) available.');
@@ -212,7 +232,8 @@ export async function sendLocalEngineRequest(anthropicRequest, targetModel) {
     const res = await fetch(chatUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(10000)
     });
 
     if (!res.ok) {
@@ -222,12 +243,32 @@ export async function sendLocalEngineRequest(anthropicRequest, targetModel) {
 
     const data = await res.json();
     const text = data.choices?.[0]?.message?.content || '';
+    const latency = Date.now() - startTime;
+    const finalModel = targetModel || `${active.provider}-local`;
+
+    logRoutingDecision(
+        finalModel,
+        null,
+        null,
+        'local_fallback',
+        {
+            latency,
+            prompt_content: JSON.stringify(anthropicRequest.messages),
+            response_content: text,
+            isLocal: true,
+            engine: active.provider,
+            tokens: {
+                input: data.usage?.prompt_tokens || 0,
+                output: data.usage?.completion_tokens || 0
+            }
+        }
+    );
 
     return {
         id: `msg_local_${active.provider}_${Date.now()}`,
         type: 'message',
         role: 'assistant',
-        model: `${active.provider}-local`,
+        model: finalModel,
         content: [{ type: 'text', text }],
         stop_reason: 'end_turn',
         usage: {
@@ -244,24 +285,27 @@ export async function sendLocalEngineRequest(anthropicRequest, targetModel) {
  * @returns {AsyncGenerator} SSE stream generator
  */
 export async function* sendLocalEngineStream(anthropicRequest, targetModel) {
+    const startTime = Date.now();
     touchLocalEngineUsage();
-    let active = await resolveActiveLocalEngine();
+    let active = await resolveActiveLocalEngine(targetModel);
     if (!active && config?.localEngine?.autoStart !== false) {
         await autoStartLocalEngines();
-        active = await resolveActiveLocalEngine();
+        active = await resolveActiveLocalEngine(targetModel);
     }
     if (!active) {
         throw new Error('No local engine (Turbo Fieldfare or Ollama) available for streaming.');
     }
 
     logger.info(`[LocalEngineFallback] Routing streaming request to ${active.provider} at ${active.endpoint}...`);
+    const promptContent = JSON.stringify(anthropicRequest.messages);
     const payload = anthropicToOpenaiPayload(anthropicRequest, targetModel);
 
     const chatUrl = `${active.endpoint.replace(/\/+$/, '')}/chat/completions`;
     const res = await fetch(chatUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(10000)
     });
 
     if (!res.ok) {
@@ -269,5 +313,120 @@ export async function* sendLocalEngineStream(anthropicRequest, targetModel) {
         throw new Error(`Local Engine (${active.provider}) Stream Error (${res.status}): ${text}`);
     }
 
-    yield* streamSSEResponse(res, `${active.provider}-local`);
+    let fullResponse = '';
+    const finalModel = targetModel || `${active.provider}-local`;
+
+
+    try {
+        for await (const chunk of streamOpenAISSEResponse(res, `${active.provider}-local`)) {
+            if (chunk.type === 'content_block_delta' && chunk.delta?.text) {
+                fullResponse += chunk.delta.text;
+            }
+            yield chunk;
+        }
+    } finally {
+        const latency = Date.now() - startTime;
+        logRoutingDecision(
+            finalModel,
+            null,
+            null,
+            'local_fallback',
+            {
+                latency,
+                prompt_content: promptContent,
+                response_content: fullResponse,
+                isLocal: true,
+                engine: active.provider,
+                tokens: {
+                    input: Math.round(promptContent.length / 4),
+                    output: Math.round(fullResponse.length / 4)
+                }
+            }
+        );
+    }
 }
+
+/**
+ * Parse OpenAI-compatible SSE stream into Anthropic events
+ * @param {Response} response
+ * @param {string} modelName
+ * @returns {AsyncGenerator}
+ */
+export async function* streamOpenAISSEResponse(response, modelName) {
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let hasEmittedStart = false;
+    let blockIndex = 0;
+    const messageId = `msg_${Date.now()}`;
+    let outputTokens = 0;
+
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || '';
+
+            for (const line of lines) {
+                const trimmed = line.trim();
+                if (!trimmed || !trimmed.startsWith('data:')) continue;
+
+                const jsonText = trimmed.slice(5).trim();
+                if (!jsonText || jsonText === '[DONE]') continue;
+
+                try {
+                    const data = JSON.parse(jsonText);
+                    const delta = data.choices?.[0]?.delta;
+                    const text = delta?.content || '';
+
+                    if (!hasEmittedStart) {
+                        hasEmittedStart = true;
+                        yield {
+                            type: 'message_start',
+                            message: {
+                                id: messageId,
+                                type: 'message',
+                                role: 'assistant',
+                                content: [],
+                                model: modelName,
+                                stop_reason: null,
+                                stop_sequence: null,
+                                usage: { input_tokens: 0, output_tokens: 0 }
+                            }
+                        };
+                        yield {
+                            type: 'content_block_start',
+                            index: blockIndex,
+                            content_block: { type: 'text', text: '' }
+                        };
+                    }
+
+                    if (text) {
+                        outputTokens += Math.max(1, Math.round(text.length / 4));
+                        yield {
+                            type: 'content_block_delta',
+                            index: blockIndex,
+                            delta: { type: 'text_delta', text }
+                        };
+                    }
+                } catch (e) {
+                    // Ignore malformed chunks
+                }
+            }
+        }
+    } finally {
+        if (hasEmittedStart) {
+            yield { type: 'content_block_stop', index: blockIndex };
+            yield {
+                type: 'message_delta',
+                delta: { stop_reason: 'end_turn', stop_sequence: null },
+                usage: { output_tokens: outputTokens }
+            };
+            yield { type: 'message_stop' };
+        }
+    }
+}
+

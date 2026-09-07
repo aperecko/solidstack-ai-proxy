@@ -93,6 +93,16 @@
                 </svg>
                 <span x-text="$store.global.t('reload')">Reload</span>
             </button>
+
+            <!-- Voice Memos Shortcut -->
+            <button class="btn btn-xs bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/30 text-purple-300 hover:text-white transition-all gap-2 h-8"
+                @click="$store.global.activeTab = 'voicememos'"
+                title="View synced Apple Voice Memos">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                </svg>
+                <span>Voice Memos</span>
+            </button>
             <!-- Account Count Indicator -->
             <div class="flex items-center h-6 px-2 rounded bg-space-800/80 border border-space-border/50"
                  :class="{ 'border-yellow-500/50': $store.data.accounts.length >= $store.data.maxAccounts }">
@@ -101,7 +111,7 @@
                       x-text="$store.data.accounts.length + '/' + $store.data.maxAccounts"></span>
             </div>
             <button class="btn bg-neon-purple hover:bg-purple-600 border-none text-white btn-xs gap-2 shadow-lg shadow-neon-purple/20 h-8"
-                @click="document.getElementById('add_account_modal').showModal()">
+                @click="window.dispatchEvent(new CustomEvent('refresh-add-modal')); document.getElementById('add_account_modal').showModal()">
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
                 </svg>
@@ -336,45 +346,59 @@
                                         <div x-data="{ q: getAccountGroupedQuotas(acc) }" class="space-y-1.5 min-w-[130px]">
                                             <!-- Claude Pool Indicator -->
                                             <template x-if="q.claude !== null">
-                                                <div class="flex items-center justify-between gap-2">
-                                                    <span class="text-[10px] text-neon-purple font-mono uppercase tracking-wider">Claude</span>
-                                                    <div class="flex items-center gap-1.5">
-                                                        <div class="w-12 bg-gray-700 rounded-full h-1.5 overflow-hidden">
-                                                            <div class="h-full rounded-full transition-all duration-300"
-                                                                 :class="{
-                                                                     'bg-neon-green': q.claude.percent > 50,
-                                                                     'bg-yellow-500': q.claude.percent > 20 && q.claude.percent <= 50,
-                                                                     'bg-red-500': q.claude.percent <= 20
-                                                                 }"
-                                                                 :style="`width: ${q.claude.percent}%`">
+                                                <div class="space-y-0.5">
+                                                    <div class="flex items-center justify-between gap-2">
+                                                        <span class="text-[10px] text-neon-purple font-mono uppercase tracking-wider">Claude</span>
+                                                        <div class="flex items-center gap-1.5">
+                                                            <div class="w-12 bg-gray-700 rounded-full h-1.5 overflow-hidden">
+                                                                <div class="h-full rounded-full transition-all duration-300"
+                                                                     :class="{
+                                                                         'bg-neon-green': q.claude.percent > 50,
+                                                                         'bg-yellow-500': q.claude.percent > 20 && q.claude.percent <= 50,
+                                                                         'bg-red-500': q.claude.percent <= 20
+                                                                     }"
+                                                                     :style="`width: ${q.claude.percent}%`">
+                                                                </div>
                                                             </div>
+                                                            <span class="text-[10px] font-mono w-7 text-right"
+                                                                  :class="q.claude.percent > 20 ? 'text-neon-green' : 'text-red-400'"
+                                                                  x-text="q.claude.percent + '%'"></span>
                                                         </div>
-                                                        <span class="text-[10px] font-mono w-7 text-right"
-                                                              :class="q.claude.percent > 20 ? 'text-neon-green' : 'text-red-400'"
-                                                              x-text="q.claude.percent + '%'"></span>
                                                     </div>
+                                                    <template x-if="q.claude.resetTime">
+                                                        <div class="text-[9px] font-mono text-gray-500 text-right truncate"
+                                                             :title="'Claude resets on ' + new Date(q.claude.resetTime).toLocaleString()"
+                                                             x-text="formatResetDay(q.claude.resetTime)"></div>
+                                                    </template>
                                                 </div>
                                             </template>
                                             
                                             <!-- Gemini Pool Indicator -->
                                             <template x-if="q.gemini !== null">
-                                                <div class="flex items-center justify-between gap-2">
-                                                    <span class="text-[10px] text-neon-cyan font-mono uppercase tracking-wider">Gemini</span>
-                                                    <div class="flex items-center gap-1.5">
-                                                        <div class="w-12 bg-gray-700 rounded-full h-1.5 overflow-hidden">
-                                                            <div class="h-full rounded-full transition-all duration-300"
-                                                                 :class="{
-                                                                     'bg-neon-green': q.gemini.percent > 50,
-                                                                     'bg-yellow-500': q.gemini.percent > 20 && q.gemini.percent <= 50,
-                                                                     'bg-red-500': q.gemini.percent <= 20
-                                                                 }"
-                                                                 :style="`width: ${q.gemini.percent}%`">
+                                                <div class="space-y-0.5">
+                                                    <div class="flex items-center justify-between gap-2">
+                                                        <span class="text-[10px] text-neon-cyan font-mono uppercase tracking-wider">Gemini</span>
+                                                        <div class="flex items-center gap-1.5">
+                                                            <div class="w-12 bg-gray-700 rounded-full h-1.5 overflow-hidden">
+                                                                <div class="h-full rounded-full transition-all duration-300"
+                                                                     :class="{
+                                                                         'bg-neon-green': q.gemini.percent > 50,
+                                                                         'bg-yellow-500': q.gemini.percent > 20 && q.gemini.percent <= 50,
+                                                                         'bg-red-500': q.gemini.percent <= 20
+                                                                     }"
+                                                                     :style="`width: ${q.gemini.percent}%`">
+                                                                </div>
                                                             </div>
+                                                            <span class="text-[10px] font-mono w-7 text-right"
+                                                                  :class="q.gemini.percent > 20 ? 'text-neon-green' : 'text-red-400'"
+                                                                  x-text="q.gemini.percent + '%'"></span>
                                                         </div>
-                                                        <span class="text-[10px] font-mono w-7 text-right"
-                                                              :class="q.gemini.percent > 20 ? 'text-neon-green' : 'text-red-400'"
-                                                              x-text="q.gemini.percent + '%'"></span>
                                                     </div>
+                                                    <template x-if="q.gemini.resetTime">
+                                                        <div class="text-[9px] font-mono text-gray-500 text-right truncate"
+                                                             :title="'Quota resets on ' + new Date(q.gemini.resetTime).toLocaleString()"
+                                                             x-text="formatResetDay(q.gemini.resetTime)"></div>
+                                                    </template>
                                                 </div>
                                             </template>
 

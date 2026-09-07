@@ -12,6 +12,38 @@ import { logger } from '../utils/logger.js';
 import { getG1CreditExhaustedRemaining } from './quota-store.js';
 
 /**
+ * Grace period for newly-added accounts (e.g. freshly onboarded swarm workers).
+ * Within this window after `addedAt`, a first transient failure should not
+ * incur the same penalty as an established account: consecutiveFailures is
+ * not incremented and any auto-applied cooldown is capped to a short value.
+ * This prevents brand-new accounts from being "benched" for hours because of
+ * a single cold-start error (propagation delay, first-token hiccup, etc.)
+ * before they've ever completed a successful request.
+ */
+export const NEW_ACCOUNT_GRACE_MS = 60 * 60 * 1000; // 1 hour
+export const NEW_ACCOUNT_GRACE_COOLDOWN_MS = 30 * 1000; // 30s max cooldown while in grace
+
+/**
+ * Whether an account should still be treated as "new" and given leniency on
+ * its first failure(s). True only until either the grace window elapses OR
+ * the account records its first successful request (reqs tracked elsewhere
+ * via quota-store; here we use lastUsed/consecutiveFailures as a proxy since
+ * rate-limits.js only sees the accounts.json shape).
+ *
+ * @param {Object} account - Account object (must have addedAt)
+ * @returns {boolean}
+ */
+export function isNewAccount(account) {
+    if (!account || !account.addedAt) return false;
+    // Once an account has completed at least one successful request
+    // (lastUsed set AND no outstanding failures), it's no longer "new".
+    if (account.lastUsed && !account.consecutiveFailures) return false;
+    const addedMs = new Date(account.addedAt).getTime();
+    if (isNaN(addedMs)) return false;
+    return (Date.now() - addedMs) < NEW_ACCOUNT_GRACE_MS;
+}
+
+/**
  * Check if all accounts are rate-limited for a specific model
  *
  * @param {Array} accounts - Array of account objects
@@ -72,17 +104,13 @@ export function getAvailableAccounts(accounts, modelId = null) {
             if (tier === 'free') return false;
         }
 
-        // Prefer live cached quotas over stale accounts.json data. This applies to
-        // BOTH Claude and Gemini models: an exhausted model (remainingFraction ≈ 0
-        // with a reset in the future) must be skipped so account selection and
-        // fallback rewriting step down to healthier tiers instead of retrying a
-        // starved model over and over (visible as endless -high ping-pong).
-        const cached = acc._cachedFormattedQuotas?.[modelId];
-        const q = cached || acc.quota?.models?.[modelId];
-        if (q && q.remainingFraction !== null && q.remainingFraction <= 0.05 && (q.resetTime || cached?.resetTime)) {
-            const resetMs = new Date(q.resetTime || cached?.resetTime).getTime();
-            if (!isNaN(resetMs) && resetMs > Date.now()) return false;
-        }
+        // NOTE: no gate on remainingFraction / _cachedFormattedQuotas here. The
+        // fetchAvailableModels quota API is not a reliable eligibility signal on
+        // this pool (rf=0 with models that still generate 200, rf=1 with models
+        // that 429). Hard-benching accounts on it empties the pool. Authoritative
+        // gates below: modelRateLimits (set on REAL 429s) and the G1-credit
+        // lockout (set on REAL error 2008s). Those appear only after routing a
+        // request — which is the only evidence worth trusting.
 
         if (modelId && acc.modelRateLimits && acc.modelRateLimits[modelId]) {
             const limit = acc.modelRateLimits[modelId];
@@ -220,8 +248,10 @@ export function markRateLimited(accounts, email, resetMs = null, modelId) {
 
     // Google returns weekly/daily reset timestamps (e.g. 3 days out) in 429 bodies.
     // Locking an account out for 3 days on a temporary rate-limit is fatal for the pool.
-    // Cap cooldown to a maximum of 5 minutes (300,000ms).
-    const MAX_COOLDOWN_MS = 5 * 60 * 1000;
+    // Cap cooldown to a maximum of 5 minutes (300,000ms) - or 30s while the
+    // account is still within its new-account grace window (see isNewAccount).
+    const inGrace = isNewAccount(account);
+    const MAX_COOLDOWN_MS = inGrace ? NEW_ACCOUNT_GRACE_COOLDOWN_MS : 5 * 60 * 1000;
     const requestedMs = (resetMs && resetMs > 0) ? resetMs : DEFAULT_COOLDOWN_MS;
     const actualResetMs = Math.min(requestedMs, MAX_COOLDOWN_MS);
 
@@ -237,7 +267,10 @@ export function markRateLimited(accounts, email, resetMs = null, modelId) {
 
     // FIX: If it's a true quota exhaustion (> 5 mins), update the quota model
     // so the dashboard accurately reflects 0% capacity and the true reset time.
-    if (requestedMs > MAX_COOLDOWN_MS && account.quota && account.quota.models) {
+    // Skipped while in the new-account grace window - a brand-new account's
+    // first failure shouldn't be recorded as a long quota exhaustion when it's
+    // far more likely to be a transient cold-start error.
+    if (!inGrace && requestedMs > MAX_COOLDOWN_MS && account.quota && account.quota.models) {
         if (!account.quota.models[modelId]) {
             account.quota.models[modelId] = {};
         }
@@ -245,8 +278,15 @@ export function markRateLimited(accounts, email, resetMs = null, modelId) {
         account.quota.models[modelId].resetTime = new Date(Date.now() + requestedMs).toISOString();
     }
 
-    // Track consecutive failures for progressive backoff (matches opencode-antigravity-auth)
-    account.consecutiveFailures = (account.consecutiveFailures || 0) + 1;
+    // Track consecutive failures for progressive backoff (matches opencode-antigravity-auth).
+    // New accounts get one "free" failure - don't build up backoff pressure
+    // for a cold-start account that hasn't proven itself broken yet.
+    if (!inGrace) {
+        account.consecutiveFailures = (account.consecutiveFailures || 0) + 1;
+    } else {
+        account.consecutiveFailures = account.consecutiveFailures || 0;
+        logger.info(`[AccountManager] ${email} is within new-account grace window - failure not counted against backoff`);
+    }
 
     // Log appropriately based on duration
     if (actualResetMs > DEFAULT_COOLDOWN_MS) {

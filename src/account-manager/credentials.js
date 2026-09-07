@@ -307,7 +307,7 @@ export async function discoverProject(token, projectId = undefined) {
         const onboardedProject = await onboardUser(
             token,
             tierId,
-            projectId  // Original projectId without fallback
+            projectId || 'aicode-consumers'
         );
         if (onboardedProject) {
             logger.success(`[AccountManager] Successfully onboarded, project: ${onboardedProject}`);

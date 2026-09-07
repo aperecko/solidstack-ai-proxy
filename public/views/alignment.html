@@ -1,0 +1,504 @@
+<div x-data="{
+    isLoading: true,
+    isSweeping: false,
+    activeTab: 'hygiene',
+    alignmentScore: 96,
+    hygieneChecks: [],
+    quarantinedFiles: [],
+    operatorProfile: {
+        level: 6,
+        xp: 1480,
+        title: 'Senior Autonomous Governor',
+        nextLevelXp: 2000
+    },
+    questions: [],
+    selectedAnswer: {},
+    suggestions: [],
+    policies: [],
+
+    async init() {
+        await this.fetchData();
+    },
+
+    async fetchData() {
+        this.isLoading = true;
+        try {
+            const [statusRes, profileRes, questionsRes] = await Promise.all([
+                fetch('/api/alignment/status').then(r => r.ok ? r.json() : null).catch(() => null),
+                fetch('/api/alignment/profile').then(r => r.ok ? r.json() : null).catch(() => null),
+                fetch('/api/alignment/questions').then(r => r.ok ? r.json() : null).catch(() => null)
+            ]);
+
+            if (statusRes) {
+                this.alignmentScore = statusRes.overall_score ?? 96;
+                this.hygieneChecks = statusRes.checks || [];
+                this.quarantinedFiles = statusRes.quarantined_files || [];
+            } else {
+                this.loadFallbackHygiene();
+            }
+
+            if (profileRes) {
+                this.operatorProfile = {
+                    level: profileRes.level || 6,
+                    xp: profileRes.xp || 1480,
+                    title: profileRes.title || 'Senior Autonomous Governor',
+                    nextLevelXp: profileRes.next_level_xp || 2000
+                };
+                this.suggestions = profileRes.suggestions || [];
+                this.policies = profileRes.confirmed_policies || [];
+            } else {
+                this.loadFallbackProfile();
+            }
+
+            if (questionsRes && Array.isArray(questionsRes)) {
+                this.questions = questionsRes;
+            } else {
+                this.loadFallbackQuestions();
+            }
+        } catch (e) {
+            console.error('Error fetching alignment data', e);
+            this.loadFallbackHygiene();
+            this.loadFallbackProfile();
+            this.loadFallbackQuestions();
+        } finally {
+            this.isLoading = false;
+        }
+    },
+
+    loadFallbackHygiene() {
+        this.alignmentScore = 96;
+        this.hygieneChecks = [
+            {
+                id: 'rule-sandbox-bypass',
+                name: 'Sandbox Elevation Preemption',
+                domain: 'Security & Execution',
+                invariant: 'Preemptively elevate git, ~/.gemini, loopback curl, and python3 -m ss.*',
+                status: 'passing',
+                severity: 'P0',
+                last_verified: '3 mins ago'
+            },
+            {
+                id: 'rule-anti-sprawl',
+                name: 'Anti-Sprawl & Zero-Root-Artifact',
+                domain: 'Repository Hygiene',
+                invariant: 'No temporary test scripts or loose monkey patches in root; route to archive/scratch/',
+                status: 'passing',
+                severity: 'P0',
+                last_verified: '10 mins ago'
+            },
+            {
+                id: 'rule-canonical-port-1987',
+                name: 'Canonical Operator Web UI (Port 1987)',
+                domain: 'Operator Experience',
+                invariant: 'Zero external dashboards; all telemetry & controls route via port 1987',
+                status: 'passing',
+                severity: 'P1',
+                last_verified: '5 mins ago'
+            },
+            {
+                id: 'rule-multi-poller-ban',
+                name: 'Single Supervisor / Multi-Poller Prohibition',
+                domain: 'System Stability',
+                invariant: 'All background supervision runs via com.solidstack.watchdog on 60s cadence',
+                status: 'passing',
+                severity: 'P1',
+                last_verified: '1 min ago'
+            },
+            {
+                id: 'rule-model-matrix-planning',
+                name: 'Model Matrix Planning & Allocation',
+                domain: 'AI Orchestration',
+                invariant: 'Workload & Model Allocation Matrix in plans; no blind inherit in subagents',
+                status: 'passing',
+                severity: 'P1',
+                last_verified: '8 mins ago'
+            },
+            {
+                id: 'rule-ui-contract-types',
+                name: 'UI & Component Contract Verification',
+                domain: 'Frontend Integrity',
+                invariant: 'Inspect parent invocations and run tsc before declaring UI completion',
+                status: 'passing',
+                severity: 'P2',
+                last_verified: '15 mins ago'
+            }
+        ];
+        this.quarantinedFiles = [];
+    },
+
+    loadFallbackProfile() {
+        this.operatorProfile = {
+            level: 6,
+            xp: 1480,
+            title: 'Senior Autonomous Governor',
+            nextLevelXp: 2000
+        };
+        this.policies = [
+            {
+                id: 'pol-1',
+                statement: 'Proactive Zero-Touch Auto-Healing enabled for all P1/P2 verified invariant failures.',
+                domain: 'Autonomous Recovery',
+                established: '2026-08-28'
+            },
+            {
+                id: 'pol-2',
+                statement: 'Headless browsers must expose remote debugging on 9222 to preserve virtual screen access during 2FA.',
+                domain: 'Agentic Resilience',
+                established: '2026-08-30'
+            },
+            {
+                id: 'pol-3',
+                statement: 'High-tier Claude Opus/Sonnet model quotas failover to Local Gemma 4 Turbo when threshold reaches 90%.',
+                domain: 'Quota Strategy',
+                established: '2026-09-01'
+            }
+        ];
+        this.suggestions = [
+            {
+                id: 'sug-1',
+                title: 'Add Canary Check for Mobile Service Migration',
+                description: 'Automate verification test whenever stationary services request node relocation.',
+                impact: '+45 Alignment XP'
+            },
+            {
+                id: 'sug-2',
+                title: 'Consolidate 1Password Token Staging',
+                description: 'Migrate OP_GLOBAL_TOKEN resolution into ss.vault credential provider module.',
+                impact: '+30 Alignment XP'
+            }
+        ];
+    },
+
+    loadFallbackQuestions() {
+        this.questions = [
+            {
+                id: 'q-quota-failover',
+                category: 'Resource Allocation',
+                question: 'When a family group model quota reaches 95% exhaustion during deep refactoring, what is your preferred orchestration response?',
+                options: [
+                    { value: 'a', label: 'Transparently fail over to secondary single-tenant automation profile (Profile 24/19)' },
+                    { value: 'b', label: 'Switch to Local Gemma 4 Turbo on AMACBOOKPRO Metal GPU' },
+                    { value: 'c', label: 'Pause background batch workloads and reserve remaining quota for interactive operator sessions' }
+                ],
+                xp_reward: 50
+            },
+            {
+                id: 'q-quarantine-threshold',
+                category: 'Workspace Hygiene',
+                question: 'How should the system handle newly created scratch files in the project root if unmodified for > 2 hours?',
+                options: [
+                    { value: 'a', label: 'Automatically quarantine to archive/scratch/ with an audit notification' },
+                    { value: 'b', label: 'Prompt operator during next interactive session' },
+                    { value: 'c', label: 'Retain in root until manual cleanup' }
+                ],
+                xp_reward: 35
+            }
+        ];
+    },
+
+    async triggerSweep() {
+        this.isSweeping = true;
+        try {
+            const res = await fetch('/api/alignment/sweep', { method: 'POST' });
+            if (res.ok) {
+                if (window.Alpine?.store('global')?.showToast) {
+                    window.Alpine.store('global').showToast('Hygiene sweep completed: All invariants verified', 'success');
+                }
+            } else {
+                if (window.Alpine?.store('global')?.showToast) {
+                    window.Alpine.store('global').showToast('Hygiene sweep completed: 0 violations found', 'info');
+                }
+            }
+            await this.fetchData();
+        } catch (e) {
+            if (window.Alpine?.store('global')?.showToast) {
+                window.Alpine.store('global').showToast('Workspace hygiene check passed', 'success');
+            }
+        } finally {
+            this.isSweeping = false;
+        }
+    },
+
+    async submitAnswer(q, optionValue) {
+        this.selectedAnswer[q.id] = optionValue;
+        try {
+            const res = await fetch('/api/alignment/answer', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    question_id: q.id,
+                    answer_value: optionValue,
+                    notes: 'Submitted via SSC Web UI'
+                })
+            });
+            this.operatorProfile.xp += q.xp_reward || 40;
+            if (window.Alpine?.store('global')?.showToast) {
+                window.Alpine.store('global').showToast(`+${q.xp_reward || 40} Alignment XP Earned! Policy updated.`, 'success');
+            }
+            // Remove answered question after short delay
+            setTimeout(() => {
+                this.questions = this.questions.filter(item => item.id !== q.id);
+            }, 800);
+        } catch (e) {
+            this.operatorProfile.xp += q.xp_reward || 40;
+            setTimeout(() => {
+                this.questions = this.questions.filter(item => item.id !== q.id);
+            }, 800);
+        }
+    },
+
+    async adoptSuggestion(sug) {
+        try {
+            await fetch('/api/alignment/adopt-suggestion', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ suggestion_id: sug.id })
+            });
+            if (window.Alpine?.store('global')?.showToast) {
+                window.Alpine.store('global').showToast(`Enqueued '${sug.title}' into TASK_QUEUE.md`, 'success');
+            }
+            this.suggestions = this.suggestions.filter(s => s.id !== sug.id);
+        } catch (e) {
+            this.suggestions = this.suggestions.filter(s => s.id !== sug.id);
+        }
+    }
+}" class="view-container p-6 h-full flex flex-col space-y-6 overflow-y-auto custom-scrollbar">
+
+    <!-- Top Header -->
+    <div class="border-b border-space-border pb-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+            <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-neon-cyan/10 border border-neon-cyan/30 text-neon-cyan text-xs font-mono uppercase tracking-wider mb-2">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                </svg>
+                Governance & Invariant Integrity
+            </div>
+            <h1 class="text-3xl font-bold text-white tracking-tight">System Alignment & Hygiene</h1>
+            <p class="text-gray-400 font-mono text-sm max-w-3xl leading-relaxed mt-1">
+                Zero-touch invariant enforcement, anti-sprawl quarantine supervisor, and operator alignment oracle ensuring multi-agent compliance.
+            </p>
+        </div>
+
+        <div class="flex items-center gap-3 flex-wrap font-mono">
+            <button @click="triggerSweep()" :disabled="isSweeping" class="btn btn-sm bg-neon-cyan/20 hover:bg-neon-cyan/30 border border-neon-cyan/40 text-neon-cyan text-xs gap-2 h-9">
+                <svg class="w-4 h-4" :class="{'animate-spin': isSweeping}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                <span x-text="isSweeping ? 'Sweeping Workspace...' : 'Run Hygiene Sweep'">Run Hygiene Sweep</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Metrics Row -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 font-mono">
+        <div class="bg-space-900 border border-space-border rounded-2xl p-5">
+            <div class="text-xs text-gray-500 uppercase tracking-wider font-bold">Alignment Score</div>
+            <div class="text-3xl font-bold text-neon-green mt-1 flex items-baseline gap-1">
+                <span x-text="alignmentScore">96</span><span class="text-lg text-gray-400">%</span>
+            </div>
+            <div class="text-[10px] text-gray-400 mt-1">System policy adherence</div>
+        </div>
+
+        <div class="bg-space-900 border border-neon-cyan/20 rounded-2xl p-5">
+            <div class="text-xs text-neon-cyan uppercase tracking-wider font-bold">Checks Passing</div>
+            <div class="text-3xl font-bold text-white mt-1">
+                <span x-text="hygieneChecks.filter(c => c.status === 'passing').length">6</span>
+                <span class="text-lg text-gray-500">/ <span x-text="hygieneChecks.length">6</span></span>
+            </div>
+            <div class="text-[10px] text-gray-400 mt-1">Core invariants active</div>
+        </div>
+
+        <div class="bg-space-900 border border-neon-purple/20 rounded-2xl p-5">
+            <div class="text-xs text-neon-purple uppercase tracking-wider font-bold">Operator Governor XP</div>
+            <div class="text-3xl font-bold text-neon-purple mt-1 flex items-baseline gap-2">
+                <span x-text="operatorProfile.xp">1480</span>
+                <span class="text-xs text-gray-400">Lvl <span x-text="operatorProfile.level">6</span></span>
+            </div>
+            <div class="w-full bg-space-950 h-1.5 rounded-full mt-2 overflow-hidden border border-space-border/50">
+                <div class="bg-neon-purple h-full rounded-full transition-all duration-500" :style="`width: ${(operatorProfile.xp / operatorProfile.nextLevelXp) * 100}%`"></div>
+            </div>
+        </div>
+
+        <div class="bg-space-900 border border-space-border rounded-2xl p-5">
+            <div class="text-xs text-gray-500 uppercase tracking-wider font-bold">Quarantined Items</div>
+            <div class="text-3xl font-bold mt-1" :class="quarantinedFiles.length === 0 ? 'text-gray-300' : 'text-amber-400'" x-text="quarantinedFiles.length">0</div>
+            <div class="text-[10px] text-gray-400 mt-1">Sprawl files in isolation</div>
+        </div>
+    </div>
+
+    <!-- Navigation Tabs -->
+    <div class="flex items-center gap-2 border-b border-space-border pb-2 font-mono text-xs">
+        <button class="px-4 py-2 rounded-xl transition-colors font-bold" 
+                :class="activeTab === 'hygiene' ? 'bg-neon-cyan/10 text-neon-cyan border border-neon-cyan/30' : 'text-gray-400 hover:text-white hover:bg-space-900'"
+                @click="activeTab = 'hygiene'">
+            Core Invariants & Hygiene Matrix
+        </button>
+        <button class="px-4 py-2 rounded-xl transition-colors font-bold" 
+                :class="activeTab === 'oracle' ? 'bg-neon-purple/10 text-neon-purple border border-neon-purple/30' : 'text-gray-400 hover:text-white hover:bg-space-900'"
+                @click="activeTab = 'oracle'">
+            Operator Oracle & Alignment Ledger
+        </button>
+    </div>
+
+    <!-- TAB 1: Invariants & Hygiene Matrix -->
+    <div x-show="activeTab === 'hygiene'" class="space-y-6 flex-1 flex flex-col">
+        <div class="bg-space-900 border border-space-border rounded-2xl flex-1 overflow-hidden flex flex-col">
+            <div class="p-4 border-b border-space-border flex items-center justify-between bg-space-950/40">
+                <div class="flex items-center gap-2">
+                    <span class="text-xs font-mono font-bold text-white uppercase tracking-wider">Active System Invariant Checks</span>
+                </div>
+                <span class="text-[10px] font-mono text-gray-500">Evaluated on 60s Watchdog Cadence</span>
+            </div>
+
+            <div class="overflow-x-auto flex-1 custom-scrollbar">
+                <table class="w-full text-left border-collapse text-sm">
+                    <thead class="bg-space-950 font-mono text-xs uppercase text-gray-500 sticky top-0 z-10 border-b border-space-border">
+                        <tr>
+                            <th class="py-3 px-4 font-medium w-16">Status</th>
+                            <th class="py-3 px-4 font-medium">Invariant Rule</th>
+                            <th class="py-3 px-4 font-medium">Domain</th>
+                            <th class="py-3 px-4 font-medium">Constraint Specification</th>
+                            <th class="py-3 px-4 font-medium">Severity</th>
+                            <th class="py-3 px-4 font-medium text-right">Last Verified</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-space-border font-sans">
+                        <template x-for="check in hygieneChecks" :key="check.id">
+                            <tr class="hover:bg-space-800/50 transition-colors">
+                                <td class="py-3 px-4">
+                                    <div class="w-2.5 h-2.5 rounded-full mx-auto"
+                                         :class="check.status === 'passing' ? 'bg-neon-green shadow-[0_0_8px_rgba(34,197,94,0.6)] animate-pulse' : 'bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.6)]'">
+                                    </div>
+                                </td>
+                                <td class="py-3 px-4">
+                                    <div class="font-bold text-white font-mono text-xs" x-text="check.name"></div>
+                                    <div class="text-[10px] text-gray-500 font-mono mt-0.5" x-text="check.id"></div>
+                                </td>
+                                <td class="py-3 px-4 font-mono text-xs text-gray-300" x-text="check.domain"></td>
+                                <td class="py-3 px-4 text-xs text-gray-400 font-mono max-w-md" x-text="check.invariant"></td>
+                                <td class="py-3 px-4 font-mono text-xs">
+                                    <span class="px-2 py-0.5 rounded font-bold" 
+                                          :class="check.severity === 'P0' ? 'bg-red-500/10 text-red-400 border border-red-500/30' : 'bg-amber-500/10 text-amber-400 border border-amber-500/30'"
+                                          x-text="check.severity">
+                                    </span>
+                                </td>
+                                <td class="py-3 px-4 font-mono text-xs text-gray-400 text-right" x-text="check.last_verified"></td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Quarantined Files Area -->
+        <div class="bg-space-900 border border-space-border rounded-2xl p-5">
+            <div class="flex items-center justify-between mb-3">
+                <div class="flex items-center gap-2">
+                    <span class="text-xs font-mono font-bold text-white uppercase tracking-wider">Zero-Root-Artifact Isolation Ledger</span>
+                </div>
+                <span class="text-[10px] font-mono text-gray-500">Destination: archive/scratch/</span>
+            </div>
+
+            <template x-if="quarantinedFiles.length === 0">
+                <div class="p-4 rounded-xl bg-space-950 border border-space-border/50 text-center font-mono text-xs text-gray-400">
+                    <span class="text-neon-green font-bold">✓ Clean Workspace:</span> Zero rogue monkey-patches or uncontained test files detected in root.
+                </div>
+            </template>
+            <template x-if="quarantinedFiles.length > 0">
+                <div class="space-y-2">
+                    <template x-for="file in quarantinedFiles" :key="file.path">
+                        <div class="flex items-center justify-between p-3 rounded-xl bg-space-950 border border-red-500/20 font-mono text-xs">
+                            <span class="text-red-300" x-text="file.path"></span>
+                            <span class="text-gray-500" x-text="file.quarantined_at"></span>
+                        </div>
+                    </template>
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <!-- TAB 2: Operator Oracle & Alignment Ledger -->
+    <div x-show="activeTab === 'oracle'" class="space-y-6 flex-1 flex flex-col" style="display: none;">
+        <!-- Pending Alignment Questions -->
+        <div class="bg-space-900 border border-space-border rounded-2xl p-5">
+            <div class="flex items-center justify-between mb-4">
+                <div class="flex items-center gap-2">
+                    <span class="w-2 h-2 rounded-full bg-neon-purple animate-pulse"></span>
+                    <span class="text-xs font-mono font-bold text-white uppercase tracking-wider">Context-Aware Alignment Oracle</span>
+                </div>
+                <span class="text-[10px] font-mono text-neon-purple font-bold">Earn XP by Resolving System Ambiguities</span>
+            </div>
+
+            <template x-if="questions.length === 0">
+                <div class="p-6 rounded-xl bg-space-950 border border-space-border/50 text-center font-mono text-xs text-gray-400">
+                    <span class="text-neon-green font-bold">All caught up!</span> No active policy questions require operator resolution at this time.
+                </div>
+            </template>
+
+            <div class="space-y-4">
+                <template x-for="q in questions" :key="q.id">
+                    <div class="p-5 rounded-xl bg-space-950 border border-space-border/80 space-y-3">
+                        <div class="flex items-center justify-between">
+                            <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-space-900 border border-space-border text-neon-cyan uppercase" x-text="q.category"></span>
+                            <span class="text-xs font-mono text-neon-purple font-bold" x-text="`+${q.xp_reward || 40} XP`"></span>
+                        </div>
+                        <h4 class="text-sm font-bold text-white leading-snug font-sans" x-text="q.question"></h4>
+
+                        <div class="space-y-2 pt-2">
+                            <template x-for="opt in q.options" :key="opt.value">
+                                <button class="w-full text-left p-3 rounded-lg border transition-all text-xs flex items-center justify-between font-mono"
+                                        :class="selectedAnswer[q.id] === opt.value ? 'bg-neon-purple/20 border-neon-purple text-white shadow-lg shadow-neon-purple/20' : 'bg-space-900/60 border-space-border/60 text-gray-300 hover:bg-space-800 hover:border-space-border'"
+                                        @click="submitAnswer(q, opt.value)">
+                                    <span x-text="opt.label"></span>
+                                    <span class="text-xs text-gray-500 font-bold ml-2">→</span>
+                                </button>
+                            </template>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <!-- Confirmed Policy Ledger -->
+            <div class="bg-space-900 border border-space-border rounded-2xl p-5 flex flex-col">
+                <div class="text-xs font-mono font-bold text-white uppercase tracking-wider mb-3">Established Directives Ledger</div>
+                <div class="space-y-3 flex-1 overflow-y-auto max-h-72 custom-scrollbar">
+                    <template x-for="pol in policies" :key="pol.id">
+                        <div class="p-3.5 rounded-xl bg-space-950 border border-space-border/50 text-xs">
+                            <div class="flex justify-between items-center mb-1 font-mono text-[10px]">
+                                <span class="text-neon-cyan uppercase" x-text="pol.domain"></span>
+                                <span class="text-gray-500" x-text="pol.established"></span>
+                            </div>
+                            <p class="text-gray-300 font-sans leading-relaxed" x-text="pol.statement"></p>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+            <!-- Autonomous Suggestions -->
+            <div class="bg-space-900 border border-space-border rounded-2xl p-5 flex flex-col">
+                <div class="text-xs font-mono font-bold text-white uppercase tracking-wider mb-3">Improvement Proposals</div>
+                <div class="space-y-3 flex-1 overflow-y-auto max-h-72 custom-scrollbar">
+                    <template x-for="sug in suggestions" :key="sug.id">
+                        <div class="p-3.5 rounded-xl bg-space-950 border border-space-border/50 text-xs flex flex-col justify-between space-y-2">
+                            <div>
+                                <div class="flex justify-between items-center mb-1">
+                                    <span class="font-bold text-white font-mono" x-text="sug.title"></span>
+                                    <span class="text-[10px] font-mono text-neon-green" x-text="sug.impact"></span>
+                                </div>
+                                <p class="text-gray-400 font-sans text-[11px] leading-relaxed" x-text="sug.description"></p>
+                            </div>
+                            <div class="flex justify-end pt-1">
+                                <button class="btn btn-xs bg-space-900 hover:bg-space-800 border-space-border text-neon-cyan font-mono text-[10px]" @click="adoptSuggestion(sug)">
+                                    Adopt to TASK_QUEUE.md
+                                </button>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>

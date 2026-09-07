@@ -1,0 +1,137 @@
+<div x-data="window.Components.network()" x-init="init()" class="p-6 space-y-6">
+    <div class="flex items-center justify-between">
+        <h1 class="text-2xl font-bold">Network & Edge</h1>
+        <button @click="fetchNetworkData" class="btn btn-primary btn-sm" :class="{ 'loading': isLoading }">
+            Refresh
+        </button>
+    </div>
+
+    <div x-show="isLoading" class="flex justify-center py-12">
+        <span class="loading loading-spinner loading-lg"></span>
+    </div>
+
+    <div x-show="!isLoading" class="grid grid-cols-1 md:grid-cols-2 gap-6" style="display: none;">
+        <!-- UniFi Clients -->
+        <div class="card bg-base-100 shadow-xl border border-base-200">
+            <div class="card-body">
+                <h2 class="card-title">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-info" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.111 16.404a5.5 5.5 0 017.778 0M12 20h.01m-7.08-7.071c3.904-3.905 10.236-3.905 14.141 0M1.394 9.393c5.857-5.857 15.355-5.857 21.213 0" /></svg>
+                    UniFi Clients
+                </h2>
+                <div class="overflow-x-auto">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>IP</th>
+                                <th>Type</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <template x-for="client in unifiClients" :key="client.ip">
+                                <tr>
+                                    <td x-text="client.name"></td>
+                                    <td class="font-mono text-xs" x-text="client.ip"></td>
+                                    <td x-text="client.type"></td>
+                                    <td>
+                                        <div class="badge badge-success badge-sm" x-show="client.status === 'connected'">Connected</div>
+                                        <div class="badge badge-error badge-sm" x-show="client.status !== 'connected'">Disconnected</div>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tailscale Mesh -->
+        <div class="card bg-base-100 shadow-xl border border-base-200">
+            <div class="card-body">
+                <h2 class="card-title">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-primary" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 002-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
+                    Tailscale Mesh
+                </h2>
+                <div class="overflow-x-auto">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Hostname</th>
+                                <th>IP</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <template x-for="node in tailscaleNodes" :key="node.hostname">
+                                <tr>
+                                    <td x-text="node.hostname"></td>
+                                    <td class="font-mono text-xs" x-text="node.ip"></td>
+                                    <td>
+                                        <div class="badge badge-success badge-sm" x-show="node.status === 'online'">Online</div>
+                                        <div class="badge badge-error badge-sm" x-show="node.status === 'offline'">Offline</div>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Wireguard -->
+        <div class="card bg-base-100 shadow-xl border border-base-200">
+            <div class="card-body">
+                <h2 class="card-title">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-secondary" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
+                    Wireguard Peers
+                </h2>
+                <div class="overflow-x-auto">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>Peer</th>
+                                <th>Endpoint</th>
+                                <th>Transfer (TX/RX)</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <template x-for="peer in wireguardPeers" :key="peer.name">
+                                <tr>
+                                    <td x-text="peer.name"></td>
+                                    <td class="font-mono text-xs" x-text="peer.endpoint"></td>
+                                    <td><span x-text="peer.tx"></span> / <span x-text="peer.rx"></span></td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Cloudflare -->
+        <div class="card bg-base-100 shadow-xl border border-base-200">
+            <div class="card-body">
+                <h2 class="card-title">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-warning" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" /></svg>
+                    Cloudflare Edge
+                </h2>
+                <div class="stats stats-vertical shadow mt-4 w-full">
+                    <div class="stat">
+                        <div class="stat-title">Zone</div>
+                        <div class="stat-value text-lg" x-text="cloudflareStatus.zone"></div>
+                        <div class="stat-desc">Status: <span x-text="cloudflareStatus.status" class="text-success font-bold uppercase"></span></div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-title">Active Tunnels</div>
+                        <div class="stat-value text-lg" x-text="cloudflareStatus.tunnels"></div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-title">Requests (24h)</div>
+                        <div class="stat-value text-lg" x-text="cloudflareStatus.requests24h"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

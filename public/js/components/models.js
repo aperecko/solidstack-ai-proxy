@@ -297,5 +297,16 @@ window.Components.models = () => ({
      */
     async updateModelConfig(modelId, configUpdates) {
         return window.ModelConfigUtils.updateModelConfig(modelId, configUpdates);
+    },
+
+    /**
+     * Bulk update configuration for an entire pool of models
+     * @param {string[]} modelIds - Array of model IDs to update
+     * @param {object} configUpdates - Configuration updates
+     */
+    async togglePoolConfig(modelIds, configUpdates) {
+        for (const id of modelIds) {
+            await this.updateModelConfig(id, configUpdates);
+        }
     }
 });

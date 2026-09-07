@@ -6,6 +6,7 @@
  */
 
 import { isAccountCoolingDown } from '../rate-limits.js';
+import { getG1CreditExhaustedRemaining } from '../quota-store.js';
 
 /**
  * @typedef {Object} SelectionResult
@@ -90,34 +91,34 @@ export class BaseStrategy {
             }
         }
 
-        // Claude models require a CloudCode OAuth account with Pro/Plus/Ultra tier (API keys and free accounts cannot serve Claude)
-        if (modelId && modelId.toLowerCase().includes('claude')) {
-            if (account.type === 'apikey' || account.email?.includes('virtual-gemini-key')) {
-                return false;
-            }
+        // Check if account has an active G1 credit exhaustion lockout for this model
+        if (modelId && getG1CreditExhaustedRemaining('antigravity', account.email, modelId) > 0) {
+            return false;
+        }
+
+        // Virtual API keys cannot serve CloudCode endpoints and have depleted prepayment credits
+        if (account.type === 'apikey' || account.email?.includes('virtual-gemini-key')) {
+            return false;
+        }
+
+        // Claude and Gemini Pro models require a CloudCode OAuth account with Pro/Plus/Ultra tier (free accounts cannot serve them)
+        const isProTierModel = modelId && (modelId.toLowerCase().includes('claude') || modelId.toLowerCase().includes('-pro'));
+        if (isProTierModel) {
             const tier = (account.subscription?.tier || account.tier || '').toLowerCase();
             if (tier === 'free') {
                 return false;
             }
         }
 
-        // Exclude an account when the requested model's quota is explicitly
-        // exhausted with an active future reset. Mirrors the per-model check that
-        // used to be Claude-only, now applied to ALL models (including Gemini).
-        // This is checked directly against the account's quota (no staleness guard)
-        // so an account whose quota is genuinely spent is never selected, even when
-        // its quota record is older than the QuotaTracker's 5-minute trust window.
-        // Without this, exhausted free-tier accounts keep winning Gemini selection
-        // over healthy paid accounts on every new request.
-        if (modelId) {
-            const q = account.quota?.models?.[modelId];
-            if (q && typeof q.remainingFraction === 'number' && q.remainingFraction <= 0.02 && q.resetTime) {
-                const resetMs = new Date(q.resetTime).getTime();
-                if (!isNaN(resetMs) && resetMs > Date.now()) {
-                    return false;
-                }
-            }
-        }
+        // NOTE: no hard gate on remainingFraction here. The quota API
+        // (fetchAvailableModels) is NOT a reliable eligibility signal on this
+        // pool: it reports rf=0 for models that generate fine (adamperecko
+        // 2.5-flash rf=0 → 200 OK) and rf=1 for models that 429 (000002
+        // 3.8-flash-low rf=1 → 429). Benching accounts on that data is a false
+        // negative that empties the pool. The authoritative gates are the real
+        // failure signals below (modelRateLimits, G1 lockout) which are set
+        // only when an actual request fails. remainingFraction is used solely
+        // as a soft scoring factor in hybrid-strategy.
 
         return true;
     }

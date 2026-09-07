@@ -7,11 +7,19 @@ module.exports = {
     // The proxy owns long-lived SSE streams. Fork mode avoids PM2 cluster
     // handoff races and duplicate listeners during reloads.
     exec_mode: 'fork',
-    wait_ready: true,     // Wait for 'process.send("ready")' before killing old instance
-    listen_timeout: Number(process.env.LISTEN_TIMEOUT || 10000), // Wait up to 10s for new instance ready
-    kill_timeout: Number(process.env.KILL_TIMEOUT || process.env.STREAM_DRAIN_TIMEOUT_MS || 10000), // Keep reloads bounded; active clients can reconnect safely
+    wait_ready: false,    // Fork mode must replace the old listener without waiting on long-lived SSE streams
+    listen_timeout: Number(process.env.LISTEN_TIMEOUT || 10000),
+    kill_timeout: Number(process.env.KILL_TIMEOUT || process.env.STREAM_DRAIN_TIMEOUT_MS || 3000), // Bound reloads; active clients can reconnect safely
+    autorestart: true,
+    restart_delay: 500,
+    max_restarts: 30,
+    max_memory_restart: '1G',
+    min_uptime: 10000,
     env: {
-      NODE_ENV: 'production'
+      NODE_ENV: 'production',
+      NODE_OPTIONS: '--use-system-ca --max-old-space-size=1024',
+      FALLBACK: 'true',
+      AG_NIM_OVERFLOW: '1'
     }
   }]
 };

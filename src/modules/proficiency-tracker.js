@@ -17,7 +17,7 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { getBestAccount } from '../account-manager/quota-store.js';
+import { getBestAccount, getQuotaStatus } from '../account-manager/quota-store.js';
 
 const CONFIG_DIR = path.join(os.homedir(), '.config', 'antigravity-proxy');
 const MATRIX_PATH = path.join(CONFIG_DIR, 'proficiency-matrix.json');
@@ -117,91 +117,167 @@ const CLASSIFIER_RULES = [
 
 const BASELINE_SEEDS = {
     'claude-opus-4-6-thinking': {
-        [TASK_TYPES.UI_COMPLEX]:    { score: 0.97, confidence: 'high',   context_window: 200000, cost_tier: 'opus' },
-        [TASK_TYPES.PLANNING]:      { score: 0.98, confidence: 'high',   context_window: 200000, cost_tier: 'opus' },
-        [TASK_TYPES.CODE_REFACTOR]: { score: 0.96, confidence: 'high',   context_window: 200000, cost_tier: 'opus' },
-        [TASK_TYPES.DEBUGGING]:     { score: 0.95, confidence: 'high',   context_window: 200000, cost_tier: 'opus' },
-        [TASK_TYPES.REVIEW]:        { score: 0.94, confidence: 'medium', context_window: 200000, cost_tier: 'opus' },
+        [TASK_TYPES.UI_COMPLEX]:    { score: 0.97, confidence: 'high',   context_window: 200000, billing_tier: 'fleet_pool_opus', hosting_env: 'cloud_api' },
+        [TASK_TYPES.PLANNING]:      { score: 0.98, confidence: 'high',   context_window: 200000, billing_tier: 'fleet_pool_opus', hosting_env: 'cloud_api' },
+        [TASK_TYPES.CODE_REFACTOR]: { score: 0.96, confidence: 'high',   context_window: 200000, billing_tier: 'fleet_pool_opus', hosting_env: 'cloud_api' },
+        [TASK_TYPES.DEBUGGING]:     { score: 0.95, confidence: 'high',   context_window: 200000, billing_tier: 'fleet_pool_opus', hosting_env: 'cloud_api' },
+        [TASK_TYPES.REVIEW]:        { score: 0.94, confidence: 'medium', context_window: 200000, billing_tier: 'fleet_pool_opus', hosting_env: 'cloud_api' },
     },
     'claude-sonnet-4-6': {
-        [TASK_TYPES.UI_COMPLEX]:    { score: 0.93, confidence: 'high',   context_window: 200000, cost_tier: 'pro' },
-        [TASK_TYPES.UI_DATA_GRID]:  { score: 0.91, confidence: 'high',   context_window: 200000, cost_tier: 'pro' },
-        [TASK_TYPES.UI_FORM]:       { score: 0.92, confidence: 'high',   context_window: 200000, cost_tier: 'pro' },
-        [TASK_TYPES.CODE_REFACTOR]: { score: 0.90, confidence: 'high',   context_window: 200000, cost_tier: 'pro' },
-        [TASK_TYPES.API_WIRING]:    { score: 0.89, confidence: 'medium', context_window: 200000, cost_tier: 'pro' },
-        [TASK_TYPES.DEBUGGING]:     { score: 0.91, confidence: 'high',   context_window: 200000, cost_tier: 'pro' },
-        [TASK_TYPES.PLANNING]:      { score: 0.88, confidence: 'medium', context_window: 200000, cost_tier: 'pro' },
+        [TASK_TYPES.UI_COMPLEX]:    { score: 0.93, confidence: 'high',   context_window: 200000, billing_tier: 'fleet_pool_pro', hosting_env: 'cloud_api' },
+        [TASK_TYPES.UI_DATA_GRID]:  { score: 0.91, confidence: 'high',   context_window: 200000, billing_tier: 'fleet_pool_pro', hosting_env: 'cloud_api' },
+        [TASK_TYPES.UI_FORM]:       { score: 0.92, confidence: 'high',   context_window: 200000, billing_tier: 'fleet_pool_pro', hosting_env: 'cloud_api' },
+        [TASK_TYPES.CODE_REFACTOR]: { score: 0.90, confidence: 'high',   context_window: 200000, billing_tier: 'fleet_pool_pro', hosting_env: 'cloud_api' },
+        [TASK_TYPES.API_WIRING]:    { score: 0.89, confidence: 'medium', context_window: 200000, billing_tier: 'fleet_pool_pro', hosting_env: 'cloud_api' },
+        [TASK_TYPES.DEBUGGING]:     { score: 0.91, confidence: 'high',   context_window: 200000, billing_tier: 'fleet_pool_pro', hosting_env: 'cloud_api' },
+        [TASK_TYPES.PLANNING]:      { score: 0.88, confidence: 'medium', context_window: 200000, billing_tier: 'fleet_pool_pro', hosting_env: 'cloud_api' },
     },
     'gemini-3.1-pro-high': {
-        [TASK_TYPES.PLANNING]:      { score: 0.94, confidence: 'high',   context_window: 1048576, cost_tier: 'pro' },
-        [TASK_TYPES.RESEARCH]:      { score: 0.95, confidence: 'high',   context_window: 1048576, cost_tier: 'pro' },
-        [TASK_TYPES.CODE_REFACTOR]: { score: 0.88, confidence: 'medium', context_window: 1048576, cost_tier: 'pro' },
-        [TASK_TYPES.REVIEW]:        { score: 0.90, confidence: 'high',   context_window: 1048576, cost_tier: 'pro' },
-        [TASK_TYPES.UI_COMPLEX]:    { score: 0.82, confidence: 'medium', context_window: 1048576, cost_tier: 'pro' },
-        [TASK_TYPES.DEBUGGING]:     { score: 0.87, confidence: 'medium', context_window: 1048576, cost_tier: 'pro' },
+        [TASK_TYPES.PLANNING]:      { score: 0.94, confidence: 'high',   context_window: 1048576, billing_tier: 'fleet_pool_pro', hosting_env: 'cloud_api' },
+        [TASK_TYPES.RESEARCH]:      { score: 0.95, confidence: 'high',   context_window: 1048576, billing_tier: 'fleet_pool_pro', hosting_env: 'cloud_api' },
+        [TASK_TYPES.CODE_REFACTOR]: { score: 0.88, confidence: 'medium', context_window: 1048576, billing_tier: 'fleet_pool_pro', hosting_env: 'cloud_api' },
+        [TASK_TYPES.REVIEW]:        { score: 0.90, confidence: 'high',   context_window: 1048576, billing_tier: 'fleet_pool_pro', hosting_env: 'cloud_api' },
+        [TASK_TYPES.UI_COMPLEX]:    { score: 0.82, confidence: 'medium', context_window: 1048576, billing_tier: 'fleet_pool_pro', hosting_env: 'cloud_api' },
+        [TASK_TYPES.DEBUGGING]:     { score: 0.87, confidence: 'medium', context_window: 1048576, billing_tier: 'fleet_pool_pro', hosting_env: 'cloud_api' },
     },
     'gemini-3.7-flash-high': {
-        [TASK_TYPES.UI_DATA_GRID]:  { score: 0.85, confidence: 'medium', context_window: 1048576, cost_tier: 'flash' },
-        [TASK_TYPES.RESEARCH]:      { score: 0.88, confidence: 'high',   context_window: 1048576, cost_tier: 'flash' },
-        [TASK_TYPES.API_WIRING]:    { score: 0.84, confidence: 'medium', context_window: 1048576, cost_tier: 'flash' },
-        [TASK_TYPES.CODE_SIMPLE]:   { score: 0.86, confidence: 'high',   context_window: 1048576, cost_tier: 'flash' },
-        [TASK_TYPES.TESTING]:       { score: 0.90, confidence: 'high',   context_window: 1048576, cost_tier: 'flash' },
-        [TASK_TYPES.FAST_LOOKUP]:   { score: 0.88, confidence: 'high',   context_window: 1048576, cost_tier: 'flash' },
+        [TASK_TYPES.UI_DATA_GRID]:  { score: 0.85, confidence: 'medium', context_window: 1048576, billing_tier: 'fleet_pool_flash', hosting_env: 'cloud_api' },
+        [TASK_TYPES.RESEARCH]:      { score: 0.88, confidence: 'high',   context_window: 1048576, billing_tier: 'fleet_pool_flash', hosting_env: 'cloud_api' },
+        [TASK_TYPES.API_WIRING]:    { score: 0.84, confidence: 'medium', context_window: 1048576, billing_tier: 'fleet_pool_flash', hosting_env: 'cloud_api' },
+        [TASK_TYPES.CODE_SIMPLE]:   { score: 0.86, confidence: 'high',   context_window: 1048576, billing_tier: 'fleet_pool_flash', hosting_env: 'cloud_api' },
+        [TASK_TYPES.TESTING]:       { score: 0.90, confidence: 'high',   context_window: 1048576, billing_tier: 'fleet_pool_flash', hosting_env: 'cloud_api' },
+        [TASK_TYPES.FAST_LOOKUP]:   { score: 0.88, confidence: 'high',   context_window: 1048576, billing_tier: 'fleet_pool_flash', hosting_env: 'cloud_api' },
     },
     'gemini-3.7-flash-medium': {
-        [TASK_TYPES.UI_DATA_GRID]:  { score: 0.82, confidence: 'medium', context_window: 1048576, cost_tier: 'flash' },
-        [TASK_TYPES.UI_FORM]:       { score: 0.80, confidence: 'medium', context_window: 1048576, cost_tier: 'flash' },
-        [TASK_TYPES.RESEARCH]:      { score: 0.84, confidence: 'medium', context_window: 1048576, cost_tier: 'flash' },
-        [TASK_TYPES.CODE_SIMPLE]:   { score: 0.83, confidence: 'high',   context_window: 1048576, cost_tier: 'flash' },
-        [TASK_TYPES.TESTING]:       { score: 0.87, confidence: 'high',   context_window: 1048576, cost_tier: 'flash' },
-        [TASK_TYPES.FAST_LOOKUP]:   { score: 0.85, confidence: 'high',   context_window: 1048576, cost_tier: 'flash' },
+        [TASK_TYPES.UI_DATA_GRID]:  { score: 0.82, confidence: 'medium', context_window: 1048576, billing_tier: 'fleet_pool_flash', hosting_env: 'cloud_api' },
+        [TASK_TYPES.UI_FORM]:       { score: 0.80, confidence: 'medium', context_window: 1048576, billing_tier: 'fleet_pool_flash', hosting_env: 'cloud_api' },
+        [TASK_TYPES.RESEARCH]:      { score: 0.84, confidence: 'medium', context_window: 1048576, billing_tier: 'fleet_pool_flash', hosting_env: 'cloud_api' },
+        [TASK_TYPES.CODE_SIMPLE]:   { score: 0.83, confidence: 'high',   context_window: 1048576, billing_tier: 'fleet_pool_flash', hosting_env: 'cloud_api' },
+        [TASK_TYPES.TESTING]:       { score: 0.87, confidence: 'high',   context_window: 1048576, billing_tier: 'fleet_pool_flash', hosting_env: 'cloud_api' },
+        [TASK_TYPES.FAST_LOOKUP]:   { score: 0.85, confidence: 'high',   context_window: 1048576, billing_tier: 'fleet_pool_flash', hosting_env: 'cloud_api' },
     },
     'gemini-2.5-flash': {
-        [TASK_TYPES.FAST_LOOKUP]:   { score: 0.88, confidence: 'high',   context_window: 1048576, cost_tier: 'flash' },
-        [TASK_TYPES.CODE_SIMPLE]:   { score: 0.80, confidence: 'medium', context_window: 1048576, cost_tier: 'flash' },
-        [TASK_TYPES.TESTING]:       { score: 0.85, confidence: 'high',   context_window: 1048576, cost_tier: 'flash' },
-        [TASK_TYPES.RESEARCH]:      { score: 0.82, confidence: 'medium', context_window: 1048576, cost_tier: 'flash' },
+        [TASK_TYPES.FAST_LOOKUP]:   { score: 0.88, confidence: 'high',   context_window: 1048576, billing_tier: 'fleet_pool_flash', hosting_env: 'cloud_api' },
+        [TASK_TYPES.CODE_SIMPLE]:   { score: 0.80, confidence: 'medium', context_window: 1048576, billing_tier: 'fleet_pool_flash', hosting_env: 'cloud_api' },
+        [TASK_TYPES.TESTING]:       { score: 0.85, confidence: 'high',   context_window: 1048576, billing_tier: 'fleet_pool_flash', hosting_env: 'cloud_api' },
+        [TASK_TYPES.RESEARCH]:      { score: 0.82, confidence: 'medium', context_window: 1048576, billing_tier: 'fleet_pool_flash', hosting_env: 'cloud_api' },
     },
     'gemini-3.1-flash-lite': {
-        [TASK_TYPES.UI_MECHANICAL]: { score: 0.88, confidence: 'high',   context_window: 1048576, cost_tier: 'flash_lite' },
-        [TASK_TYPES.FAST_LOOKUP]:   { score: 0.85, confidence: 'high',   context_window: 1048576, cost_tier: 'flash_lite' },
-        [TASK_TYPES.CODE_SIMPLE]:   { score: 0.78, confidence: 'medium', context_window: 1048576, cost_tier: 'flash_lite' },
-        [TASK_TYPES.TESTING]:       { score: 0.82, confidence: 'medium', context_window: 1048576, cost_tier: 'flash_lite' },
+        [TASK_TYPES.UI_MECHANICAL]: { score: 0.88, confidence: 'high',   context_window: 1048576, billing_tier: 'fleet_pool_flash_lite', hosting_env: 'cloud_api' },
+        [TASK_TYPES.FAST_LOOKUP]:   { score: 0.85, confidence: 'high',   context_window: 1048576, billing_tier: 'fleet_pool_flash_lite', hosting_env: 'cloud_api' },
+        [TASK_TYPES.CODE_SIMPLE]:   { score: 0.78, confidence: 'medium', context_window: 1048576, billing_tier: 'fleet_pool_flash_lite', hosting_env: 'cloud_api' },
+        [TASK_TYPES.TESTING]:       { score: 0.82, confidence: 'medium', context_window: 1048576, billing_tier: 'fleet_pool_flash_lite', hosting_env: 'cloud_api' },
     },
     'gemma-4-26b-a4b-it': {
-        [TASK_TYPES.FAST_LOOKUP]:   { score: 0.72, confidence: 'low',    context_window: 16384,  cost_tier: 'local' },
-        [TASK_TYPES.CODE_SIMPLE]:   { score: 0.65, confidence: 'low',    context_window: 16384,  cost_tier: 'local' },
-        [TASK_TYPES.RESEARCH]:      { score: 0.60, confidence: 'low',    context_window: 16384,  cost_tier: 'local' },
+        [TASK_TYPES.FAST_LOOKUP]:   { score: 0.72, confidence: 'low',    context_window: 16384,  billing_tier: 'local_offline', hosting_env: 'local_hardware' },
+        [TASK_TYPES.CODE_SIMPLE]:   { score: 0.65, confidence: 'low',    context_window: 16384,  billing_tier: 'local_offline', hosting_env: 'local_hardware' },
+        [TASK_TYPES.RESEARCH]:      { score: 0.60, confidence: 'low',    context_window: 16384,  billing_tier: 'local_offline', hosting_env: 'local_hardware' },
     },
     'gpt-oss-120b-medium': {
-        [TASK_TYPES.CODE_REFACTOR]: { score: 0.85, confidence: 'low',    context_window: 128000, cost_tier: 'pro' },
-        [TASK_TYPES.PLANNING]:      { score: 0.83, confidence: 'low',    context_window: 128000, cost_tier: 'pro' },
-        [TASK_TYPES.RESEARCH]:      { score: 0.82, confidence: 'low',    context_window: 128000, cost_tier: 'pro' },
-        [TASK_TYPES.DEBUGGING]:     { score: 0.80, confidence: 'low',    context_window: 128000, cost_tier: 'pro' },
+        [TASK_TYPES.CODE_REFACTOR]: { score: 0.85, confidence: 'low',    context_window: 128000, billing_tier: 'fleet_pool_pro', hosting_env: 'cloud_api' },
+        [TASK_TYPES.PLANNING]:      { score: 0.83, confidence: 'low',    context_window: 128000, billing_tier: 'fleet_pool_pro', hosting_env: 'cloud_api' },
+        [TASK_TYPES.RESEARCH]:      { score: 0.82, confidence: 'low',    context_window: 128000, billing_tier: 'fleet_pool_pro', hosting_env: 'cloud_api' },
+        [TASK_TYPES.DEBUGGING]:     { score: 0.80, confidence: 'low',    context_window: 128000, billing_tier: 'fleet_pool_pro', hosting_env: 'cloud_api' },
     },
     'deepseek/deepseek-v4-flash': {
-        [TASK_TYPES.CODE_SIMPLE]:   { score: 0.82, confidence: 'low',    context_window: 64000,  cost_tier: 'flash' },
-        [TASK_TYPES.CODE_REFACTOR]: { score: 0.78, confidence: 'low',    context_window: 64000,  cost_tier: 'flash' },
-        [TASK_TYPES.FAST_LOOKUP]:   { score: 0.80, confidence: 'low',    context_window: 64000,  cost_tier: 'flash' },
+        [TASK_TYPES.CODE_SIMPLE]:   { score: 0.82, confidence: 'low',    context_window: 64000,  billing_tier: 'fleet_pool_flash', hosting_env: 'cloud_api' },
+        [TASK_TYPES.CODE_REFACTOR]: { score: 0.78, confidence: 'low',    context_window: 64000,  billing_tier: 'fleet_pool_flash', hosting_env: 'cloud_api' },
+        [TASK_TYPES.FAST_LOOKUP]:   { score: 0.80, confidence: 'low',    context_window: 64000,  billing_tier: 'fleet_pool_flash', hosting_env: 'cloud_api' },
+    },
+    'glm-5.2:cloud': {
+        [TASK_TYPES.PLANNING]:      { score: 0.92, confidence: 'medium', context_window: 1048576, billing_tier: 'fleet_pool_flash', hosting_env: 'cloud_api' },
+        [TASK_TYPES.CODE_REFACTOR]: { score: 0.90, confidence: 'medium', context_window: 1048576, billing_tier: 'fleet_pool_flash', hosting_env: 'cloud_api' },
+        [TASK_TYPES.RESEARCH]:      { score: 0.91, confidence: 'medium', context_window: 1048576, billing_tier: 'fleet_pool_flash', hosting_env: 'cloud_api' },
+        [TASK_TYPES.DEBUGGING]:     { score: 0.88, confidence: 'medium', context_window: 1048576, billing_tier: 'fleet_pool_flash', hosting_env: 'cloud_api' },
+    },
+    'minimax-m3:cloud': {
+        [TASK_TYPES.RESEARCH]:      { score: 0.93, confidence: 'medium', context_window: 1048576, billing_tier: 'fleet_pool_flash', hosting_env: 'cloud_api' },
+        [TASK_TYPES.PLANNING]:      { score: 0.89, confidence: 'medium', context_window: 1048576, billing_tier: 'fleet_pool_flash', hosting_env: 'cloud_api' },
+        [TASK_TYPES.FAST_LOOKUP]:   { score: 0.87, confidence: 'medium', context_window: 1048576, billing_tier: 'fleet_pool_flash', hosting_env: 'cloud_api' },
+    },
+    'meta/llama-3.2-11b-vision-instruct': {
+        [TASK_TYPES.FAST_LOOKUP]:   { score: 0.89, confidence: 'medium', context_window: 128000, billing_tier: 'free_keyring', hosting_env: 'cloud_api' },
+        [TASK_TYPES.TESTING]:       { score: 0.85, confidence: 'medium', context_window: 128000, billing_tier: 'free_keyring', hosting_env: 'cloud_api' },
+        [TASK_TYPES.CODE_SIMPLE]:   { score: 0.83, confidence: 'medium', context_window: 128000, billing_tier: 'free_keyring', hosting_env: 'cloud_api' },
+        [TASK_TYPES.UI_MECHANICAL]: { score: 0.82, confidence: 'medium', context_window: 128000, billing_tier: 'free_keyring', hosting_env: 'cloud_api' },
     }
 };
 
 // ─── Cost Tier Weights (lower = cheaper) ─────────────────────────────
 
-const COST_WEIGHTS = {
-    local:      0.0,
-    flash_lite: 0.05,
-    flash:      0.15,
-    pro:        0.50,
-    opus:       1.00
+const BILLING_WEIGHTS = {
+    local_offline:     0.0,
+    free_keyring:      0.0,
+    fleet_pool_flash_lite: 0.05,
+    fleet_pool_flash:  0.15,
+    fleet_pool_pro:    0.50,
+    fleet_pool_opus:   1.00
 };
+
+// Infer a billing tier from a model id as a fallback when the model has no
+// explicit baseline seed. This makes the "levels" visible for the full model
+// list (many gemini-* variants aren't in BASELINE_SEEDS but still map to a tier).
+function inferBillingTier(modelId) {
+  const m = String(modelId || '').toLowerCase();
+  if (m.includes('flash-lite') || m.includes('flash_lite')) return 'fleet_pool_flash_lite';
+  if (m.includes('opus')) return 'fleet_pool_opus';
+  if (m.includes('pro') || m.includes('thinking') || m.includes('sonnet')) return 'fleet_pool_pro';
+  if (m.includes('flash') || m.includes('agent')) return 'fleet_pool_flash';
+  return 'fleet_pool_flash'; // default for unclassified cloud models
+}
+
+// Enumerate every configured/known gemini model id so the proficiency matrix
+// reports the COMPLETE model list (not just ones with baseline seeds), each
+// with a correct billing tier. Weights quality by tier (pro > flash > lite).
+const ALL_KNOWN_MODELS = [
+  'gemini-2.5-pro', 'gemini-2.5-flash', 'gemini-2.5-flash-thinking', 'gemini-2.5-flash-lite',
+  'gemini-3-flash', 'gemini-3-flash-agent',
+  'gemini-3.1-pro-low', 'gemini-3.1-pro-high', 'gemini-3.1-flash-lite', 'gemini-3.1-flash-image',
+  'gemini-3.5-flash-extra-low', 'gemini-3.5-flash-low',
+  'gemini-3.6-flash-low', 'gemini-3.6-flash-medium', 'gemini-3.6-flash-high', 'gemini-3.6-flash-tiered',
+  'gemini-3.7-flash-low', 'gemini-3.7-flash-medium', 'gemini-3.7-flash-high', 'gemini-3.7-flash-tiered',
+  'gemini-pro-agent',
+  'claude-opus-4-6-thinking', 'claude-sonnet-4-6',
+  'gpt-oss-120b-medium'
+];
+const KNOWN_BASE_QUALITY = {
+  'fleet_pool_opus': 0.97, 'fleet_pool_pro': 0.90, 'fleet_pool_flash': 0.86, 'fleet_pool_flash_lite': 0.82
+};
+// Seed any known model that lacks a baseline so it appears in the matrix with
+// a sensible tier + baseline quality. (Non-destructive: existing seeds win.)
+for (const modelId of ALL_KNOWN_MODELS) {
+  if (BASELINE_SEEDS[modelId]) continue;
+  const tier = inferBillingTier(modelId);
+  BASELINE_SEEDS[modelId] = {
+    [TASK_TYPES.CODE_SIMPLE]: {
+      score: KNOWN_BASE_QUALITY[tier] ?? 0.82,
+      confidence: 'medium',
+      context_window: 1048576,
+      billing_tier: tier,
+      hosting_env: 'cloud_api'
+    },
+    [TASK_TYPES.FAST_LOOKUP]: {
+      score: (KNOWN_BASE_QUALITY[tier] ?? 0.82) - 0.03,
+      confidence: 'medium',
+      context_window: 1048576,
+      billing_tier: tier,
+      hosting_env: 'cloud_api'
+    }
+  };
+}
+
+function resolveBillingTier(modelId, baselines) {
+  const firstKey = Object.keys(baselines?.[modelId] || {})[0];
+  const tier = firstKey ? baselines[modelId][firstKey].billing_tier : null;
+  return (tier && tier !== 'unknown') ? tier : inferBillingTier(modelId);
+}
 
 // ─── Core Tracker Class ──────────────────────────────────────────────
 
 class ModelProficiencyTracker {
     constructor() {
         this.matrix = {};           // model -> taskType -> { requests, total_latency, successes, failures, total_quality, tokens_in, tokens_out }
-        this.baselines = {};        // model -> taskType -> { score, confidence, context_window, cost_tier }
+        this.baselines = {};        // model -> taskType -> { score, confidence, context_window, billing_tier }
         this._dirty = false;
         this._loaded = false;
     }
@@ -396,7 +472,7 @@ class ModelProficiencyTracker {
             models[model] = {
                 task_proficiency: {},
                 context_window: this.baselines[model]?.[Object.keys(this.baselines[model] || {})[0]]?.context_window || null,
-                cost_tier: this.baselines[model]?.[Object.keys(this.baselines[model] || {})[0]]?.cost_tier || 'unknown'
+                billing_tier: resolveBillingTier(model, this.baselines)
             };
 
             for (const taskType of allTaskTypes) {
@@ -418,6 +494,26 @@ class ModelProficiencyTracker {
             const bestAcct = getBestAccount('antigravity', model);
             models[model].available = bestAcct !== null;
             models[model].availability = bestAcct ? 'ok' : 'exhausted';
+
+            // Distinguish G1-credit exhaustion (a real, visible "level") from a
+            // merely-empty pool. When accounts exist for the model but every one is
+            // G1-credit-exhausted / cooling, surface that as a distinct state so the
+            // dashboard actually shows why the model is unavailable instead of a
+            // generic 'exhausted'.
+            if (!bestAcct) {
+                const statuses = getQuotaStatus('antigravity')
+                    .filter(q => q.model === model && q.enabled)
+                    .map(q => q.status);
+                const anyOk = statuses.includes('ok');
+                const anyCreditExhausted = statuses.includes('credit_exhausted');
+                if (!anyOk && anyCreditExhausted) {
+                    models[model].availability = 'credit_exhausted';
+                    models[model].credit_exhausted = true;
+                } else if (!anyOk && statuses.length > 0) {
+                    models[model].availability = statuses[0] === 'credit_exhausted' ? 'credit_exhausted' : 'exhausted';
+                    models[model].credit_exhausted = statuses.includes('credit_exhausted');
+                }
+            }
         }
 
         // Build per-task-type rankings (best model first)
@@ -427,16 +523,18 @@ class ModelProficiencyTracker {
             for (const model of allModels) {
                 const score = this.getScore(model, taskType);
                 if (score > 0) {
-                    const costTier = models[model].cost_tier;
+                    const billingTier = models[model].billing_tier;
+                    const hostingEnv = models[model].hosting_env;
                     scored.push({
                         model,
                         score: Math.round(score * 1000) / 1000,
-                        cost_tier: costTier,
-                        cost_weight: COST_WEIGHTS[costTier] ?? 0.5,
+                        billing_tier: billingTier,
+                        hosting_env: hostingEnv,
+                        cost_weight: BILLING_WEIGHTS[billingTier] ?? 0.5,
                         // Efficiency = score / cost (higher = better value)
-                        efficiency: costTier && COST_WEIGHTS[costTier] > 0
-                            ? Math.round((score / COST_WEIGHTS[costTier]) * 100) / 100
-                            : score * 100 // local/free models get massive efficiency bonus
+                        efficiency: billingTier && BILLING_WEIGHTS[billingTier] > 0
+                            ? Math.round((score / BILLING_WEIGHTS[billingTier]) * 100) / 100
+                            : score * 100 // free models get massive efficiency bonus
                     });
                 }
             }
@@ -450,7 +548,7 @@ class ModelProficiencyTracker {
         return {
             generated_at: new Date().toISOString(),
             task_types: TASK_TYPES,
-            cost_tiers: COST_WEIGHTS,
+            billing_tiers: BILLING_WEIGHTS,
             total_models: allModels.size,
             models,
             rankings
@@ -458,10 +556,10 @@ class ModelProficiencyTracker {
     }
 
     /**
-     * Get the best model for a task type, optionally constrained by cost tier.
+     * Get the best model for a task type, optionally constrained by billing tier.
      * @param {string} taskType - Task type
-     * @param {object} opts - { maxCostTier?, preferEfficiency? }
-     * @returns {object} { model, score, cost_tier, efficiency }
+     * @param {object} opts - { maxBillingTier?, preferEfficiency? }
+     * @returns {object} { model, score, billing_tier, efficiency }
      */
     getBestModel(taskType, opts = {}) {
         const matrix = this.getMatrix();
@@ -470,8 +568,8 @@ class ModelProficiencyTracker {
 
         const list = opts.preferEfficiency ? ranking.by_efficiency : ranking.by_quality;
 
-        if (opts.maxCostTier) {
-            const maxWeight = COST_WEIGHTS[opts.maxCostTier] ?? 1.0;
+        if (opts.maxBillingTier) {
+            const maxWeight = BILLING_WEIGHTS[opts.maxBillingTier] ?? 1.0;
             const filtered = list.filter(m => m.cost_weight <= maxWeight);
             return filtered[0] || list[0] || null;
         }
@@ -499,8 +597,8 @@ class ModelProficiencyTracker {
         
         // If current model isn't ranked, assume max cost/score for baseline comparisons
         const currentScore = currentModelStats?.score || 0.90;
-        const currentCostTier = matrix.models[currentModel]?.cost_tier || 'opus';
-        const currentCostWeight = currentModelStats?.cost_weight ?? (COST_WEIGHTS[currentCostTier] ?? 1.0);
+        const currentBillingTier = matrix.models[currentModel]?.billing_tier || 'fleet_pool_opus';
+        const currentCostWeight = currentModelStats?.cost_weight ?? (BILLING_WEIGHTS[currentBillingTier] ?? 1.0);
 
         // Find models that are cheaper AND have sufficient proficiency
         // Sufficient proficiency: >= 0.85 OR within 95% of current model's score
@@ -587,4 +685,4 @@ class ModelProficiencyTracker {
 const tracker = new ModelProficiencyTracker();
 
 export default tracker;
-export { TASK_TYPES, COST_WEIGHTS, BASELINE_SEEDS };
+export { TASK_TYPES, BILLING_WEIGHTS, BASELINE_SEEDS };

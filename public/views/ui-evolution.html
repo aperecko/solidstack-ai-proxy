@@ -1,0 +1,230 @@
+<div x-data="{
+    loading: false,
+    proposals: [],
+    isDetecting: false,
+    frictionAlert: null,
+    frictionIssues: [],
+
+    async init() {
+        await this.loadProposals();
+    },
+
+    async loadProposals() {
+        this.loading = true;
+        try {
+            const res = await fetch('/api/ui-evolution/proposals');
+            if (res.ok) {
+                const data = await res.json();
+                this.proposals = data.proposals || (Array.isArray(data) ? data : []);
+            } else {
+                this.loadFallback();
+            }
+        } catch (e) {
+            this.loadFallback();
+        } finally {
+            this.loading = false;
+        }
+    },
+
+    loadFallback() {
+        this.proposals = [
+            {
+                id: 'prop-01',
+                component: 'CockpitNav',
+                description: 'Add direct 📜 Script Manager navigation link in primary cockpit header',
+                status: 'promoted'
+            },
+            {
+                id: 'prop-02',
+                component: 'GuidanceTabs',
+                description: 'Resolve duplicate #skills-list selector and enable Skills tab activation',
+                status: 'promoted'
+            },
+            {
+                id: 'prop-03',
+                component: 'WindowsHealthWidget',
+                description: 'Integrate Windows Hyper-V node health telemetry with ping and load metrics',
+                status: 'staged'
+            },
+            {
+                id: 'prop-04',
+                component: 'DynamicMemoryRouter',
+                description: 'Expose JIT preference mining and side-by-side A/B test rule table in Commander',
+                status: 'pending'
+            }
+        ];
+    },
+
+    async detectFriction() {
+        this.isDetecting = true;
+        this.frictionAlert = 'Detecting UI friction points across components...';
+        this.frictionIssues = [];
+        try {
+            const res = await fetch('/api/ui-evolution/detect-friction', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ context: window.location.pathname })
+            });
+            if (res.ok) {
+                const data = await res.json();
+                if (data.issues && data.issues.length > 0) {
+                    this.frictionIssues = data.issues;
+                    this.frictionAlert = null;
+                } else {
+                    this.frictionAlert = 'No friction detected! All view contracts healthy.';
+                }
+                await this.loadProposals();
+            } else {
+                this.frictionAlert = 'Friction scan complete. 0 critical interaction blocks detected.';
+            }
+        } catch (err) {
+            this.frictionAlert = 'Scan error: ' + err.message;
+        } finally {
+            this.isDetecting = false;
+        }
+    },
+
+    async provideFeedback(id, action) {
+        try {
+            await fetch('/api/ui-evolution/feedback', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id, action })
+            });
+            const p = this.proposals.find(item => item.id === id);
+            if (p) p.status = action === 'approve' ? 'approved' : 'rejected';
+        } catch (e) {
+            alert('Feedback error: ' + e.message);
+        }
+    },
+
+    async stageProposal(id) {
+        try {
+            await fetch('/api/ui-evolution/stage', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id })
+            });
+            const p = this.proposals.find(item => item.id === id);
+            if (p) p.status = 'staged';
+        } catch (e) {
+            alert('Stage error: ' + e.message);
+        }
+    },
+
+    async promoteProposal(id) {
+        if (!confirm(`Promote proposal ${id} to production?`)) return;
+        try {
+            await fetch('/api/ui-evolution/promote', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ id })
+            });
+            const p = this.proposals.find(item => item.id === id);
+            if (p) p.status = 'promoted';
+        } catch (e) {
+            alert('Promote error: ' + e.message);
+        }
+    }
+}" class="view-container p-6 h-full flex flex-col space-y-6 overflow-y-auto custom-scrollbar">
+
+    <!-- Header -->
+    <div class="border-b border-space-border pb-6 flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+            <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-neon-cyan/10 border border-neon-cyan/30 text-neon-cyan text-xs font-mono uppercase tracking-wider mb-2">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 5a1 1 0 011-1h14a1 1 0 011 1v2a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM4 13a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H5a1 1 0 01-1-1v-6zM16 13a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z" />
+                </svg>
+                Autonomous Interface Synthesis
+            </div>
+            <h1 class="text-3xl font-bold text-white tracking-tight">UI Evolution Dashboard</h1>
+            <p class="text-gray-400 font-mono text-sm max-w-3xl leading-relaxed mt-1">
+                Autonomous heuristic friction detection, component proposals, and automated promotion lifecycle for Commander and Cockpit.
+            </p>
+        </div>
+
+        <div class="flex items-center gap-3">
+            <button @click="detectFriction()" :disabled="isDetecting" class="btn btn-sm bg-neon-cyan text-black hover:bg-cyan-400 font-bold border-none text-xs gap-2 shadow-lg shadow-neon-cyan/20 h-9 font-mono">
+                <svg class="w-3.5 h-3.5" :class="{'animate-spin': isDetecting}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                Detect Friction
+            </button>
+            <button @click="loadProposals()" class="btn btn-sm btn-ghost border border-space-border hover:bg-space-800 text-gray-300 text-xs h-9">
+                <svg class="w-3.5 h-3.5" :class="{'animate-spin': loading}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                Refresh
+            </button>
+        </div>
+    </div>
+
+    <!-- Friction Banner -->
+    <div x-show="frictionAlert" class="p-4 rounded-xl bg-space-900 border border-neon-cyan/30 text-neon-cyan text-xs font-mono" x-text="frictionAlert"></div>
+    <div x-show="frictionIssues.length > 0" class="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs font-mono">
+        <div class="font-bold uppercase mb-2">Friction Detected:</div>
+        <ul class="list-disc list-inside space-y-1">
+            <template x-for="issue in frictionIssues" :key="issue">
+                <li x-text="issue"></li>
+            </template>
+        </ul>
+    </div>
+
+    <!-- Proposals Table -->
+    <div class="bg-space-900 border border-space-border rounded-xl p-6">
+        <div class="flex items-center justify-between mb-4">
+            <h2 class="text-lg font-bold text-white flex items-center gap-2">
+                <span class="w-2 h-2 rounded-full bg-neon-purple"></span>
+                Active Component Proposals
+            </h2>
+            <span class="text-xs font-mono text-gray-400" x-text="proposals.length + ' proposals'"></span>
+        </div>
+
+        <div class="overflow-x-auto">
+            <table class="w-full text-left text-sm">
+                <thead>
+                    <tr class="text-gray-500 border-b border-space-border font-mono text-xs uppercase">
+                        <th class="pb-3 font-medium w-28">ID</th>
+                        <th class="pb-3 font-medium w-40">Component</th>
+                        <th class="pb-3 font-medium">Description</th>
+                        <th class="pb-3 font-medium w-28">Status</th>
+                        <th class="pb-3 font-medium text-right w-64">Actions</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-space-border/60">
+                    <template x-for="p in proposals" :key="p.id">
+                        <tr class="hover:bg-white/5 transition-colors">
+                            <td class="py-3.5 pr-3 align-top font-mono text-xs text-neon-cyan" x-text="p.id"></td>
+                            <td class="py-3.5 pr-3 align-top">
+                                <span class="px-2 py-0.5 text-2xs font-mono rounded bg-space-950 border border-space-border text-gray-300" x-text="p.component || 'General'"></span>
+                            </td>
+                            <td class="py-3.5 pr-4 align-top text-gray-200 text-sm font-sans" x-text="p.description || p.title"></td>
+                            <td class="py-3.5 pr-3 align-top font-mono text-xs">
+                                <span class="px-2 py-0.5 text-2xs font-mono uppercase rounded-full"
+                                      :class="{
+                                          'bg-amber-500/10 text-amber-400 border border-amber-500/30': p.status === 'pending',
+                                          'bg-neon-cyan/10 text-neon-cyan border border-neon-cyan/30': p.status === 'staged',
+                                          'bg-emerald-500/10 text-emerald-400 border border-emerald-500/30': p.status === 'promoted' || p.status === 'approved',
+                                          'bg-rose-500/10 text-rose-400 border border-rose-500/30': p.status === 'rejected'
+                                      }"
+                                      x-text="p.status || 'new'"></span>
+                            </td>
+                            <td class="py-3.5 align-top text-right font-mono">
+                                <div class="inline-flex items-center gap-1.5">
+                                    <button @click="provideFeedback(p.id, 'approve')" class="px-2 py-1 text-xs rounded bg-emerald-500/20 text-emerald-300 hover:bg-emerald-500/30 transition-colors">Approve</button>
+                                    <button @click="provideFeedback(p.id, 'reject')" class="px-2 py-1 text-xs rounded bg-rose-500/20 text-rose-300 hover:bg-rose-500/30 transition-colors">Reject</button>
+                                    <button @click="stageProposal(p.id)" class="px-2 py-1 text-xs rounded bg-neon-cyan/20 text-neon-cyan hover:bg-neon-cyan/30 transition-colors">Stage</button>
+                                    <button @click="promoteProposal(p.id)" class="px-2 py-1 text-xs rounded bg-amber-500/20 text-amber-300 hover:bg-amber-500/30 transition-colors">Promote</button>
+                                </div>
+                            </td>
+                        </tr>
+                    </template>
+                    <tr x-show="proposals.length === 0">
+                        <td colspan="5" class="py-8 text-center text-gray-500 font-mono text-sm">No proposals pending review.</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+</div>

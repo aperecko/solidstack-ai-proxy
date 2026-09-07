@@ -5,6 +5,14 @@
 
 // Global DNS Patch: Bypasses /etc/hosts for outbound Google API requests to prevent loopback proxy loops.
 import dns from 'dns';
+
+// Homebrew/launchd may use a different CA bundle than the interactive shell.
+// Prefer Node's system trust store for Google endpoints; this is equivalent to
+// NODE_OPTIONS=--use-system-ca and keeps WireGuard/VPN-installed roots visible.
+if (process.env.NODE_OPTIONS?.includes('--use-system-ca') && !process.execArgv.includes('--use-system-ca')) {
+    // Node reads NODE_OPTIONS before startup; this diagnostic is intentionally
+    // non-mutating and documents the expected managed-runtime contract.
+}
 try {
     dns.setDefaultResultOrder('ipv4first');
 } catch {}
@@ -15,7 +23,9 @@ dns.lookup = function(hostname, options, callback) {
         options = {};
     }
     const lower = (hostname || '').toLowerCase();
-    if (lower === 'cloudcode-pa.googleapis.com' || lower === 'daily-cloudcode-pa.googleapis.com') {
+    const cleanHost = lower.replace(/:\d*$/, '').replace(/\.$/, '');
+    if (cleanHost === 'cloudcode-pa.googleapis.com' || cleanHost === 'daily-cloudcode-pa.googleapis.com') {
+        const targetHost = cleanHost;
         // Resolve both A and AAAA so Node's autoSelectFamily (happy eyeballs) can
         // pick a reachable path. Pinning IPv4-only breaks on networks where IPv4
         // to Google is unreachable but IPv6 works (e.g. WARP routing issues).
@@ -30,7 +40,7 @@ dns.lookup = function(hostname, options, callback) {
             const family = options && options.family;
             const addresses = family === 4 ? entries.filter(e => e.family === 4) :
                               family === 6 ? entries.filter(e => e.family === 6) :
-                              entries;
+                              [...entries].sort((a, b) => a.family - b.family);
             if (options && options.all) {
                 callback(null, addresses.map(e => ({ address: e.address, family: e.family })));
             } else if (addresses.length > 0) {
@@ -39,11 +49,11 @@ dns.lookup = function(hostname, options, callback) {
                 callback(new Error('No addresses found'));
             }
         };
-        dns.resolve4(hostname, (err, addresses) => {
+        dns.resolve4(targetHost, (err, addresses) => {
             if (!err && addresses) for (const a of addresses) entries.push({ address: a, family: 4 });
             done();
         });
-        dns.resolve6(hostname, (err, addresses) => {
+        dns.resolve6(targetHost, (err, addresses) => {
             if (!err && addresses) for (const a of addresses) entries.push({ address: a, family: 6 });
             done();
         });
@@ -103,6 +113,8 @@ if (isFallbackEnabled) {
 // Export fallback flag for server to use
 export const FALLBACK_ENABLED = isFallbackEnabled;
 
+(async () => {
+
 const PORT = process.env.PORT || DEFAULT_PORT;
 const HOST = process.env.HOST || '0.0.0.0';
 
@@ -113,6 +125,9 @@ if (process.env.HOST) {
 // Home directory for account storage
 const HOME_DIR = os.homedir();
 const CONFIG_DIR = path.join(HOME_DIR, '.antigravity-claude-proxy');
+
+// Initialize account manager (load accounts from disk)
+await accountManager.initialize(strategyOverride);
 
 const server = app.listen(PORT, HOST, () => {
     // Robust connection keep-alive and stream timeouts (prevent socket drop on long agent turns)
@@ -145,8 +160,11 @@ const server = app.listen(PORT, HOST, () => {
     const boundHost = typeof address === 'string' ? address : address.address;
     const boundPort = typeof address === 'string' ? null : address.port;
 
-    // Clear console for a clean start
-    console.clear();
+    // Do not clear the managed service log. Clearing stdout hides the startup
+    // boundary needed to diagnose restarts and makes AG outages harder to trace.
+    if (process.env.CLEAR_STARTUP_CONSOLE === 'true' && process.stdout.isTTY) {
+        console.clear();
+    }
 
     const border = '║';
     // align for 2-space indent (60 chars), align4 for 4-space indent (58 chars)
@@ -231,25 +249,39 @@ ${environmentSection}
     if (isDebug) {
         logger.warn('Running in DEVELOPER mode - verbose logs enabled');
     }
+
+    // Graceful shutdown (works for both launchd and PM2)
+    let isShuttingDown = false;
+    const DRAIN_TIMEOUT_MS = Number(process.env.KILL_TIMEOUT || process.env.STREAM_DRAIN_TIMEOUT_MS || 10000);
+
+    function gracefulShutdown(signal) {
+        if (isShuttingDown) return; // prevent duplicate handlers from double-firing
+        isShuttingDown = true;
+        logger.info(`[Shutdown] Received ${signal}. Entering drain mode (refusing new connections, up to ${DRAIN_TIMEOUT_MS}ms)...`);
+        server.close(() => {
+            logger.info(`[Shutdown] All active streams finished. Exiting.`);
+            process.exit(0);
+        });
+        // Force kill if drain takes too long
+        setTimeout(() => {
+            logger.error('[Shutdown] Could not drain connections in time, forcefully shutting down');
+            process.exit(1);
+        }, DRAIN_TIMEOUT_MS);
+    }
+    process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+    process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 });
 
-// Graceful shutdown (works for both launchd and PM2)
-let isShuttingDown = false;
-const DRAIN_TIMEOUT_MS = Number(process.env.KILL_TIMEOUT || process.env.STREAM_DRAIN_TIMEOUT_MS || 10000);
+})().catch(err => {
+    logger.error('[Startup] Failed to initialize:', err);
+    process.exit(1);
+});
 
-function gracefulShutdown(signal) {
-    if (isShuttingDown) return; // prevent duplicate handlers from double-firing
-    isShuttingDown = true;
-    logger.info(`[Shutdown] Received ${signal}. Entering drain mode (refusing new connections, up to ${DRAIN_TIMEOUT_MS}ms)...`);
-    server.close(() => {
-        logger.info(`[Shutdown] All active streams finished. Exiting.`);
-        process.exit(0);
-    });
-    // Force kill if drain takes too long
-    setTimeout(() => {
-        logger.error('[Shutdown] Could not drain connections in time, forcefully shutting down');
-        process.exit(1);
-    }, DRAIN_TIMEOUT_MS);
-}
-process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
-process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+// Top-level crash guards to ensure proxy resilience
+process.on('uncaughtException', (err) => {
+    logger.error(`[Process] Uncaught Exception: ${err?.message || err}`, err?.stack);
+});
+process.on('unhandledRejection', (reason) => {
+    logger.error(`[Process] Unhandled Rejection: ${reason?.message || reason}`, reason?.stack || reason);
+});
+

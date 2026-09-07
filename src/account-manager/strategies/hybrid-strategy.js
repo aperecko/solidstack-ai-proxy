@@ -200,6 +200,7 @@ export class HybridStrategy extends BaseStrategy {
     onSuccess(account, modelId) {
         if (account && account.email) {
             this.#healthTracker.recordSuccess(account.email);
+            this.#tokenBucketTracker.recordSuccess(account.email);
         }
     }
 
@@ -209,6 +210,7 @@ export class HybridStrategy extends BaseStrategy {
     onRateLimit(account, modelId) {
         if (account && account.email) {
             this.#healthTracker.recordRateLimit(account.email);
+            this.#tokenBucketTracker.recordRateLimit(account.email);
         }
     }
 
@@ -312,9 +314,8 @@ export class HybridStrategy extends BaseStrategy {
 
         // If no candidates after quota filter, fall back to all usable accounts
         // (better to use critical quota than fail entirely)
-        const fallback = accounts
-            .map((account, index) => ({ account, index }))
-            .filter(({ account }) => {
+        const fallback = accounts.map((account, index) => ({ account, index })).filter(({ account }) => {
+                if (options.excludeAccounts && options.excludeAccounts.includes(account.email)) return false;
                 if (!this.#matchesTaskTier(account, options)) return false;
                 if (!this.isAccountUsable(account, modelId)) return false;
                 if (!this.#healthTracker.isUsable(account.email)) return false;
@@ -328,9 +329,8 @@ export class HybridStrategy extends BaseStrategy {
 
         // Emergency fallback: bypass health check when ALL accounts are unhealthy
         // This prevents "Max retries exceeded" when health scores are too low
-        const emergency = accounts
-            .map((account, index) => ({ account, index }))
-            .filter(({ account }) => {
+        const emergency = accounts.map((account, index) => ({ account, index })).filter(({ account }) => {
+                if (options.excludeAccounts && options.excludeAccounts.includes(account.email)) return false;
                 if (!this.#matchesTaskTier(account, options)) return false;
                 if (!this.isAccountUsable(account, modelId)) return false;
                 if (!this.#tokenBucketTracker.hasTokens(account.email)) return false;
@@ -344,9 +344,8 @@ export class HybridStrategy extends BaseStrategy {
 
         // Last resort: bypass BOTH health AND token bucket checks
         // Only check basic usability (not rate-limited, not disabled)
-        const lastResort = accounts
-            .map((account, index) => ({ account, index }))
-            .filter(({ account }) => {
+        const lastResort = accounts.map((account, index) => ({ account, index })).filter(({ account }) => {
+                if (options.excludeAccounts && options.excludeAccounts.includes(account.email)) return false;
                 if (!this.#matchesTaskTier(account, options)) return false;
                 // Only check if account is usable (not rate-limited, not disabled)
                 if (!this.isAccountUsable(account, modelId)) return false;
@@ -494,6 +493,13 @@ export class HybridStrategy extends BaseStrategy {
         // Give them a slight bump (+25) so they are favored among peers.
         if (email.endsWith('@reseller.mysolidstate.ca')) {
             distributionScore += 25;
+        }
+
+        // 4. New Account Discovery Bonus
+        // Accounts that have never been used (lastUsed is falsy) receive a
+        // bonus so they are actively tested and integrated into the pool.
+        if (!account.lastUsed) {
+            distributionScore += 150;
         }
 
         // ── Drain rate penalty ──────────────────────────────────────────────────

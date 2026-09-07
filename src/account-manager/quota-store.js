@@ -62,6 +62,8 @@ export function deriveStatus(eligMap, app, accountId, rec, model = null) {
   if (!e) return 'unknown';               // not in accounts.json at all
   if (e.isInvalid)  return 'invalid';     // 403 / auth failure flagged
   if (e.disabled)   return 'disabled';    // manually turned off
+  // G1-credit exhaustion is its own severe state (before generic cooldown).
+  if (rec?.creditExhaustedUntil && Date.now() < rec.creditExhaustedUntil) return 'credit_exhausted';
   if ((e.coolingUntil && Date.now() < e.coolingUntil) || (rec?.cooldownUntil && Date.now() < rec.cooldownUntil)) return 'cooling';
   if (e.eligibility && e.eligibility !== 'code_assist_eligible') return 'ineligible';
   if (model && model.toLowerCase().includes('claude') && e.tier === 'free') return 'ineligible';
@@ -73,6 +75,44 @@ export function deriveStatus(eligMap, app, accountId, rec, model = null) {
 // detected (429 rate limit / 503 MODEL_CAPACITY_EXHAUSTED / metadata error 2010).
 // During cooldown the account is excluded from getBestAccount() selection.
 export const RETRYABLE_FAILURE_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+
+// G1-credit exhaustion is a distinct state: Google returns a 429 with
+// INSUFFICIENT_G1_CREDITS_BALANCE (error_number 2008) when the account's
+// G1 credit balance for a model is depleted. This is not a short rate-limit
+// window — it lasts until G1 credits are topped up (typically much longer than
+// the generic 5-minute retryable cooldown). We use a longer cooldown so the
+// account stops being selected (and the matrix reportscredit_exhausted) rather
+// than hammering Google and returning 502s.
+export const G1_CREDIT_EXHAUSTED_COOLDOWN_MS = 60 * 60 * 1000; // 1 hour
+
+// Detect Google's G1-credit-balance exhaustion from a parsed upstream error body.
+// Returns the cooldown duration to apply (>= required) or null if not a G1-credit failure.
+export function isG1CreditExhausted(errorBody) {
+  if (!errorBody) return null;
+  const details = errorBody?.error?.details ?? [];
+  const matched = details.find(d =>
+    d.reason === 'INSUFFICIENT_G1_CREDITS_BALANCE' ||
+    d.metadata?.error_number === '2008' ||
+    (typeof d.reason === 'string' && d.reason.includes('G1_CREDITS'))
+  );
+  if (!matched) return null;
+  // If the server hints at a reset, honor it (bounded lower by our own floor).
+  try {
+    const delayStr = matched?.metadata?.quotaResetDelay
+      || errorBody?.error?.details?.[0]?.quotaResetDelay
+      || errorBody?.quotaResetDelay;
+    if (delayStr) {
+      const parsed = /^([\d.]+)(ms|s|m|h)?$/i.exec(String(delayStr).trim());
+      if (parsed) {
+        const num = parseFloat(parsed[1]);
+        const unit = (parsed[2] || 'ms').toLowerCase();
+        const mult = unit === 'ms' ? 1 : unit === 's' ? 1000 : unit === 'm' ? 60000 : 3600000;
+        return Math.max(G1_CREDIT_EXHAUSTED_COOLDOWN_MS, num * mult);
+      }
+    }
+  } catch { /* fall through to default */ }
+  return G1_CREDIT_EXHAUSTED_COOLDOWN_MS;
+}
 
 // Max account rotations before propagating a retryable failure to the client.
 export const MAX_RETRYABLE_ROTATIONS = 3;
@@ -88,12 +128,19 @@ export const RESET_WINDOWS = {
 // Known limits per provider/model
 export const KNOWN_LIMITS = {
   antigravity: {
-    'gemini-2.5-pro':        { rpd: 25,   tpd: 250_000 },
-    'gemini-2.5-flash':      { rpd: 500,  tpd: 1_000_000 },
-    'gemini-2.5-flash-lite': { rpd: 1500, tpd: 3_000_000 },
-    'gemini-3.7-flash-high': { rpd: 500,  tpd: 1_000_000 },
-    'claude-opus-4-6-thinking': { per_window: 45 },
-    'claude-sonnet-4-6':        { per_window: 200 }
+    'gemini-2.5-pro':            { rpd: 25,   tpd: 250_000 },
+    'gemini-3.1-pro-high':       { rpd: 25,   tpd: 250_000 },
+    'gemini-3.1-pro-low':        { rpd: 200,  tpd: 1_000_000 },
+    'gemini-2.5-flash':          { rpd: 500,  tpd: 1_000_000 },
+    'gemini-3.6-flash':          { rpd: 500,  tpd: 1_000_000 },
+    'gemini-3.7-flash':          { rpd: 500,  tpd: 1_000_000 },
+    'gemini-2.5-flash-thinking': { rpd: 200,  tpd: 500_000 },
+    'gemini-2.5-flash-lite':     { rpd: 1500, tpd: 3_000_000 },
+    'gemini-3.1-flash-lite':     { rpd: 1500, tpd: 3_000_000 },
+    'gemini-3.7-flash-high':     { rpd: 500,  tpd: 1_000_000 },
+    'gemini-3.6-flash-high':     { rpd: 500,  tpd: 1_000_000 },
+    'claude-opus-4-6-thinking':  { per_window: 45 },
+    'claude-sonnet-4-6':         { per_window: 200 }
   },
   opencode: {
     'gemini-2.5-pro':        { rpd: 25,   tpd: 250_000 },
@@ -221,6 +268,70 @@ export function setCooldown(app, accountId, model, ms) {
 }
 
 /**
+ * Mark an account+model as G1-credit-exhausted (INSUFFICIENT_G1_CREDITS_BALANCE).
+ * This is a more severe state than a generic cooldown: until it clears, the
+ * account is excluded from getBestAccount() and the matrix reports it as
+ * 'credit_exhausted' rather than 'ok'.
+ * @param {string} app - Provider/app scope (antigravity, ...)
+ * @param {string} accountId - Account identifier (email)
+ * @param {string} model - Model name
+ * @param {number} ms - Duration before G1 credits are expected to refill
+ */
+export const G1_GATED_MODELS = ['gemini-pro-agent', 'claude-opus-4-6-thinking', 'claude-opus-4-6', 'gpt-oss-120b-medium'];
+
+export function markG1CreditExhausted(app, accountId, model, ms = G1_CREDIT_EXHAUSTED_COOLDOWN_MS) {
+  if (!app || !accountId || !model) return;
+  const until = Date.now() + ms;
+  const modelsToMark = G1_GATED_MODELS.includes(model) ? G1_GATED_MODELS : [model];
+  for (const m of modelsToMark) {
+    const rec = getRec(app, accountId, m);
+    rec.creditExhaustedUntil = Math.max(rec.creditExhaustedUntil || 0, until);
+    rec.cooldownUntil = rec.creditExhaustedUntil;
+    rec.lastCreditError = 'INSUFFICIENT_G1_CREDITS_BALANCE';
+  }
+  save();
+}
+
+/**
+ * Remaining ms until a G1-credit cooldown clears for an account+model (0 if none).
+ */
+export function getG1CreditExhaustedRemaining(app, accountId, model) {
+  if (G1_GATED_MODELS.includes(model)) {
+    let maxRemaining = 0;
+    for (const m of G1_GATED_MODELS) {
+      const rec = getRec(app, accountId, m);
+      if (rec?.creditExhaustedUntil) {
+        const rem = rec.creditExhaustedUntil - Date.now();
+        if (rem > maxRemaining) maxRemaining = rem;
+      }
+    }
+    return maxRemaining;
+  }
+  const rec = getRec(app, accountId, model);
+  if (!rec?.creditExhaustedUntil) return 0;
+  const remaining = rec.creditExhaustedUntil - Date.now();
+  return remaining > 0 ? remaining : 0;
+}
+
+/**
+ * Clear a G1-credit-exhaustion marker for an account+model (used by tests /
+ * manual override once credits are replenished).
+ */
+export function clearG1CreditExhausted(app, accountId, model) {
+  if (!app || !accountId || !model) return;
+  const s = load();
+  const rec = s.accounts[`${app}::${accountId}`]?.models?.[model];
+  if (rec?.creditExhaustedUntil) {
+    delete rec.creditExhaustedUntil;
+    delete rec.lastCreditError;
+    if (rec.cooldownUntil && rec.cooldownUntil === (Date.now() + G1_CREDIT_EXHAUSTED_COOLDOWN_MS)) {
+      delete rec.cooldownUntil;
+    }
+    save();
+  }
+}
+
+/**
  * Clear an account cooldown for a model (used by tests / manual override).
  * @param {string} app - Provider/app scope
  * @param {string} accountId - Account identifier (email)
@@ -307,6 +418,13 @@ export function getQuotaStatus(filterApp = null) {
         isCoolingDown: !!cooldownUntilVal,
         lastError:    eInfo.lastError    ?? null,
         eligibility:  eInfo.eligibility  ?? null,
+        // G1-credit-exhaustion metadata surfaced for the matrix/widget/MCP
+        isCreditExhausted: !!rec.creditExhaustedUntil && rec.creditExhaustedUntil > Date.now(),
+        creditExhaustedUntil: (rec.creditExhaustedUntil && rec.creditExhaustedUntil > Date.now())
+          ? new Date(rec.creditExhaustedUntil).toISOString() : null,
+        creditExhaustedRemainingMs: (rec.creditExhaustedUntil && rec.creditExhaustedUntil > Date.now())
+          ? Math.max(0, rec.creditExhaustedUntil - Date.now()) : 0,
+        lastCreditError: rec.lastCreditError ?? null,
       };
     }));
 }

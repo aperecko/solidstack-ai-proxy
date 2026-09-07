@@ -1,8 +1,11 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { EventEmitter } from 'events';
 import { logger } from '../utils/logger.js';
 import proficiencyTracker from '../modules/proficiency-tracker.js';
+
+export const routingEvents = new EventEmitter();
 
 // Resolve the solidstack repo root (NOT process.cwd()) so telemetry lands in
 // the unified `.logs` directory even when launchd spawns the service with cwd=/.
@@ -247,6 +250,9 @@ export function logRoutingDecision(model, email, score, status, details = {}) {
     if (history.length > MAX_HISTORY) {
         history.pop();
     }
+    
+    // Broadcast decoupled event for Autonomous Judge and UI telemetry
+    routingEvents.emit('ROUTING_COMPLETED', logEntry);
 }
 
 /**

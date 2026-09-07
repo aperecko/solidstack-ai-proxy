@@ -1,0 +1,177 @@
+<div x-data="voiceMemos" class="view-container">
+    <!-- Header -->
+    <div class="flex items-center justify-between gap-4 mb-6">
+        <div class="flex flex-wrap items-center gap-4">
+            <h1 class="text-2xl font-bold text-white tracking-tight flex items-center gap-3">
+                <span class="p-2 rounded-xl bg-purple-500/20 text-purple-400 border border-purple-500/30">
+                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+                    </svg>
+                </span>
+                Voice Memos Explorer
+            </h1>
+            <div class="flex items-center h-6 px-3 rounded-full bg-space-800/80 border border-space-border/50 shadow-sm backdrop-blur-sm">
+                <span class="text-[10px] font-mono text-gray-400 uppercase tracking-wider">
+                    Synced from macOS & iPhone iCloud (<span x-text="totalCount"></span> recordings)
+                </span>
+            </div>
+        </div>
+
+        <!-- Controls -->
+        <div class="flex items-center gap-3">
+            <!-- Search -->
+            <div class="relative">
+                <input type="text"
+                       x-model="searchQuery"
+                       @input.debounce.300ms="fetchMemos()"
+                       placeholder="Search recordings by title..."
+                       class="input-search-sm w-64 pl-9 h-9 bg-space-900 border border-space-border rounded-xl text-xs text-white placeholder-gray-500 focus:outline-none focus:border-purple-500 transition-all"
+                       @keydown.escape="searchQuery = ''; fetchMemos()">
+                <svg class="w-4 h-4 absolute left-3 top-2.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                </svg>
+            </div>
+
+            <!-- Refresh -->
+            <button @click="fetchMemos()"
+                    :disabled="loading"
+                    class="p-2 rounded-xl bg-space-900 border border-space-border text-gray-400 hover:text-white hover:border-purple-500 transition-all disabled:opacity-50"
+                    title="Refresh Voice Memos">
+                <svg class="w-4 h-4" :class="{'animate-spin text-purple-400': loading}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- Active Audio Player Bar (Sticky) -->
+    <div x-show="selectedMemo" 
+         x-transition:enter="transition ease-out duration-300"
+         x-transition:enter-start="opacity-0 -translate-y-2"
+         x-transition:enter-end="opacity-100 translate-y-0"
+         class="mb-6 p-4 rounded-2xl bg-space-900/90 border border-purple-500/30 backdrop-blur-md shadow-2xl flex items-center justify-between gap-6">
+        
+        <div class="flex items-center gap-4 flex-1 min-w-0">
+            <button @click="togglePlay(selectedMemo)"
+                    class="w-12 h-12 rounded-full bg-purple-600 hover:bg-purple-500 text-white flex items-center justify-center shadow-lg shadow-purple-600/30 transition-all flex-shrink-0">
+                <template x-if="isPlaying">
+                    <svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+                        <rect x="6" y="4" width="4" height="16" rx="1" />
+                        <rect x="14" y="4" width="4" height="16" rx="1" />
+                    </svg>
+                </template>
+                <template x-if="!isPlaying">
+                    <svg class="w-6 h-6 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+                        <path d="M8 5v14l11-7z" />
+                    </svg>
+                </template>
+            </button>
+
+            <div class="flex-1 min-w-0">
+                <div class="flex items-center gap-2 mb-1">
+                    <span class="font-bold text-white text-sm truncate" x-text="selectedMemo?.title"></span>
+                    <span class="px-2 py-0.5 rounded-full text-[10px] font-mono bg-purple-500/10 text-purple-400 border border-purple-500/20" x-text="selectedMemo?.durationFormatted"></span>
+                    <span class="text-xs text-gray-500 font-mono" x-text="formatDate(selectedMemo?.date)"></span>
+                </div>
+                <!-- Progress Bar -->
+                <div class="w-full bg-space-800 rounded-full h-1.5 overflow-hidden">
+                    <div class="bg-gradient-to-r from-purple-500 to-indigo-500 h-1.5 rounded-full transition-all duration-100"
+                         :style="`width: ${playbackProgress}%`"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="flex items-center gap-2 flex-shrink-0">
+            <button @click="copyAudioLink(selectedMemo)"
+                    class="px-3 py-1.5 rounded-xl bg-space-800 hover:bg-space-700 text-xs font-mono text-gray-300 border border-space-border hover:text-white transition-all flex items-center gap-1.5">
+                <svg class="w-3.5 h-3.5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                </svg>
+                Copy URL
+            </button>
+            <button @click="downloadMemo(selectedMemo)"
+                    class="px-3 py-1.5 rounded-xl bg-space-800 hover:bg-space-700 text-xs font-mono text-gray-300 border border-space-border hover:text-white transition-all flex items-center gap-1.5">
+                <svg class="w-3.5 h-3.5 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                </svg>
+                Download (.m4a)
+            </button>
+        </div>
+    </div>
+
+    <!-- Memos Grid / List -->
+    <div class="space-y-3">
+        <template x-if="loading && memos.length === 0">
+            <div class="p-12 text-center text-gray-500 font-mono text-sm">
+                <svg class="w-8 h-8 mx-auto mb-3 animate-spin text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                Loading recordings from Apple CloudRecordings database...
+            </div>
+        </template>
+
+        <template x-if="!loading && memos.length === 0">
+            <div class="p-12 text-center bg-space-900/50 rounded-2xl border border-space-border text-gray-500 font-mono text-sm">
+                No voice memos found matching "<span x-text="searchQuery" class="text-white"></span>"
+            </div>
+        </template>
+
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <template x-for="memo in memos" :key="memo.id">
+                <div class="p-4 rounded-2xl bg-space-900/70 border border-space-border/70 hover:border-purple-500/40 hover:bg-space-900 transition-all flex flex-col justify-between group relative overflow-hidden">
+                    
+                    <div class="flex items-start justify-between gap-3 mb-3">
+                        <div class="flex items-center gap-3 min-w-0">
+                            <!-- Play Icon Button -->
+                            <button @click="togglePlay(memo)"
+                                    class="w-10 h-10 rounded-xl flex items-center justify-center transition-all flex-shrink-0"
+                                    :class="(activeAudioId === memo.id && isPlaying) ? 'bg-purple-600 text-white shadow-lg shadow-purple-600/30' : 'bg-space-800 text-purple-400 group-hover:bg-purple-500/20 group-hover:text-purple-300'">
+                                <template x-if="activeAudioId === memo.id && isPlaying">
+                                    <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
+                                        <rect x="6" y="4" width="4" height="16" rx="1" />
+                                        <rect x="14" y="4" width="4" height="16" rx="1" />
+                                    </svg>
+                                </template>
+                                <template x-if="!(activeAudioId === memo.id && isPlaying)">
+                                    <svg class="w-5 h-5 ml-0.5" fill="currentColor" viewBox="0 0 24 24">
+                                        <path d="M8 5v14l11-7z" />
+                                    </svg>
+                                </template>
+                            </button>
+
+                            <div class="min-w-0">
+                                <h3 class="font-semibold text-white text-sm truncate group-hover:text-purple-300 transition-colors" x-text="memo.title" :title="memo.title"></h3>
+                                <p class="text-[11px] text-gray-500 font-mono" x-text="formatDate(memo.date)"></p>
+                            </div>
+                        </div>
+
+                        <!-- Duration Pill -->
+                        <span class="px-2 py-0.5 rounded-full text-[10px] font-mono bg-purple-500/10 text-purple-400 border border-purple-500/20 flex-shrink-0" x-text="memo.durationFormatted"></span>
+                    </div>
+
+                    <!-- Bottom Bar -->
+                    <div class="pt-3 border-t border-space-border/50 flex items-center justify-between text-xs text-gray-400 font-mono">
+                        <span class="text-[10px] text-gray-500" x-text="memo.fileSizeFormatted"></span>
+
+                        <div class="flex items-center gap-2">
+                            <button @click="copyAudioLink(memo)"
+                                    class="p-1.5 rounded-lg bg-space-800 hover:bg-space-700 text-gray-400 hover:text-white transition-all"
+                                    title="Copy Audio Stream Link">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                </svg>
+                            </button>
+                            <button @click="downloadMemo(memo)"
+                                    class="p-1.5 rounded-lg bg-space-800 hover:bg-space-700 text-gray-400 hover:text-white transition-all"
+                                    title="Download .m4a Audio">
+                                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </div>
+</div>
