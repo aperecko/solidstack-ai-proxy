@@ -635,7 +635,8 @@ Output ONLY the rewritten prompt, wrapped in triple backticks.`;
                 enabled: a.enabled,
                 isInvalid: a.isInvalid,
                 rateLimitRemaining: a.rateLimitRemaining,
-                rateLimitReset: a.rateLimitReset
+                rateLimitReset: a.rateLimitReset,
+                quota: a.quota || {}
             }));
             
             let total = 0, available = 0, rateLimited = 0, invalid = 0;
