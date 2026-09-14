@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.solidstack.omniroute-server</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/test/.omniroute/launch-server.sh</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PORT</key>
+        <string>20128</string>
+        <key>HOSTNAME</key>
+        <string>::</string>
+        <key>NODE_ENV</key>
+        <string>production</string>
+        <key>NODE_EXTRA_CA_CERTS</key>
+        <string>/Users/test/Projects/solidstack/certs/cloudcode-pa.googleapis.com.pem</string>
+        <key>PATH</key>
+        <string>/Users/test/Library/pnpm:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/test/.omniroute</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/test/Projects/solidstack/.logs/omniroute-server.out.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/test/Projects/solidstack/.logs/omniroute-server.err.log</string>
+</dict>
+</plist>

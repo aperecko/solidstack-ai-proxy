@@ -1,8 +1,8 @@
 /**
  * Gemini Direct Developer API Client
  * 
- * Routes requests directly to Google's Developer API (generativelanguage.googleapis.com)
- * using Gemini API keys. This replaces the LiteLLM proxy routing layer.
+ * Routes requests through the SolidStack proxy (http://127.0.0.1:1987)
+ * which handles authentication, thinking budget clamping, and model routing.
  */
 
 import { convertAnthropicToGoogle, convertGoogleToAnthropic } from '../format/index.js';
@@ -25,20 +25,19 @@ function mapToGoogleDevModel(model) {
 }
 
 /**
- * Send a non-streaming request to the Gemini Developer API.
+ * Send a non-streaming request to the SolidStack proxy.
  * 
  * @param {Object} anthropicRequest - Anthropic-format request payload
- * @param {string} apiKey - Gemini Developer API key
  * @returns {Promise<Object>} Anthropic-format response
  */
-export async function sendGeminiDirect(anthropicRequest, apiKey) {
+export async function sendGeminiDirect(anthropicRequest) {
     const rawModel = anthropicRequest.model || 'gemini-2.5-flash';
     const cleanModel = mapToGoogleDevModel(rawModel);
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${cleanModel}:generateContent?key=${apiKey}`;
+    const url = `http://127.0.0.1:1987/v1/models/${cleanModel}:generateContent`;
 
     const googlePayload = convertAnthropicToGoogle(anthropicRequest);
 
-    logger.info(`[GeminiDirect] Dispatching non-stream to ${cleanModel}`);
+    logger.info(`[GeminiDirect] Dispatching non-stream to ${cleanModel} via proxy`);
 
     const res = await fetch(url, {
         method: 'POST',
@@ -56,21 +55,20 @@ export async function sendGeminiDirect(anthropicRequest, apiKey) {
 }
 
 /**
- * Send a streaming request to the Gemini Developer API.
+ * Send a streaming request to the SolidStack proxy.
  * Yields Anthropic-format SSE events.
  * 
  * @param {Object} anthropicRequest - Anthropic-format request payload
- * @param {string} apiKey - Gemini Developer API key
  * @yields {Object} Anthropic-format SSE events
  */
-export async function* sendGeminiDirectStream(anthropicRequest, apiKey) {
+export async function* sendGeminiDirectStream(anthropicRequest) {
     const rawModel = anthropicRequest.model || 'gemini-2.5-flash';
     const cleanModel = mapToGoogleDevModel(rawModel);
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${cleanModel}:streamGenerateContent?alt=sse&key=${apiKey}`;
+    const url = `http://127.0.0.1:1987/v1/models/${cleanModel}:streamGenerateContent?alt=sse`;
 
     const googlePayload = convertAnthropicToGoogle(anthropicRequest);
 
-    logger.info(`[GeminiDirect] Dispatching stream to ${cleanModel}`);
+    logger.info(`[GeminiDirect] Dispatching stream to ${cleanModel} via proxy`);
 
     const res = await fetch(url, {
         method: 'POST',
@@ -84,5 +82,5 @@ export async function* sendGeminiDirectStream(anthropicRequest, apiKey) {
     }
 
     // Reuse the existing sse-streamer.js stream parser!
-    yield* streamSSEResponse(res, model);
+    yield* streamSSEResponse(res, rawModel);
 }

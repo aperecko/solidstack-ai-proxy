@@ -1,0 +1,118 @@
+{
+  "title": "Sign in to your account",
+  "inputs": [
+    {
+      "type": "email",
+      "name": "loginfmt",
+      "id": "i0116"
+    },
+    {
+      "type": "password",
+      "name": "passwd",
+      "id": "i0118"
+    },
+    {
+      "type": "submit",
+      "name": "",
+      "id": "idSIButton9"
+    },
+    {
+      "type": "hidden",
+      "name": "ps",
+      "id": ""
+    },
+    {
+      "type": "hidden",
+      "name": "psRNGCDefaultType",
+      "id": ""
+    },
+    {
+      "type": "hidden",
+      "name": "psRNGCEntropy",
+      "id": ""
+    },
+    {
+      "type": "hidden",
+      "name": "psRNGCSLK",
+      "id": ""
+    },
+    {
+      "type": "hidden",
+      "name": "canary",
+      "id": ""
+    },
+    {
+      "type": "hidden",
+      "name": "ctx",
+      "id": ""
+    },
+    {
+      "type": "hidden",
+      "name": "hpgrequestid",
+      "id": ""
+    },
+    {
+      "type": "hidden",
+      "name": "flowToken",
+      "id": "i0327"
+    },
+    {
+      "type": "hidden",
+      "name": "PPSX",
+      "id": ""
+    },
+    {
+      "type": "hidden",
+      "name": "NewUser",
+      "id": ""
+    },
+    {
+      "type": "hidden",
+      "name": "FoundMSAs",
+      "id": ""
+    },
+    {
+      "type": "hidden",
+      "name": "fspost",
+      "id": ""
+    },
+    {
+      "type": "hidden",
+      "name": "i21",
+      "id": ""
+    },
+    {
+      "type": "hidden",
+      "name": "CookieDisclosure",
+      "id": ""
+    },
+    {
+      "type": "hidden",
+      "name": "IsFidoSupported",
+      "id": ""
+    },
+    {
+      "type": "hidden",
+      "name": "IsConditionalCreateAvailable",
+      "id": ""
+    },
+    {
+      "type": "hidden",
+      "name": "isSignupPost",
+      "id": ""
+    },
+    {
+      "type": "hidden",
+      "name": "DfpArtifact",
+      "id": ""
+    },
+    {
+      "type": "hidden",
+      "name": "i19",
+      "id": ""
+    }
+  ],
+  "buttons": [
+    "Next"
+  ]
+}

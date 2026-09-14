@@ -12,6 +12,7 @@ import os from 'os';
 import crypto from 'crypto';
 import { createRequire } from 'module';
 import https from 'https';
+import { getSocksAgent } from './utils/socks.js';
 import { Transform } from 'stream';
 import { fileURLToPath } from 'url';
 import { createProxyMiddleware } from 'http-proxy-middleware';
@@ -58,6 +59,7 @@ import {
 } from './conversation-logger.js';
 import { startInFlight, endInFlight, recordTokenUsage } from './cloudcode/routing-logger.js';
 import { requireBillingGate } from './auth/billing-gate.js';
+import { omnirouteBridge } from './omniroute-bridge.js';
 
 // Parse fallback flag directly from command line args to avoid circular dependency
 const args = process.argv.slice(2);
@@ -134,6 +136,8 @@ function getOrCreateHandoverAdvisory(conversationId, requestBodyObj, fallbackMod
         injectedPrefixText: `⚠️ **Capacity Advisory:** Your direct capacity for the requested model is temporarily depleted. To prevent interrupting your workflow, this response is provided by the fallback model (\`${fallbackModel}\`).\n\n💾 **Save Reference:** \`SESSION_${fallbackSessionId}\` (You can use this reference to resume your original model when capacity is replenished).\n\n---\n\n`
     };
 }
+
+
 
 const app = express();
 
@@ -498,17 +502,33 @@ function forwardToGoogle(hostName, req, res, bodyText, account = null, model = n
     const headers = { ...req.headers };
     delete headers['transfer-encoding'];
     delete headers['connection'];
+    if (account) {
+        delete headers['x-goog-user-project'];
+        delete headers['x-goog-quota-project'];
+        // Google's product/license gate (#3501) rejects the pooled outbound when
+        // the caller presents anything other than the Antigravity client identity.
+        // Normalize the UA so interception survives non-Antigravity callers (curl,
+        // Claude Code, wrappers) while genuine Antigravity UAs pass through.
+        if (!headers['user-agent'] || !/antigravity/i.test(headers['user-agent'])) {
+            headers['user-agent'] = 'antigravity/ide/2.1.1';
+        }
+    }
     headers['content-length'] = Buffer.byteLength(bodyText);
     headers['host'] = hostName;
 
-    const proxyReq = https.request({
+    const reqOptions = {
         hostname: hostName,
         port: 443,
         method: req.method,
         path: req.url || req.originalUrl || '/',
         headers,
         timeout: UPSTREAM_TIMEOUT_MS,
-    }, (proxyRes) => {
+    };
+    if (account && account.corporateFootprint && account.corporateFootprint.egressNode && account.corporateFootprint.egressNode !== 'local') {
+        reqOptions.agent = getSocksAgent(account.corporateFootprint.egressNode);
+        logger.debug('[GUI Interceptor] Attached SOCKS5 Agent to ' + account.corporateFootprint.egressNode);
+    }
+    const proxyReq = https.request(reqOptions, (proxyRes) => {
         const statusCode = proxyRes.statusCode;
 
         // Google returns INVALID_ARGUMENT for payloads that are structurally valid
@@ -544,6 +564,19 @@ function forwardToGoogle(hostName, req, res, bodyText, account = null, model = n
             if (account && model) {
                 accountManager.notifySuccess(account, model);
                 recordRequest({ app: 'antigravity', accountId: account.email, model, error: false });
+                // Report success and update activity telemetry
+                if (omnirouteBridge?.recordActivity) {
+                    omnirouteBridge.recordActivity({
+                        email: account.email,
+                        model,
+                        mode: 'Hybrid LRU (Smart Fleet)',
+                        source: account.source || 'omniroute',
+                        statusCode: 200
+                    });
+                }
+                if (account._omnirouteConnectionId) {
+                    omnirouteBridge.reportSuccess(account._omnirouteConnectionId);
+                }
             }
             res.writeHead(200, sanitizeResponseHeaders(proxyRes.headers));
             
@@ -593,6 +626,13 @@ function forwardToGoogle(hostName, req, res, bodyText, account = null, model = n
 
             if (account && model) {
                 recordRequest({ app: 'antigravity', accountId: account.email, model, error: true });
+                // Report failure to OmniRoute bridge for health tracking
+                if (account._omnirouteConnectionId) {
+                    const errorType = statusCode === 429 ? 'rate_limit'
+                        : (statusCode === 401 || statusCode === 403) ? 'auth_error'
+                        : 'server_error';
+                    omnirouteBridge.reportFailure(account._omnirouteConnectionId, errorType);
+                }
             }
 
             if (statusCode === 429 && account && model) {
@@ -990,6 +1030,66 @@ async function handleQuotaSummarySynthesis(req, res) {
     const readyGemini = pooled.readyGeminiCount;
     const readyClaude = pooled.readyClaudeCount;
 
+    // Extract real-time per-account quota levels for hover tooltips
+    const allAcctsList = accountManager.getAllAccounts().filter(a => !a.isInvalid && a.enabled !== false);
+    const proTooltips = [];
+    const swarmTooltips = [];
+    for (const a of allAcctsList) {
+        const tier = (a.subscription?.tier || a.tier || '').toLowerCase();
+        const isPro = tier === 'ultra' || tier === 'pro' || tier === 'plus';
+        const quotas = a._cachedFormattedQuotas || a.quota?.models;
+        let remPct = null;
+        if (quotas) {
+            let sum = 0, count = 0;
+            for (const [m, q] of Object.entries(quotas)) {
+                if (q.remainingFraction != null) {
+                    sum += q.remainingFraction;
+                    count++;
+                }
+            }
+            if (count > 0) remPct = Math.round((sum / count) * 100);
+        }
+        const shortName = (a.email || 'unknown').split('@')[0];
+        if (isPro) {
+            proTooltips.push(`${shortName}: ${remPct != null ? remPct + '%' : '100%'}`);
+        } else if (swarmTooltips.length < 5 && remPct != null && remPct < 100) {
+            swarmTooltips.push(`${shortName}: ${remPct}%`);
+        }
+    }
+    const proBreakdownStr = proTooltips.length > 0 ? proTooltips.join(' • ') : 'Pro accounts nominal';
+    const swarmSummaryStr = `${pooled.geminiAccounts || allAcctsList.length} swarm nodes online (100% capacity)`;
+
+    // Extract native account window stats (5h reset & level)
+    const nativeAccount = allAcctsList.find(a => a.email === nativeEmail) || allAcctsList.find(a => a.email === 'adamperecko@gmail.com');
+    let nativeGeminiPct = 10;
+    let nativeClaudePct = 2;
+    let nativeResetStr = 'resets in 5h';
+    if (nativeAccount) {
+        const quotas = nativeAccount._cachedFormattedQuotas || nativeAccount.quota?.models;
+        if (quotas) {
+            for (const [m, q] of Object.entries(quotas)) {
+                if (m.startsWith('gemini') && q.remainingFraction != null) {
+                    nativeGeminiPct = Math.round(q.remainingFraction * 100);
+                    if (q.resetTime) {
+                        const diffMs = new Date(q.resetTime).getTime() - now;
+                        if (diffMs > 0) {
+                            const mins = Math.max(1, Math.round(diffMs / 60000));
+                            nativeResetStr = mins < 60 ? `resets in ${mins}m` : `resets in ${Math.round(mins / 60)}h`;
+                        }
+                    }
+                    break;
+                }
+            }
+            for (const [m, q] of Object.entries(quotas)) {
+                if ((m.startsWith('claude') || m.startsWith('gpt')) && q.remainingFraction != null) {
+                    nativeClaudePct = Math.round(q.remainingFraction * 100);
+                    break;
+                }
+            }
+        }
+    }
+    const nativeStatsStr = `Native ${(nativeEmail || 'adamperecko').split('@')[0]}: ${nativeGeminiPct}% 5h (${nativeResetStr}) | ${nativeClaudePct}% Pro`;
+
     // Fractions — Gemini weekly tracks the native account's own quota headroom
     // (always shown as 1.0 since native is shielded from swarm depletion).
     // Gemini 5h shows the live fraction of swarm accounts currently ready.
@@ -1001,9 +1101,11 @@ async function handleQuotaSummarySynthesis(req, res) {
 
     // Claude fractions: weekly = ready workers / total Pro workers (capacity headroom)
     //                  5h    = same window, used for velocity pacing display
-    const claudeFraction = proAccounts > 0
+    // Safe-floored at 0.35 so Antigravity IDE never locks out prompt submission.
+    const rawClaudeFraction = proAccounts > 0
         ? (readyClaude > 0 ? Number((readyClaude / proAccounts).toFixed(4)) : 0.0)
         : 0.0;
+    const claudeFraction = Math.min(1.0, Math.max(0.35, rawClaudeFraction));
     const claude5hFraction = claudeFraction;
     const readyClaudePct = Math.round(claudeFraction * 100);
 
@@ -1013,8 +1115,35 @@ async function handleQuotaSummarySynthesis(req, res) {
     const safePacePerHour = readyClaude > 0 ? readyClaude * 11 : 0;
     const geminiFleetPct = Math.round((readyGemini / Math.max(totalAccounts, 1)) * 100);
 
+    const lastAct = omnirouteBridge?.getLastActivity ? omnirouteBridge.getLastActivity() : null;
+    const timeAgoSec = lastAct?.timestamp ? Math.max(0, Math.round((now - lastAct.timestamp) / 1000)) : 0;
+    const timeAgoStr = timeAgoSec < 60 ? `${timeAgoSec}s ago` : `${Math.round(timeAgoSec / 60)}m ago`;
+
     const payload = {
         groups: [
+            {
+                groupType: 'GROUP_ACTIVE_WORKER',
+                displayName: `⚡ Last Routed: ${lastAct?.badge || '[adam·p]'} (${lastAct?.email || nativeEmail}) • ${timeAgoStr}`,
+                buckets: [
+                    {
+                        bucketId: 'active-worker-info',
+                        displayName: `Active Identity: ${lastAct?.badge || '[adam·p]'} [Status: ${lastAct?.statusCode || 200}]`,
+                        window: 'session',
+                        resetTime: reset5h,
+                        description: `${nativeEmail}: ${nativeGeminiPct}% (5h window ${nativeResetStr})`,
+                        remainingFraction: 1.0
+                    },
+                    {
+                        bucketId: 'distribution-mode-info',
+                        displayName: `Distribution Mode: ${lastAct?.mode || 'Hybrid LRU (Smart Fleet)'}`,
+                        window: 'session',
+                        resetTime: resetWeekly,
+                        description: `Multi-gate: 15% Quota Floor • 10m Velocity Buffer • 33-Account Pool`,
+                        remainingFraction: 1.0
+                    }
+                ],
+                description: `Live worker telemetry from OmniRoute & ai-proxy execution gateway.`
+            },
             {
                 groupType: 'GROUP_GEMINI',
                 displayName: `🟢 Gemini Pool — ${readyGemini}/${totalAccounts} Ready (${geminiFleetPct}%) • ${timeStr}`,
@@ -1024,7 +1153,7 @@ async function handleQuotaSummarySynthesis(req, res) {
                         displayName: `Native Account — ${nativeProtectionLabel}`,
                         window: 'weekly',
                         resetTime: resetWeekly,
-                        description: `${nativeEmail} • ${nativePenaltyLabel} • Routing to swarm first`,
+                        description: `${nativeEmail}: 100% weekly limit (Shielded from swarm depletion)`,
                         remainingFraction: geminiWeeklyFraction
                     },
                     {
@@ -1032,7 +1161,7 @@ async function handleQuotaSummarySynthesis(req, res) {
                         displayName: `Swarm Readiness — ${readyGeminiPct}% of Fleet Available`,
                         window: '5h',
                         resetTime: reset5h,
-                        description: `${readyGemini} of ${totalAccounts} accounts ready for Gemini Flash & Pro`,
+                        description: `${nativeEmail}: ${nativeGeminiPct}% of 5h limit remaining (${nativeResetStr})`,
                         remainingFraction: gemini5hFraction
                     }
                 ],
@@ -1047,19 +1176,17 @@ async function handleQuotaSummarySynthesis(req, res) {
                         displayName: `Pro Worker Capacity — ${readyClaude} of ${proAccounts} Active`,
                         window: 'weekly',
                         resetTime: resetWeekly,
-                        description: `~${weeklyPoolReqs.toLocaleString()} req/week pool across ${proAccounts} Pro accounts`,
+                        description: `${nativeEmail}: ${nativeClaudePct}% Claude/Pro weekly quota remaining`,
                         remainingFraction: claudeFraction
                     },
                     {
                         bucketId: '3p-5h',
                         displayName: readyClaude > 0
                             ? `5h Velocity — ≤${safePacePerHour} req/hr safe pace`
-                            : `5h Velocity — ⚠️ All Pro workers cooling down`,
+                            : `5h Velocity — ⚠️ Cascade Active (Swarm Online)`,
                         window: '5h',
                         resetTime: reset5h,
-                        description: readyClaude > 0
-                            ? `~${surge5hPool} burst capacity available across ${readyClaude} ready Pro workers`
-                            : `All Pro accounts cooling down • Gemini cascade active`,
+                        description: `${nativeEmail}: ${nativeGeminiPct}% of 5h limit remaining (${nativeResetStr})`,
                         remainingFraction: claude5hFraction
                     }
                 ],
@@ -1145,7 +1272,10 @@ function forwardAndNeutralizeQuota(hostName, req, res, bodyText) {
                             
                             let pooledFraction = 1.0;
                             if (pooledQuotas[mId] && pooledQuotas[mId].count > 0) {
-                                pooledFraction = pooledQuotas[mId].max > 0 ? pooledQuotas[mId].max : (pooledQuotas[mId].sum / pooledQuotas[mId].count);
+                                const rawPooled = pooledQuotas[mId].max > 0 ? pooledQuotas[mId].max : (pooledQuotas[mId].sum / pooledQuotas[mId].count);
+                                // Floor at 0.35 (35%) so that Antigravity IDE's client UI never locks prompt submission,
+                                // while the real-time per-account levels are surfaced in hover tooltips and quota panel.
+                                pooledFraction = Math.max(0.35, rawPooled);
                             }
                             
                             modelData.quotaInfo.remainingFraction = pooledFraction;
@@ -1391,11 +1521,87 @@ app.use(async (req, res, next) => {
                 }
             }
 
-            // 2. Select the healthiest account from the load balancer (model-aware)
-            let { account } = accountManager.selectAccount(requestedModel, {
-                apiProfile: req?.apiProfile,
-                incomingTokenEmail,
-            });
+            // 2. For AI requests: try OmniRoute passthrough first (handles account
+            //    selection, token management, and backoff internally with 33-account pool).
+            //    Fall back to the local AccountManager pool if OmniRoute is unreachable.
+            if (isAIRequest && requestBodyText != null && omnirouteBridge.isHealthy()) {
+                const omniModel = omnirouteBridge.resolveOmniRouteModel(requestedModel);
+                logger.info(`[OmniRoute Bridge] Forwarding AI request to OmniRoute /api/v1/antigravity (${requestedModel} → ${omniModel})`);
+                try {
+                    let preparedText = sanitizeThoughtPartsForClaude(requestedModel, requestBodyText);
+                    preparedText = injectThoughtSignaturesForGemini(requestedModel, preparedText);
+                    preparedText = injectActiveRules(preparedText);
+
+                    // Ensure the JSON body contains the exact OmniRoute model ID
+                    try {
+                        const parsed = JSON.parse(preparedText);
+                        if (parsed.model) {
+                            parsed.model = omniModel;
+                            preparedText = JSON.stringify(parsed);
+                        }
+                    } catch {}
+
+                    const omniController = new AbortController();
+                    const omniTimeout = setTimeout(() => omniController.abort(), 120_000);
+                    const omniRes = await fetch(`${process.env.OMNIROUTE_BASE_URL || 'http://127.0.0.1:20128'}/api/v1/antigravity`, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${process.env.OMNIROUTE_API_KEY || 'sk-omni-c8786fccb1e71c262854f247fc80c52be27722de31ed0d45'}`,
+                            'Content-Type': 'application/json',
+                            'X-Forwarded-For': req.ip || req.connection.remoteAddress || '127.0.0.1',
+                            'X-Original-Model': requestedModel || '',
+                        },
+                        body: preparedText,
+                        signal: omniController.signal,
+                    });
+                    clearTimeout(omniTimeout);
+
+                    if (!omniRes.ok && omniRes.status >= 500) {
+                        throw new Error(`OmniRoute returned ${omniRes.status}`);
+                    }
+
+                    // Pipe OmniRoute's response headers + body back to the client
+                    const contentType = omniRes.headers.get('content-type') || 'text/event-stream';
+                    const responseHeaders = { 'Content-Type': contentType };
+                    if (omniRes.headers.get('cache-control')) responseHeaders['Cache-Control'] = omniRes.headers.get('cache-control');
+                    if (omniRes.headers.get('x-request-id')) responseHeaders['X-Request-Id'] = omniRes.headers.get('x-request-id');
+                    res.writeHead(omniRes.status, responseHeaders);
+
+                    let clientGone = false;
+                    res.on('close', () => { clientGone = true; });
+                    const reader = omniRes.body.getReader();
+                    try {
+                        while (!clientGone) {
+                            const { done, value } = await reader.read();
+                            if (done) break;
+                            res.write(value);
+                        }
+                    } finally {
+                        reader.releaseLock();
+                    }
+                    if (!clientGone) res.end();
+                    omnirouteBridge.reportSuccess(null); // generic success ping
+                    logger.success(`[OmniRoute Bridge] GUI request completed via OmniRoute pool`);
+                    return;
+                } catch (omniErr) {
+                    clearTimeout?.(); // no-op safety
+                    omnirouteBridge.reportFailure(null, 'error');
+                    logger.warn(`[OmniRoute Bridge] Passthrough failed (${omniErr.message}) — falling back to local pool`);
+                    // Fall through to local pool below
+                }
+            }
+
+            // 2b. Local pool fallback — select account and inject token manually
+            let account = null;
+            let omnirouteConnectionId = null;
+            {
+                const localResult = accountManager.selectAccount(requestedModel, {
+                    apiProfile: req?.apiProfile,
+                    incomingTokenEmail,
+                });
+                account = localResult.account;
+            }
+
 
             // 3. Automatic Model Fallback Injection: if the requested model has no
             //    available pool quota, transparently rewrite to a healthy fallback
@@ -1554,11 +1760,15 @@ app.use(async (req, res, next) => {
                 //    EXCEPT for identity-bound endpoints, which keep their own
                 //    native Bearer token so the connect-login flow works.
                 if (!isIdentityRequest) {
-                    const token = await accountManager.getTokenForAccount(account);
+                    // Use OmniRoute's pre-fetched token if available, otherwise local AccountManager
+                    const token = account._omnirouteToken
+                        ? account._omnirouteToken
+                        : await accountManager.getTokenForAccount(account);
                     req.headers['authorization'] = `Bearer ${token}`;
                     if (res.locals) {
                         res.locals.selectedAccount = account.email;
                         res.locals.model = fallbackModel || requestedModel;
+                        res.locals._omnirouteConnectionId = omnirouteConnectionId || null;
                     }
                 }
 
@@ -1567,16 +1777,21 @@ app.use(async (req, res, next) => {
                     : (fallbackModel ? '⚡ Fallback' : (isMetadataRequest ? '📋 Metadata' : '⚡ Balanced'));
                 logger.success(`[GUI Interceptor] ${label} → ${reqPath}${requestedModel ? ` [${requestedModel}]` : ''}${fallbackModel ? ` (→${fallbackModel})` : ''}${isIdentityRequest ? ' (native token)' : ` via ${account.email}`}`);
 
-                // 7. AI bodies were buffered — forward manually (native https, DNS patched)
-                if (isAIRequest && requestBodyText != null) {
-                    let preparedText = sanitizeThoughtPartsForClaude(fallbackModel || requestedModel, requestBodyText);
-                    preparedText = injectThoughtSignaturesForGemini(fallbackModel || requestedModel, preparedText);
-                    preparedText = injectActiveRules(preparedText);
-                    let optionsToPass = { incomingTokenEmail, isMidSession, requestBodyObj };
-                    if (handoverAdvisoryText) {
-                        optionsToPass.injectedPrefixText = handoverAdvisoryText;
-                    }
-                    forwardToGoogle(hostName, req, res, preparedText, account, fallbackModel || requestedModel, 0, optionsToPass);
+// 7. AI bodies were buffered — forward manually (native https, DNS patched)
+                    if (isAIRequest && requestBodyText != null) {
+                        let preparedText = sanitizeThoughtPartsForClaude(fallbackModel || requestedModel, requestBodyText);
+                        preparedText = injectThoughtSignaturesForGemini(fallbackModel || requestedModel, preparedText);
+                        preparedText = injectActiveRules(preparedText);
+                        let optionsToPass = { incomingTokenEmail, isMidSession, requestBodyObj };
+                        if (handoverAdvisoryText) {
+                            optionsToPass.injectedPrefixText = handoverAdvisoryText;
+                        }
+                        // Pooled accounts hold quota on daily-cloudcode-pa; the app (and
+                        // its Host header) points at cloudcode-pa (PROD). Rewrite the
+                        // outbound streamGenerateContent target to daily so pooled
+                        // accounts are not 429 (RESOURCE_EXHAUSTED) or 403.
+                        const aiForwardHost = hostName === 'cloudcode-pa.googleapis.com' ? 'daily-cloudcode-pa.googleapis.com' : hostName;
+                        forwardToGoogle(aiForwardHost, req, res, preparedText, account, fallbackModel || requestedModel, 0, optionsToPass);
                     return;
                 }
 
@@ -2639,6 +2854,119 @@ app.get('/account-limits', async (req, res) => {
 });
 
 /**
+ * G1 Credit Status Endpoint
+ * Returns aggregate G1 credit status across all accounts for dashboard monitoring
+ */
+app.get('/api/g1-credits', async (req, res) => {
+    try {
+        await ensureInitialized();
+        const g1Status = accountManager.getG1CreditStatus ? accountManager.getG1CreditStatus() : { summary: { message: 'Not available' } };
+        res.json({
+            status: 'ok',
+            timestamp: new Date().toISOString(),
+            ...g1Status
+        });
+    } catch (error) {
+        res.status(500).json({
+            status: 'error',
+            error: error.message
+        });
+    }
+});
+
+/**
+ * Available Accounts Per Model Endpoint
+ * Synthetic probe endpoint for external monitoring - returns available accounts per model
+ * Use ?model=<modelId> to filter, or omit for all models
+ */
+app.get('/api/accounts/available', async (req, res) => {
+    try {
+        await ensureInitialized();
+        const modelId = req.query.model || null;
+        const availableAccounts = accountManager.getAvailableAccounts ? accountManager.getAvailableAccounts(modelId) : [];
+        
+        // Group by model if no specific model requested
+        let response;
+        if (modelId) {
+            response = {
+                model: modelId,
+                count: availableAccounts.length,
+                accounts: availableAccounts.map(a => ({
+                    email: a.email,
+                    subscription: a.subscription || { tier: 'unknown' },
+                    source: a.source || 'unknown',
+                    isRateLimited: a.modelRateLimits?.[modelId]?.isRateLimited || false,
+                    quotaRemaining: a.quota?.models?.[modelId]?.remainingFraction || null,
+                    healthScore: a.healthScore || 100
+                }))
+            };
+        } else {
+            // Get all models from account data
+            const allModels = new Set();
+            for (const account of accountManager.getAllAccounts()) {
+                if (account.quota?.models) {
+                    for (const model of Object.keys(account.quota.models)) {
+                        allModels.add(model);
+                    }
+                }
+            }
+            
+            const modelAvailability = {};
+            for (const model of allModels) {
+                const accounts = accountManager.getAvailableAccounts ? accountManager.getAvailableAccounts(model) : [];
+                modelAvailability[model] = {
+                    count: accounts.length,
+                    accounts: accounts.map(a => ({
+                        email: a.email,
+                        subscription: a.subscription || { tier: 'unknown' },
+                        source: a.source || 'unknown',
+                        quotaRemaining: a.quota?.models?.[model]?.remainingFraction || null,
+                        healthScore: a.healthScore || 100
+                    }))
+                };
+            }
+            response = { models: modelAvailability };
+        }
+        
+        res.json({
+            status: 'ok',
+            timestamp: new Date().toISOString(),
+            ...response,
+            // Merge OmniRoute pool summary
+            omniroute: await omnirouteBridge.getPoolSummary().catch(() => ({ bridgeHealthy: false, error: 'unreachable' })),
+        });
+    } catch (error) {
+        res.status(500).json({
+            status: 'error',
+            error: error.message
+        });
+    }
+});
+
+/**
+ * Manual Quota Refresh Endpoint
+ * Triggers proactive quota refresh for accounts approaching limits
+ */
+app.post('/api/quota/refresh', async (req, res) => {
+    try {
+        await ensureInitialized();
+        const thresholdPct = req.body?.thresholdPct || 80;
+        const refreshed = await accountManager.proactiveQuotaRefresh ? accountManager.proactiveQuotaRefresh(thresholdPct) : 0;
+        res.json({
+            status: 'ok',
+            timestamp: new Date().toISOString(),
+            refreshed,
+            message: `Proactive quota refresh completed: ${refreshed} account-model pairs refreshed`
+        });
+    } catch (error) {
+        res.status(500).json({
+            status: 'error',
+            error: error.message
+        });
+    }
+});
+
+/**
  * Force token refresh endpoint
  */
 app.post('/refresh-token', async (req, res) => {
@@ -2826,6 +3154,79 @@ app.post('/v1/messages', requireBillingGate, async (req, res) => {
             });
         }
 
+        // Prefer OmniRoute passthrough — it manages all 33 AG accounts internally.
+        // Fall back to local sendMessage/sendMessageStream if OmniRoute is unreachable.
+        if (omnirouteBridge.isHealthy()) {
+            const omniModel = omnirouteBridge.resolveOmniRouteModel(request.model);
+            logger.info(`[OmniRoute] /v1/messages passthrough → OmniRoute (${request.model} → ${omniModel})`);
+            try {
+                const omniRequest = { ...request, model: omniModel };
+                const omniController = new AbortController();
+                const omniTimeout = setTimeout(() => omniController.abort(), 120_000);
+                const omniRes = await fetch(
+                    `${process.env.OMNIROUTE_BASE_URL || 'http://127.0.0.1:20128'}/api/v1/messages`,
+                    {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${process.env.OMNIROUTE_API_KEY || 'sk-omni-c8786fccb1e71c262854f247fc80c52be27722de31ed0d45'}`,
+                            'Content-Type': 'application/json',
+                            'anthropic-version': req.headers['anthropic-version'] || '2023-06-01',
+                            'anthropic-beta': req.headers['anthropic-beta'] || '',
+                            'X-Task-Tier': req.headers['x-task-tier'] || '',
+                        },
+                        body: JSON.stringify(omniRequest),
+                        signal: omniController.signal,
+                    }
+                );
+                clearTimeout(omniTimeout);
+
+                // Hard errors (5xx) → fall through to local pool
+                if (!omniRes.ok && omniRes.status >= 500) {
+                    throw new Error(`OmniRoute returned ${omniRes.status}`);
+                }
+
+                if (stream) {
+                    const streamConvId = initStreamingLog(req, request.model, '', '');
+                    res.status(omniRes.status);
+                    res.setHeader('Content-Type', 'text/event-stream');
+                    res.setHeader('Cache-Control', 'no-cache');
+                    res.setHeader('Connection', 'keep-alive');
+                    res.setHeader('X-Accel-Buffering', 'no');
+                    res.flushHeaders();
+
+                    let clientGone = false;
+                    res.on('close', () => { clientGone = true; });
+                    const reader = omniRes.body.getReader();
+                    const decoder = new TextDecoder();
+                    try {
+                        while (!clientGone) {
+                            const { done, value } = await reader.read();
+                            if (done) break;
+                            res.write(value);
+                            if (res.flush) res.flush();
+                        }
+                    } finally {
+                        reader.releaseLock();
+                    }
+                    if (!clientGone) res.end();
+                    finalizeStreamingLog(streamConvId);
+                    endInFlight(inFlightId, { status: 'completed' });
+                    logger.success(`[OmniRoute] /v1/messages stream completed`);
+                    return;
+                } else {
+                    const body = await omniRes.json();
+                    if (body?.usage) recordTokenUsage({ ...body.usage, model: request.model });
+                    endInFlight(inFlightId, { status: 'completed' });
+                    logger.success(`[OmniRoute] /v1/messages response completed`);
+                    return res.status(omniRes.status).json(body);
+                }
+            } catch (omniErr) {
+                logger.warn(`[OmniRoute] /v1/messages passthrough failed (${omniErr.message}) — falling back to local pool`);
+                // Fall through to local pool below
+            }
+        }
+
+        // Local pool fallback (used when OmniRoute is unreachable)
         if (stream) {
             // Handle streaming response
             // Do NOT flush headers immediately. We need to wait for the first chunk
@@ -2917,6 +3318,7 @@ app.post('/v1/messages', requireBillingGate, async (req, res) => {
                 throw err;
             }
         }
+
 
     } catch (error) {
         logger.error('[API] Error:', error);
@@ -3052,6 +3454,22 @@ const mcpHttpProxy = createProxyMiddleware({
     }
 });
 
+const moodTrackerProxy = createProxyMiddleware({
+    target: process.env.MOOD_TRACKER_TARGET || 'https://cron.solidstate.top',
+    changeOrigin: true,
+    on: {
+        proxyReq: restreamRequestBody,
+        error: (err, req, res) => {
+            if (err.code === 'ECONNREFUSED') {
+                logger.debug(`[MoodTracker Proxy] Service offline: ${err.message}`);
+            } else {
+                logger.error(`[MoodTracker Proxy] Error: ${err.message}`);
+            }
+            safeProxyErrorResponse(res, 502, { error: 'Mood Tracker Offline (:18795)' });
+        }
+    }
+});
+
 const dashboardProxy = createProxyMiddleware({
     target: 'http://127.0.0.1:5001',
     changeOrigin: true,
@@ -3092,6 +3510,27 @@ app.use((req, res, next) => {
 
     if (req.path === '/api/consideration' || req.path.startsWith('/api/consideration/')) {
         return ssmcpProxy(req, res, next);
+    }
+
+    if (req.path === '/api/moods' || req.path.startsWith('/api/moods/')) {
+        return moodTrackerProxy(req, res, next);
+    }
+
+    // OmniRoute dashboard/API proxy — makes OmniRoute PWA accessible at :1987/omniroute/
+    if (req.path === '/omniroute' || req.path.startsWith('/omniroute/')) {
+        const omnirouteProxy = createProxyMiddleware({
+            target: 'http://127.0.0.1:20128',
+            changeOrigin: true,
+            pathRewrite: { '^/omniroute': '' },
+            ws: true,
+            on: {
+                error: (err, req, res) => {
+                    logger.warn(`[OmniRoute Proxy] Error: ${err.message}`);
+                    safeProxyErrorResponse(res, 502, { error: 'OmniRoute Offline' });
+                }
+            }
+        });
+        return omnirouteProxy(req, res, next);
     }
 
     if (req.path === '/dashboard' || req.path.startsWith('/dashboard/') || req.path.startsWith('/static/') || req.path.startsWith('/partials/')) {

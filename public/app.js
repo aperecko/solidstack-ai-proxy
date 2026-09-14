@@ -33,6 +33,7 @@ document.addEventListener('alpine:init', () => {
     Alpine.data('prompt', window.Components.prompt);
     Alpine.data('network', window.Components.network);
     Alpine.data('evolution', window.Components.evolution);
+    Alpine.data('moodTracker', window.Components.moodTracker);
     Alpine.data('openclaw', window.Components.openclaw);
 
     // View Loader Directive

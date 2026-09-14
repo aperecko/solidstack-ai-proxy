@@ -1,0 +1,271 @@
+{
+  "apiKey": "solidstack-proxy",
+  "apiKeys": {
+    "sk-gui-default": {
+      "tier": "gui"
+    },
+    "sk-cli-default": {
+      "tier": "cli",
+      "maxQuotaDrain": 0.3
+    },
+    "solidstack-proxy": {
+      "tier": "gui"
+    }
+  },
+  "webuiPassword": "",
+  "debug": true,
+  "devMode": true,
+  "logLevel": "info",
+  "maxRetries": 3,
+  "retryBaseMs": 500,
+  "retryMaxMs": 5000,
+  "persistTokenCache": true,
+  "defaultCooldownMs": 5000,
+  "maxWaitBeforeErrorMs": 60000,
+  "maxAccounts": 100,
+  "globalQuotaThreshold": 0.5,
+  "requestThrottlingEnabled": true,
+  "requestDelayMs": 100,
+  "rateLimitDedupWindowMs": 1000,
+  "maxConsecutiveFailures": 2,
+  "extendedCooldownMs": 90000,
+  "maxCapacityRetries": 3,
+  "switchAccountDelayMs": 3000,
+  "capacityBackoffTiersMs": [
+    3000,
+    6000,
+    12000,
+    20000,
+    40000
+  ],
+  "modelMapping": {
+    "claude-sonnet-4-6": {
+      "mapping": "claude-sonnet-4-6",
+      "description": "Claude Sonnet 4.6",
+      "hidden": false
+    },
+    "claude-opus-4-6": {
+      "mapping": "claude-opus-4-6-thinking",
+      "description": "Claude Opus 4.6 (Thinking)"
+    },
+    "claude-opus-4-6-thinking": {
+      "mapping": "claude-opus-4-6-thinking",
+      "description": "Claude Opus 4.6 (Thinking)",
+      "hidden": false
+    },
+    "claude-3-7-sonnet-latest": {
+      "mapping": "claude-sonnet-4-6",
+      "description": "Anthropic Claude 3.7 Sonnet -> Claude Sonnet 4.6"
+    },
+    "claude-3-7-sonnet-20250219": {
+      "mapping": "claude-sonnet-4-6",
+      "description": "Anthropic Claude 3.7 Sonnet -> Claude Sonnet 4.6"
+    },
+    "claude-3-5-sonnet-latest": {
+      "mapping": "claude-sonnet-4-6",
+      "description": "Anthropic Claude 3.5 Sonnet -> Claude Sonnet 4.6"
+    },
+    "claude-3-5-sonnet-20241022": {
+      "mapping": "claude-sonnet-4-6",
+      "description": "Anthropic Claude 3.5 Sonnet -> Claude Sonnet 4.6"
+    },
+    "claude-3-5-haiku-latest": {
+      "mapping": "claude-sonnet-4-6",
+      "description": "Anthropic Claude 3.5 Haiku -> Claude Sonnet 4.6"
+    },
+    "claude-3-5-haiku-20241022": {
+      "mapping": "claude-sonnet-4-6",
+      "description": "Anthropic Claude 3.5 Haiku -> Claude Sonnet 4.6"
+    },
+    "claude-3-haiku-20240307": {
+      "mapping": "claude-sonnet-4-6",
+      "description": "Anthropic Claude 3 Haiku -> Claude Sonnet 4.6"
+    },
+    "claude-haiku-4-5": {
+      "mapping": "claude-sonnet-4-6",
+      "description": "Claude Haiku 4.5 -> Claude Sonnet 4.6"
+    },
+    "claude-3-opus-latest": {
+      "mapping": "claude-opus-4-6-thinking",
+      "description": "Anthropic Claude 3 Opus"
+    },
+    "claude-3-opus-20240229": {
+      "mapping": "claude-opus-4-6-thinking",
+      "description": "Anthropic Claude 3 Opus"
+    },
+    "gemini-3.7-flash-high": {
+      "mapping": "gemini-3.8-flash-high",
+      "description": "Gemini 3.7 Flash (High Reasoning) -> Gemini 3.8 Flash High"
+    },
+    "gemini-3.8-flash-high": {
+      "mapping": "gemini-3.8-flash-high",
+      "description": "Gemini 3.8 Flash (High Reasoning)"
+    },
+    "gemini-3.7-flash-medium": {
+      "mapping": "gemini-3.7-flash-medium",
+      "description": "Gemini 3.7 Flash (Medium Reasoning)"
+    },
+    "gemini-3.7-flash-low": {
+      "mapping": "gemini-3.7-flash-low",
+      "description": "Gemini 3.7 Flash (Low Latency)"
+    },
+    "gemini-3.7-flash-tiered": {
+      "mapping": "gemini-3.8-flash-high",
+      "description": "Gemini 3.7 Flash (Tiered Dynamic) -> Gemini 3.8 Flash High"
+    },
+    "gemini-3.6-flash-high": {
+      "mapping": "gemini-3.6-flash-high",
+      "description": "Gemini 3.6 Flash (High Reasoning)"
+    },
+    "gemini-3.6-flash-medium": {
+      "mapping": "gemini-3.6-flash-medium",
+      "description": "Gemini 3.6 Flash (Medium Reasoning)"
+    },
+    "gemini-3.6-flash-low": {
+      "mapping": "gemini-3.6-flash-low",
+      "description": "Gemini 3.6 Flash (Low Latency)"
+    },
+    "gemini-3.6-flash-tiered": {
+      "mapping": "gemini-3.6-flash-high",
+      "description": "Gemini 3.6 Flash (Tiered Dynamic)"
+    },
+    "gemini-3.5-flash-low": {
+      "mapping": "gemini-3.5-flash-low",
+      "description": "Gemini 3.5 Flash (Medium)"
+    },
+    "gemini-3.5-flash-extra-low": {
+      "mapping": "gemini-3.5-flash-extra-low",
+      "description": "Gemini 3.5 Flash (Low)"
+    },
+    "gemini-3.1-pro-high": {
+      "mapping": "gemini-3.1-pro-high",
+      "description": "Gemini 3.1 Pro (High Reasoning)"
+    },
+    "gemini-3.1-pro-low": {
+      "mapping": "gemini-3.1-pro-low",
+      "description": "Gemini 3.1 Pro (Low Latency)"
+    },
+    "gemini-3.1-flash-lite": {
+      "mapping": "gemini-3.1-flash-lite",
+      "description": "Gemini 3.1 Flash Lite"
+    },
+    "gemini-3.1-flash-image": {
+      "mapping": "gemini-3.1-flash-image",
+      "description": "Gemini 3.1 Flash Image (Vision)",
+      "hidden": true
+    },
+    "gemini-3-flash": {
+      "mapping": "gemini-3-flash",
+      "description": "Gemini 3 Flash",
+      "hidden": true
+    },
+    "gemini-3-flash-agent": {
+      "mapping": "gemini-3-flash-agent",
+      "description": "Gemini 3.5 Flash Agent",
+      "hidden": true
+    },
+    "gemini-pro-agent": {
+      "mapping": "gemini-pro-agent",
+      "description": "Gemini 3.1 Pro Agent"
+    },
+    "gpt-oss-120b-medium": {
+      "mapping": "gpt-oss-120b-medium",
+      "description": "GPT OSS 120B Medium"
+    },
+    "gpt-4o": {
+      "mapping": "gemini-3.1-pro-high",
+      "description": "OpenAI GPT-4o -> Gemini 3.1 Pro High"
+    },
+    "gpt-4o-mini": {
+      "mapping": "gemini-3.1-flash-lite",
+      "description": "OpenAI GPT-4o Mini -> Gemini 3.1 Flash Lite"
+    },
+    "o1": {
+      "mapping": "gemini-3.1-pro-high",
+      "description": "OpenAI o1 -> Gemini 3.1 Pro High"
+    },
+    "o3-mini": {
+      "mapping": "gemini-3.7-flash-high",
+      "description": "OpenAI o3-mini -> Gemini 3.7 Flash High"
+    },
+    "gpt-5.3-codex": {
+      "mapping": "gemini-3.8-flash-high",
+      "description": "OpenAI Codex CLI -> Gemini 3.8 Flash High"
+    },
+    "gpt-5.6-sol": {
+      "mapping": "gemini-3.8-flash-high",
+      "description": "OpenAI Sol -> Gemini 3.8 Flash High"
+    },
+    "gpt-5.6-luna": {
+      "mapping": "gemini-3.8-flash-high",
+      "description": "OpenAI Luna -> Gemini 3.8 Flash High"
+    },
+    "gemini-2.5-flash": {
+      "hidden": true
+    },
+    "gemini-2.5-flash-lite": {
+      "hidden": true
+    },
+    "gemini-2.5-flash-thinking": {
+      "hidden": true
+    },
+    "gemini-2.5-pro": {
+      "hidden": true
+    },
+    "auto": {
+      "mapping": "auto",
+      "description": "⚡ Auto (Dynamic MoE Smart Route)"
+    },
+    "gemini-3.8-flash-tiered": {
+      "mapping": "gemini-3.8-flash-tiered"
+    },
+    "gemini-3.8-flash-medium": {
+      "mapping": "gemini-3.8-flash-medium"
+    },
+    "gemini-3.8-flash-low": {
+      "mapping": "gemini-3.8-flash-low"
+    },
+    "gemini-3.0-flash": {
+      "mapping": "gemini-3-flash"
+    },
+    "gemini-3.5-flash-lite": {
+      "mapping": "gemini-3.5-flash-lite"
+    }
+  },
+  "accountSelection": {
+    "strategy": "hybrid",
+    "healthScore": {
+      "initial": 70,
+      "successReward": 1,
+      "rateLimitPenalty": -15,
+      "failurePenalty": -25,
+      "recoveryPerHour": 5,
+      "minUsable": 40,
+      "maxScore": 100
+    },
+    "tokenBucket": {
+      "maxTokens": 30,
+      "tokensPerMinute": 8,
+      "initialTokens": 30
+    },
+    "quota": {
+      "lowThreshold": 0.15,
+      "criticalThreshold": 0.05,
+      "staleMs": 180000
+    },
+    "weights": {
+      "health": 5,
+      "tokens": 2,
+      "quota": 3,
+      "lru": 0.01
+    }
+  },
+  "localEngine": {
+    "enabled": true,
+    "provider": "auto",
+    "turboEndpoint": "http://127.0.0.1:8088/v1",
+    "ollamaEndpoint": "http://127.0.0.1:11434/v1",
+    "defaultModel": "gemma-4-26b-a4b-it"
+  },
+  "port": 1987
+}

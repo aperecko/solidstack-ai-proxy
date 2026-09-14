@@ -1,0 +1,52 @@
+{
+  "title": "Sign in - Google Accounts",
+  "inputs": [
+    {
+      "type": "text",
+      "name": "identifier",
+      "id": "identifierId"
+    },
+    {
+      "type": "password",
+      "name": "hiddenPassword",
+      "id": ""
+    },
+    {
+      "type": "text",
+      "name": "ca",
+      "id": "ca"
+    },
+    {
+      "type": "hidden",
+      "name": "ct",
+      "id": "ct"
+    },
+    {
+      "type": "hidden",
+      "name": "usi",
+      "id": ""
+    },
+    {
+      "type": "hidden",
+      "name": "domain",
+      "id": ""
+    },
+    {
+      "type": "hidden",
+      "name": "region",
+      "id": ""
+    },
+    {
+      "type": "hidden",
+      "name": "",
+      "id": "fidoUserHandle"
+    }
+  ],
+  "buttons": [
+    "Forgot email?",
+    "",
+    "Next",
+    "Create account",
+    ""
+  ]
+}

@@ -19,6 +19,7 @@ import { logger } from '../utils/logger.js';
 import { isNetworkError, throttledFetch } from '../utils/helpers.js';
 import { onboardUser, getDefaultTierId } from './onboarding.js';
 import { parseTierId } from '../cloudcode/model-api.js';
+import { getSocksAgent } from '../utils/socks.js';
 
 // Track accounts currently fetching subscription to avoid duplicate calls
 const subscriptionFetchInProgress = new Set();
@@ -93,7 +94,11 @@ export async function getTokenForAccount(account, tokenCache, onInvalid, onSave)
     } else if (account.source === 'oauth' && account.refreshToken) {
         // OAuth account - use refresh token to get new access token
         try {
-            const tokens = await refreshAccessToken(account.refreshToken);
+            let agent = null;
+            if (account.corporateFootprint?.egressNode && account.corporateFootprint.egressNode !== 'local') {
+                agent = getSocksAgent(account.corporateFootprint.egressNode);
+            }
+            const tokens = await refreshAccessToken(account.refreshToken, agent);
             token = tokens.accessToken;
             // Clear invalid flag on success
             if (account.isInvalid) {
@@ -302,12 +307,11 @@ export async function discoverProject(token, projectId = undefined) {
         const tierId = getDefaultTierId(loadCodeAssistData.allowedTiers) || 'free-tier';
         logger.info(`[AccountManager] Onboarding user with tier: ${tierId}`);
 
-        // Pass projectId for metadata.duetProject (without fallback, matching reference)
-        // Reference: opencode-antigravity-auth passes parts.projectId (not fallback) to onboardManagedProject
+        const targetProject = projectId || (tierId === 'free-tier' ? 'aicode-consumers' : undefined);
         const onboardedProject = await onboardUser(
             token,
             tierId,
-            projectId || 'aicode-consumers'
+            targetProject
         );
         if (onboardedProject) {
             logger.success(`[AccountManager] Successfully onboarded, project: ${onboardedProject}`);

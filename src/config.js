@@ -71,14 +71,14 @@ const DEFAULT_CONFIG = {
             maxScore: 100             // Maximum score cap
         },
         tokenBucket: {
-            maxTokens: 50,            // Maximum token capacity
-            tokensPerMinute: 6,       // Regeneration rate
-            initialTokens: 50         // Starting tokens
+            maxTokens: 200,           // Maximum token capacity (high-headroom buffer)
+            tokensPerMinute: 20,      // Fast regeneration rate
+            initialTokens: 200        // Starting tokens
         },
         quota: {
-            lowThreshold: 0.10,       // 10% - reduce score
-            criticalThreshold: 0.05,  // 5% - exclude from candidates
-            staleMs: 300000           // 5 min - max age of quota data to trust
+            lowThreshold: 0.35,       // 35% - reduce score early
+            criticalThreshold: 0.15,  // 15% - safety floor exclusion
+            staleMs: 180000           // 3 min - max age of quota data to trust
         },
         weights: {
             health: 2,                // Weight for health score component

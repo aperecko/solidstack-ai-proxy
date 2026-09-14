@@ -21,5 +21,21 @@ module.exports = {
       FALLBACK: 'true',
       AG_NIM_OVERFLOW: '1'
     }
+  },
+  {
+    name: 'quota-harvester',
+    script: 'src/account-manager/quota-harvester.js',
+    cwd: __dirname,
+    instances: 1,
+    exec_mode: 'fork',
+    autorestart: true,
+    restart_delay: 5000,
+    max_restarts: 30,
+    max_memory_restart: '500M',
+    env: {
+      NODE_ENV: 'production',
+      DOMAIN: "",
+      BATCH_SIZE: "10"
+    }
   }]
 };

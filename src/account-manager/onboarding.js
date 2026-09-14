@@ -44,7 +44,7 @@ export function getDefaultTierId(allowedTiers) {
  * @param {number} [delayMs=5000] - Delay between polling attempts
  * @returns {Promise<string|null>} Managed project ID or null if failed
  */
-export async function onboardUser(token, tierId, projectId = undefined, maxAttempts = 10, delayMs = 5000) {
+export async function onboardUser(token, tierId, projectId = undefined, maxAttempts = 10, delayMs = 5000, agent = null) {
     const metadata = { ...CLIENT_METADATA };
 
     if (projectId) {
@@ -71,7 +71,8 @@ export async function onboardUser(token, tierId, projectId = undefined, maxAttem
                         'Content-Type': 'application/json',
                         ...ANTIGRAVITY_HEADERS
                     },
-                    body: JSON.stringify(requestBody)
+                    body: JSON.stringify(requestBody),
+                    ...(agent ? { agent } : {})
                 });
 
                 if (!response.ok) {

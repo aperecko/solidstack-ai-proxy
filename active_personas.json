@@ -1,0 +1,522 @@
+[
+  {
+    "email": "01@adamassist.com",
+    "first_name": "Michael",
+    "last_name": "Davis",
+    "location": "TX",
+    "city": "Dallas, US",
+    "proxy": "dfw.socks.privado.io",
+    "role_code": "HRM",
+    "job_title": "HR Coordinator",
+    "pod": "00",
+    "demographic": "M",
+    "ssin": "TX-HRM-00-M-3758X",
+    "employee_id": "F725264A",
+    "life_milestones": [
+      {
+        "year": 1984,
+        "type": "Birth Hospital",
+        "label": "Texas Health Presbyterian Hospital",
+        "lat": 32.8856,
+        "lon": -96.7588,
+        "color_hex": "#FF69B4"
+      },
+      {
+        "year": 2002,
+        "type": "High School",
+        "label": "Booker T. Washington High School",
+        "lat": 32.7915,
+        "lon": -96.7979,
+        "color_hex": "#FFA500"
+      },
+      {
+        "year": 2026,
+        "type": "Current HQ",
+        "label": "HR Coordinator (Residence)",
+        "lat": 32.89125590219245,
+        "lon": -96.73046266175167,
+        "color_hex": "#00FA9A"
+      }
+    ]
+  },
+  {
+    "email": "02@adamassist.com",
+    "first_name": "Riley",
+    "last_name": "Jones",
+    "location": "NY",
+    "city": "New York, US",
+    "proxy": "ny.socks.privado.io",
+    "role_code": "FIN",
+    "job_title": "Financial Analyst",
+    "pod": "00",
+    "demographic": "N",
+    "ssin": "NY-FIN-00-N-4031X",
+    "employee_id": "D3EBB52D",
+    "life_milestones": [
+      {
+        "year": 1998,
+        "type": "Birth Hospital",
+        "label": "Mount Sinai Hospital",
+        "lat": 40.7903,
+        "lon": -73.9535,
+        "color_hex": "#FF69B4"
+      },
+      {
+        "year": 2016,
+        "type": "High School",
+        "label": "Brooklyn Technical High School",
+        "lat": 40.6888,
+        "lon": -73.9767,
+        "color_hex": "#FFA500"
+      },
+      {
+        "year": 2026,
+        "type": "Current HQ",
+        "label": "Financial Analyst (Residence)",
+        "lat": 40.74837236664797,
+        "lon": -73.97477597867194,
+        "color_hex": "#00FA9A"
+      }
+    ]
+  },
+  {
+    "email": "03@adamassist.com",
+    "first_name": "Chloe",
+    "last_name": "Martin",
+    "location": "CA",
+    "city": "Montreal, CA",
+    "proxy": "yul.socks.privado.io",
+    "role_code": "ARC",
+    "job_title": "Operations Lead",
+    "pod": "04",
+    "demographic": "F",
+    "ssin": "CA-ARC-04-F-5248X",
+    "employee_id": "37E85F73",
+    "life_milestones": [
+      {
+        "year": 1990,
+        "type": "Birth Hospital",
+        "label": "Royal Victoria Hospital",
+        "lat": 45.4727,
+        "lon": -73.6015,
+        "color_hex": "#FF69B4"
+      },
+      {
+        "year": 2008,
+        "type": "High School",
+        "label": "Royal West Academy",
+        "lat": 45.4523,
+        "lon": -73.6491,
+        "color_hex": "#FFA500"
+      },
+      {
+        "year": 2026,
+        "type": "Current HQ",
+        "label": "Operations Lead (Residence)",
+        "lat": 45.44785131037508,
+        "lon": -73.55350876519165,
+        "color_hex": "#00FA9A"
+      }
+    ]
+  },
+  {
+    "email": "04@adamassist.com",
+    "first_name": "Emma",
+    "last_name": "Davies",
+    "location": "UK",
+    "city": "London, UK",
+    "proxy": "lhr.socks.privado.io",
+    "role_code": "ARC",
+    "job_title": "Operations Lead",
+    "pod": "03",
+    "demographic": "F",
+    "ssin": "UK-ARC-03-F-1569X",
+    "employee_id": "93956AA3",
+    "life_milestones": [
+      {
+        "year": 1981,
+        "type": "Birth Hospital",
+        "label": "Great Ormond Street Hospital",
+        "lat": 51.5226,
+        "lon": -0.1197,
+        "color_hex": "#FF69B4"
+      },
+      {
+        "year": 1999,
+        "type": "High School",
+        "label": "Eton College",
+        "lat": 51.4921,
+        "lon": -0.6094,
+        "color_hex": "#FFA500"
+      },
+      {
+        "year": 2026,
+        "type": "Current HQ",
+        "label": "Operations Lead (Residence)",
+        "lat": 51.50181218744486,
+        "lon": -0.12395522018902871,
+        "color_hex": "#00FA9A"
+      }
+    ]
+  },
+  {
+    "email": "05@adamassist.com",
+    "first_name": "Samar",
+    "last_name": "Verma",
+    "location": "IN",
+    "city": "Mumbai, IN",
+    "proxy": "bom.socks.privado.io",
+    "role_code": "ENG",
+    "job_title": "Software Engineer",
+    "pod": "03",
+    "demographic": "N",
+    "ssin": "IN-ENG-03-N-6056X",
+    "employee_id": "A53CE65D",
+    "life_milestones": [
+      {
+        "year": 1984,
+        "type": "Birth Hospital",
+        "label": "Breach Candy Hospital",
+        "lat": 18.9715,
+        "lon": 72.8055,
+        "color_hex": "#FF69B4"
+      },
+      {
+        "year": 2002,
+        "type": "High School",
+        "label": "Cathedral and John Connon School",
+        "lat": 18.9324,
+        "lon": 72.8327,
+        "color_hex": "#FFA500"
+      },
+      {
+        "year": 2026,
+        "type": "Current HQ",
+        "label": "Software Engineer (Residence)",
+        "lat": 18.930568420081414,
+        "lon": 72.84459687294492,
+        "color_hex": "#00FA9A"
+      }
+    ]
+  },
+  {
+    "email": "06@adamassist.com",
+    "first_name": "Elena",
+    "last_name": "Rodriguez",
+    "location": "TX",
+    "city": "Dallas, US",
+    "proxy": "dfw.socks.privado.io",
+    "role_code": "ENG",
+    "job_title": "Backend Developer",
+    "pod": "05",
+    "demographic": "F",
+    "ssin": "TX-ENG-05-F-9933X",
+    "employee_id": "672CB023",
+    "life_milestones": [
+      {
+        "year": 1988,
+        "type": "Birth Hospital",
+        "label": "Baylor University Medical Center",
+        "lat": 32.7915,
+        "lon": -96.7788,
+        "color_hex": "#FF69B4"
+      },
+      {
+        "year": 2006,
+        "type": "High School",
+        "label": "Highland Park High School",
+        "lat": 32.8385,
+        "lon": -96.7936,
+        "color_hex": "#FFA500"
+      },
+      {
+        "year": 2026,
+        "type": "Current HQ",
+        "label": "Backend Developer (Residence)",
+        "lat": 32.83317546370972,
+        "lon": -96.80293565677071,
+        "color_hex": "#00FA9A"
+      }
+    ]
+  },
+  {
+    "email": "07@adamassist.com",
+    "first_name": "Riley",
+    "last_name": "Jones",
+    "location": "NY",
+    "city": "New York, US",
+    "proxy": "ny.socks.privado.io",
+    "role_code": "ENG",
+    "job_title": "Software Engineer",
+    "pod": "05",
+    "demographic": "N",
+    "ssin": "NY-ENG-05-N-3778X",
+    "employee_id": "B8BA09C0",
+    "life_milestones": [
+      {
+        "year": 1998,
+        "type": "Birth Hospital",
+        "label": "Mount Sinai Hospital",
+        "lat": 40.7903,
+        "lon": -73.9535,
+        "color_hex": "#FF69B4"
+      },
+      {
+        "year": 2016,
+        "type": "High School",
+        "label": "Stuyvesant High School",
+        "lat": 40.7178,
+        "lon": -74.0139,
+        "color_hex": "#FFA500"
+      },
+      {
+        "year": 2026,
+        "type": "Current HQ",
+        "label": "Software Engineer (Residence)",
+        "lat": 40.83657252571632,
+        "lon": -73.95117834552615,
+        "color_hex": "#00FA9A"
+      }
+    ]
+  },
+  {
+    "email": "08@adamassist.com",
+    "first_name": "Quinn",
+    "last_name": "Taylor",
+    "location": "CA",
+    "city": "Montreal, CA",
+    "proxy": "yul.socks.privado.io",
+    "role_code": "ENG",
+    "job_title": "Backend Developer",
+    "pod": "02",
+    "demographic": "N",
+    "ssin": "CA-ENG-02-N-7998X",
+    "employee_id": "D7E6E747",
+    "life_milestones": [
+      {
+        "year": 1986,
+        "type": "Birth Hospital",
+        "label": "Royal Victoria Hospital",
+        "lat": 45.4727,
+        "lon": -73.6015,
+        "color_hex": "#FF69B4"
+      },
+      {
+        "year": 2004,
+        "type": "High School",
+        "label": "Westmount High School",
+        "lat": 45.4852,
+        "lon": -73.5954,
+        "color_hex": "#FFA500"
+      },
+      {
+        "year": 2026,
+        "type": "Current HQ",
+        "label": "Backend Developer (Residence)",
+        "lat": 45.485367050734695,
+        "lon": -73.60582036543317,
+        "color_hex": "#00FA9A"
+      }
+    ]
+  },
+  {
+    "email": "09@adamassist.com",
+    "first_name": "Morgan",
+    "last_name": "Hughes",
+    "location": "UK",
+    "city": "London, UK",
+    "proxy": "lhr.socks.privado.io",
+    "role_code": "DAT",
+    "job_title": "Web Scraper",
+    "pod": "03",
+    "demographic": "N",
+    "ssin": "UK-DAT-03-N-9080X",
+    "employee_id": "502901A0",
+    "life_milestones": [
+      {
+        "year": 1989,
+        "type": "Birth Hospital",
+        "label": "Great Ormond Street Hospital",
+        "lat": 51.5226,
+        "lon": -0.1197,
+        "color_hex": "#FF69B4"
+      },
+      {
+        "year": 2007,
+        "type": "High School",
+        "label": "Eton College",
+        "lat": 51.4921,
+        "lon": -0.6094,
+        "color_hex": "#FFA500"
+      },
+      {
+        "year": 2026,
+        "type": "Current HQ",
+        "label": "Web Scraper (Residence)",
+        "lat": 51.54243235588587,
+        "lon": -0.0892105695095285,
+        "color_hex": "#00FA9A"
+      }
+    ]
+  },
+  {
+    "email": "10@adamassist.com",
+    "first_name": "Priya",
+    "last_name": "Sharma",
+    "location": "IN",
+    "city": "Mumbai, IN",
+    "proxy": "bom.socks.privado.io",
+    "role_code": "DAT",
+    "job_title": "SEO Specialist",
+    "pod": "03",
+    "demographic": "F",
+    "ssin": "IN-DAT-03-F-0251X",
+    "employee_id": "06D567BB",
+    "life_milestones": [
+      {
+        "year": 1987,
+        "type": "Birth Hospital",
+        "label": "Lilavati Hospital",
+        "lat": 19.0504,
+        "lon": 72.8285,
+        "color_hex": "#FF69B4"
+      },
+      {
+        "year": 2005,
+        "type": "High School",
+        "label": "Bombay Scottish School",
+        "lat": 19.0333,
+        "lon": 72.8373,
+        "color_hex": "#FFA500"
+      },
+      {
+        "year": 2026,
+        "type": "Current HQ",
+        "label": "SEO Specialist (Residence)",
+        "lat": 19.065964270974728,
+        "lon": 72.83822732153585,
+        "color_hex": "#00FA9A"
+      }
+    ]
+  },
+  {
+    "email": "11@adamassist.com",
+    "first_name": "Casey",
+    "last_name": "Smith",
+    "location": "TX",
+    "city": "Dallas, US",
+    "proxy": "dfw.socks.privado.io",
+    "role_code": "DAT",
+    "job_title": "SEO Specialist",
+    "pod": "02",
+    "demographic": "N",
+    "ssin": "TX-DAT-02-N-4361X",
+    "employee_id": "2C45E20F",
+    "life_milestones": [
+      {
+        "year": 1986,
+        "type": "Birth Hospital",
+        "label": "Texas Health Presbyterian Hospital",
+        "lat": 32.8856,
+        "lon": -96.7588,
+        "color_hex": "#FF69B4"
+      },
+      {
+        "year": 2004,
+        "type": "High School",
+        "label": "Highland Park High School",
+        "lat": 32.8385,
+        "lon": -96.7936,
+        "color_hex": "#FFA500"
+      },
+      {
+        "year": 2026,
+        "type": "Current HQ",
+        "label": "SEO Specialist (Residence)",
+        "lat": 32.88226561075394,
+        "lon": -96.73212966564135,
+        "color_hex": "#00FA9A"
+      }
+    ]
+  },
+  {
+    "email": "12@adamassist.com",
+    "first_name": "Sarah",
+    "last_name": "Chen",
+    "location": "NY",
+    "city": "New York, US",
+    "proxy": "ny.socks.privado.io",
+    "role_code": "DAT",
+    "job_title": "SEO Specialist",
+    "pod": "03",
+    "demographic": "F",
+    "ssin": "NY-DAT-03-F-7598X",
+    "employee_id": "B9C0DD87",
+    "life_milestones": [
+      {
+        "year": 1985,
+        "type": "Birth Hospital",
+        "label": "Mount Sinai Hospital",
+        "lat": 40.7903,
+        "lon": -73.9535,
+        "color_hex": "#FF69B4"
+      },
+      {
+        "year": 2003,
+        "type": "High School",
+        "label": "Bronx High School of Science",
+        "lat": 40.8778,
+        "lon": -73.8893,
+        "color_hex": "#FFA500"
+      },
+      {
+        "year": 2026,
+        "type": "Current HQ",
+        "label": "SEO Specialist (Residence)",
+        "lat": 40.80923331312874,
+        "lon": -73.92499159687593,
+        "color_hex": "#00FA9A"
+      }
+    ]
+  },
+  {
+    "email": "48@adamassist.com",
+    "first_name": "Sophie",
+    "last_name": "Roy",
+    "location": "CA",
+    "city": "Montreal, CA",
+    "proxy": "yul.socks.privado.io",
+    "role_code": "DES",
+    "job_title": "UI/UX Designer",
+    "pod": "04",
+    "demographic": "F",
+    "ssin": "CA-DES-04-F-7950X",
+    "employee_id": "45F41CE0",
+    "life_milestones": [
+      {
+        "year": 1998,
+        "type": "Birth Hospital",
+        "label": "Royal Victoria Hospital",
+        "lat": 45.4727,
+        "lon": -73.6015,
+        "color_hex": "#FF69B4"
+      },
+      {
+        "year": 2016,
+        "type": "High School",
+        "label": "Lower Canada College",
+        "lat": 45.4746,
+        "lon": -73.6163,
+        "color_hex": "#FFA500"
+      },
+      {
+        "year": 2026,
+        "type": "Current HQ",
+        "label": "UI/UX Designer (Residence)",
+        "lat": 45.449346614002636,
+        "lon": -73.60165792446574,
+        "color_hex": "#00FA9A"
+      }
+    ]
+  }
+]

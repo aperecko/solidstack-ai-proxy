@@ -1,0 +1,34 @@
+{
+  "title": "Google Account",
+  "inputs": [
+    {
+      "type": "text",
+      "name": "",
+      "id": ""
+    },
+    {
+      "type": "text",
+      "name": "",
+      "id": ""
+    },
+    {
+      "type": "text",
+      "name": "",
+      "id": ""
+    },
+    {
+      "type": "text",
+      "name": "",
+      "id": ""
+    }
+  ],
+  "buttons": [
+    "Skip to main content",
+    "",
+    "",
+    "",
+    "",
+    "Search Google Account",
+    "Get help"
+  ]
+}

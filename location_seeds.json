@@ -1,0 +1,67 @@
+{
+  "TX": {
+    "city": "Dallas, US",
+    "hospitals": [
+      { "name": "Parkland Memorial Hospital", "lat": 32.8114, "lon": -96.8403 },
+      { "name": "Baylor University Medical Center", "lat": 32.7915, "lon": -96.7788 },
+      { "name": "Texas Health Presbyterian Hospital", "lat": 32.8856, "lon": -96.7588 }
+    ],
+    "high_schools": [
+      { "name": "Woodrow Wilson High School", "lat": 32.8021, "lon": -96.7515 },
+      { "name": "Highland Park High School", "lat": 32.8385, "lon": -96.7936 },
+      { "name": "Booker T. Washington High School", "lat": 32.7915, "lon": -96.7979 }
+    ]
+  },
+  "NY": {
+    "city": "New York, US",
+    "hospitals": [
+      { "name": "Mount Sinai Hospital", "lat": 40.7903, "lon": -73.9535 },
+      { "name": "NewYork-Presbyterian Hospital", "lat": 40.8402, "lon": -73.9416 },
+      { "name": "Lenox Hill Hospital", "lat": 40.7733, "lon": -73.9602 }
+    ],
+    "high_schools": [
+      { "name": "Stuyvesant High School", "lat": 40.7178, "lon": -74.0139 },
+      { "name": "Bronx High School of Science", "lat": 40.8778, "lon": -73.8893 },
+      { "name": "Brooklyn Technical High School", "lat": 40.6888, "lon": -73.9767 }
+    ]
+  },
+  "CA": {
+    "city": "Montreal, CA",
+    "hospitals": [
+      { "name": "Royal Victoria Hospital", "lat": 45.4727, "lon": -73.6015 },
+      { "name": "Jewish General Hospital", "lat": 45.4975, "lon": -73.6322 },
+      { "name": "Montreal General Hospital", "lat": 45.4971, "lon": -73.5886 }
+    ],
+    "high_schools": [
+      { "name": "Westmount High School", "lat": 45.4852, "lon": -73.5954 },
+      { "name": "Royal West Academy", "lat": 45.4523, "lon": -73.6491 },
+      { "name": "Lower Canada College", "lat": 45.4746, "lon": -73.6163 }
+    ]
+  },
+  "UK": {
+    "city": "London, UK",
+    "hospitals": [
+      { "name": "St Thomas' Hospital", "lat": 51.4990, "lon": -0.1189 },
+      { "name": "Royal London Hospital", "lat": 51.5186, "lon": -0.0573 },
+      { "name": "Great Ormond Street Hospital", "lat": 51.5226, "lon": -0.1197 }
+    ],
+    "high_schools": [
+      { "name": "Westminster School", "lat": 51.4952, "lon": -0.1284 },
+      { "name": "St Paul's School", "lat": 51.4883, "lon": -0.2372 },
+      { "name": "Eton College", "lat": 51.4921, "lon": -0.6094 }
+    ]
+  },
+  "IN": {
+    "city": "Mumbai, IN",
+    "hospitals": [
+      { "name": "Lilavati Hospital", "lat": 19.0504, "lon": 72.8285 },
+      { "name": "Breach Candy Hospital", "lat": 18.9715, "lon": 72.8055 },
+      { "name": "Kokilaben Dhirubhai Ambani Hospital", "lat": 19.1311, "lon": 72.8268 }
+    ],
+    "high_schools": [
+      { "name": "Bombay Scottish School", "lat": 19.0333, "lon": 72.8373 },
+      { "name": "Cathedral and John Connon School", "lat": 18.9324, "lon": 72.8327 },
+      { "name": "Dhirubhai Ambani International School", "lat": 19.0658, "lon": 72.8660 }
+    ]
+  }
+}

@@ -47,6 +47,8 @@ import { logger } from '../utils/logger.js';
 import { logRoutingDecision, logRoutingTelemetry } from '../cloudcode/routing-logger.js';
 import { getAntigravityAppEmail } from '../auth/database.js';
 import { getDrainRate } from './quota-store.js';
+import { getQuotaStatus } from './quota-store.js';
+import { markAccountCoolingDown } from './rate-limits.js';
 
 const DB_NATIVE_REATTRIBUTION_ENABLED = true;
 
@@ -62,6 +64,7 @@ export class AccountManager {
         active_paths: [],
         shadow_tests: []
     };
+    #proactiveQuotaInterval = null;
 
     // Per-account caches
     #tokenCache = new Map(); // email -> { token, extractedAt }
@@ -218,6 +221,9 @@ export class AccountManager {
         // Clear any expired rate limits
         this.clearExpiredLimits();
 
+        // Start proactive quota refresh scheduler
+        this.startProactiveQuotaRefresh();
+
         this.#initialized = true;
     }
 
@@ -299,6 +305,154 @@ export class AccountManager {
             this.saveToDisk();
         }
         return cleared;
+    }
+
+    /**
+     * Start proactive quota refresh scheduler
+     * Periodically checks accounts approaching quota limits and refreshes their quota state
+     * to prevent reactive 429 detection gaps.
+     */
+    startProactiveQuotaRefresh() {
+        if (this.#proactiveQuotaInterval) {
+            return; // Already started
+        }
+
+        const intervalMs = config?.proactiveQuotaRefreshIntervalMs ?? 5 * 60 * 1000; // Default 5 minutes
+        const thresholdPct = config?.proactiveQuotaThresholdPct ?? 80; // Refresh when >= 80% consumed
+
+        this.#proactiveQuotaInterval = setInterval(async () => {
+            try {
+                await this.proactiveQuotaRefresh(thresholdPct);
+            } catch (error) {
+                logger.warn('[AccountManager] Proactive quota refresh failed:', error.message);
+            }
+        }, intervalMs);
+
+        // Don't prevent process exit
+        this.#proactiveQuotaInterval.unref();
+        logger.info(`[AccountManager] Proactive quota refresh scheduler started (interval: ${intervalMs}ms, threshold: ${thresholdPct}%)`);
+    }
+
+    /**
+     * Proactive quota refresh - check accounts approaching limits and refresh their quota state
+     * This prevents the reactive 429 detection gap where stale quota data masks depletion.
+     * @param {number} thresholdPct - Quota percentage threshold to trigger refresh (default 80%)
+     * @returns {Promise<number>} Number of accounts refreshed
+     */
+    async proactiveQuotaRefresh(thresholdPct = 80) {
+        let refreshed = 0;
+
+        for (const account of this.#accounts) {
+            if (account.enabled === false) continue;
+
+            // Check each model this account has quota data for
+            if (!account.quota || !account.quota.models) continue;
+
+            for (const [modelId, quotaEntry] of Object.entries(account.quota.models)) {
+                if (!quotaEntry.remainingFraction || quotaEntry.remainingFraction <= 0) continue;
+
+                const consumedPct = (1 - quotaEntry.remainingFraction) * 100;
+                if (consumedPct >= thresholdPct) {
+                    // Account is approaching quota limit - trigger a refresh
+                    try {
+                        await this.refreshAccountQuota(account.email, modelId);
+                        refreshed++;
+                        logger.debug(`[AccountManager] Proactive quota refresh: ${account.email} for ${modelId} (${consumedPct.toFixed(1)}% consumed)`);
+                    } catch (error) {
+                        logger.warn(`[AccountManager] Failed to refresh quota for ${account.email}/${modelId}:`, error.message);
+                    }
+                }
+            }
+        }
+
+        if (refreshed > 0) {
+            logger.info(`[AccountManager] Proactive quota refresh completed: ${refreshed} account-model pairs refreshed`);
+        }
+        return refreshed;
+    }
+
+    /**
+     * Refresh quota state for a specific account and model by forcing a token/quota check
+     * @param {string} email - Account email
+     * @param {string} modelId - Model ID
+     * @returns {Promise<boolean>} True if refresh was successful
+     */
+    async refreshAccountQuota(email, modelId) {
+        // Get fresh token to trigger quota re-evaluation on next request
+        try {
+            const token = await this.getTokenForAccount(email);
+            if (token) {
+                // The quota will be refreshed on the next actual request
+                // For now, we just clear any stale cached quota data
+                const account = this.#accounts.find(a => a.email === email);
+                if (account && account.quota && account.quota.models && account.quota.models[modelId]) {
+                    // Reset remainingFraction to force re-evaluation on next request
+                    account.quota.models[modelId].remainingFraction = null;
+                    account.quota.models[modelId].resetTime = null;
+                }
+                this.saveToDisk();
+                return true;
+            }
+        } catch (error) {
+            logger.warn(`[AccountManager] Failed to get token for quota refresh: ${email}`, error.message);
+        }
+        return false;
+    }
+
+    /**
+     * Get G1 credit aggregate status across all accounts
+     * @returns {Object} G1 credit summary
+     */
+    getG1CreditStatus() {
+        const accounts = this.#accounts.filter(a => a.enabled !== false);
+        let totalG1Credits = 0;
+        let accountsExhausted = 0;
+        let accountsLow = 0;
+        const byModel = {};
+
+        for (const account of accounts) {
+            if (!account.quota || !account.quota.models) continue;
+
+            for (const [modelId, quotaEntry] of Object.entries(account.quota.models)) {
+                if (!byModel[modelId]) {
+                    byModel[modelId] = { totalCredits: 0, exhausted: 0, low: 0, accounts: [] };
+                }
+
+                const isExhausted = quotaEntry.remainingFraction !== undefined && quotaEntry.remainingFraction <= 0;
+                const isLow = quotaEntry.remainingFraction !== undefined && quotaEntry.remainingFraction > 0 && quotaEntry.remainingFraction <= 0.1;
+
+                if (isExhausted) {
+                    accountsExhausted++;
+                    byModel[modelId].exhausted++;
+                } else if (isLow) {
+                    accountsLow++;
+                    byModel[modelId].low++;
+                }
+
+                byModel[modelId].accounts.push({
+                    email: account.email,
+                    remainingFraction: quotaEntry.remainingFraction,
+                    resetTime: quotaEntry.resetTime,
+                    isExhausted,
+                    isLow
+                });
+            }
+        }
+
+        return {
+            totalAccounts: accounts.length,
+            accountsExhausted,
+            accountsLow,
+            byModel,
+            summary: {
+                healthy: totalG1Credits > 0 ? 'ok' : accountsExhausted > 0 ? 'critical' : 'unknown',
+                message: accountsExhausted > 0
+                    ? `${accountsExhausted} account(s) G1 credit exhausted`
+                    : accountsLow > 0
+                        ? `${accountsLow} account(s) G1 credit low (<10%)`
+                        : 'All accounts have G1 credits available'
+            }
+        };
     }
 
     /**

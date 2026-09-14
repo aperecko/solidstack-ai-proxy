@@ -196,11 +196,11 @@ export const CAPACITY_JITTER_MAX_MS = 10000; // ±5s jitter range
 
 // Drain rate estimation — pre-emptive rotation thresholds
 // Accounts projected to deplete within this window are excluded from selection
-export const DRAIN_ETA_EXCLUSION_MS = config?.drainEtaExclusionMs || 120_000; // 2 min
+export const DRAIN_ETA_EXCLUSION_MS = config?.drainEtaExclusionMs || 600_000; // 10 min pre-emptive exclusion
 // Accounts within this ETA receive a scoring penalty (but aren't excluded)
-export const DRAIN_ETA_WARNING_MS = config?.drainEtaWarningMs || 300_000;     // 5 min
+export const DRAIN_ETA_WARNING_MS = config?.drainEtaWarningMs || 900_000;     // 15 min warning
 // Rolling window for computing requests-per-minute velocity
-export const DRAIN_VELOCITY_WINDOW_MS = config?.drainVelocityWindowMs || 300_000; // 5 min
+export const DRAIN_VELOCITY_WINDOW_MS = config?.drainVelocityWindowMs || 600_000; // 10 min window
 
 // Thinking model constants
 export const MIN_SIGNATURE_LENGTH = 50; // Minimum valid thinking signature length

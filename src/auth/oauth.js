@@ -399,7 +399,7 @@ export function startCallbackServer(expectedState, timeoutMs = 600000) {
  * @param {string} verifier - PKCE code verifier
  * @returns {Promise<{accessToken: string, refreshToken: string, expiresIn: number}>} OAuth tokens
  */
-export async function exchangeCode(code, verifier, redirectUri = OAUTH_REDIRECT_URI) {
+export async function exchangeCode(code, verifier, redirectUri = OAUTH_REDIRECT_URI, agent = null) {
     const response = await throttledFetch(OAUTH_CONFIG.tokenUrl, {
         method: 'POST',
         headers: {
@@ -412,7 +412,8 @@ export async function exchangeCode(code, verifier, redirectUri = OAUTH_REDIRECT_
             code_verifier: verifier,
             grant_type: 'authorization_code',
             redirect_uri: redirectUri
-        })
+        }),
+        ...(agent ? { agent } : {})
     });
 
     if (!response.ok) {
@@ -444,7 +445,7 @@ export async function exchangeCode(code, verifier, redirectUri = OAUTH_REDIRECT_
  * @param {string} compositeRefresh - OAuth refresh token (may be composite)
  * @returns {Promise<{accessToken: string, expiresIn: number}>} New access token
  */
-export async function refreshAccessToken(compositeRefresh) {
+export async function refreshAccessToken(compositeRefresh, agent = null) {
     // Parse the composite refresh token to extract the actual OAuth token
     const parts = parseRefreshParts(compositeRefresh);
 
@@ -458,7 +459,8 @@ export async function refreshAccessToken(compositeRefresh) {
             client_secret: OAUTH_CONFIG.clientSecret,
             refresh_token: parts.refreshToken,  // Use the actual OAuth token
             grant_type: 'refresh_token'
-        })
+        }),
+        ...(agent ? { agent } : {})
     });
 
     if (!response.ok) {
@@ -479,11 +481,12 @@ export async function refreshAccessToken(compositeRefresh) {
  * @param {string} accessToken - OAuth access token
  * @returns {Promise<string>} User's email address
  */
-export async function getUserEmail(accessToken) {
+export async function getUserEmail(accessToken, agent = null) {
     const response = await throttledFetch(OAUTH_CONFIG.userInfoUrl, {
         headers: {
             'Authorization': `Bearer ${accessToken}`
-        }
+        },
+        ...(agent ? { agent } : {})
     });
 
     if (!response.ok) {
@@ -503,9 +506,10 @@ export async function getUserEmail(accessToken) {
  * Discover project ID for the authenticated user
  *
  * @param {string} accessToken - OAuth access token
+ * @param {import('http').Agent} [agent] - Optional proxy agent
  * @returns {Promise<string|null>} Project ID or null if not found
  */
-export async function discoverProjectId(accessToken) {
+export async function discoverProjectId(accessToken, agent = null) {
     let loadCodeAssistData = null;
 
     for (const endpoint of ANTIGRAVITY_ENDPOINT_FALLBACKS) {
@@ -519,7 +523,8 @@ export async function discoverProjectId(accessToken) {
                 },
                 body: JSON.stringify({
                     metadata: CLIENT_METADATA
-                })
+                }),
+                ...(agent ? { agent } : {})
             });
 
             if (!response.ok) continue;
@@ -547,7 +552,8 @@ export async function discoverProjectId(accessToken) {
         const tierId = getDefaultTierId(loadCodeAssistData.allowedTiers) || 'FREE';
         logger.info(`[OAuth] Onboarding user with tier: ${tierId}`);
 
-        const onboardedProject = await onboardUser(accessToken, tierId, 'aicode-consumers');
+        const targetProject = (tierId === 'free-tier' || tierId === 'FREE') ? 'aicode-consumers' : undefined;
+        const onboardedProject = await onboardUser(accessToken, tierId, targetProject, 10, 5000, agent);
         if (onboardedProject) {
             logger.success(`[OAuth] Successfully onboarded, project: ${onboardedProject}`);
             return onboardedProject;
@@ -562,17 +568,19 @@ export async function discoverProjectId(accessToken) {
  *
  * @param {string} code - Authorization code from OAuth callback
  * @param {string} verifier - PKCE code verifier
+ * @param {string} [redirectUri] - OAuth redirect URI
+ * @param {import('http').Agent} [agent] - Optional proxy agent
  * @returns {Promise<{email: string, refreshToken: string, accessToken: string, projectId: string|null}>} Complete account info
  */
-export async function completeOAuthFlow(code, verifier, redirectUri = OAUTH_REDIRECT_URI) {
+export async function completeOAuthFlow(code, verifier, redirectUri = OAUTH_REDIRECT_URI, agent = null) {
     // Exchange code for tokens using the same redirect URI used to authorize.
-    const tokens = await exchangeCode(code, verifier, redirectUri);
+    const tokens = await exchangeCode(code, verifier, redirectUri, agent);
 
     // Get user info
-    const { email, picture } = await getUserEmail(tokens.accessToken);
+    const { email, picture } = await getUserEmail(tokens.accessToken, agent);
 
     // Discover project ID
-    const projectId = await discoverProjectId(tokens.accessToken);
+    const projectId = await discoverProjectId(tokens.accessToken, agent);
 
     return {
         email,

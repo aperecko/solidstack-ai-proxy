@@ -13,11 +13,28 @@ import { logger } from '../utils/logger.js';
 
 // Max thinking budget per Gemini model version
 // Gemini 2.5 Flash: max 24,576 (API error: "supported values are integers from 1 to 24576")
+// All Gemini thinking budget limits share the same maximum of 24,576 tokens
+// as enforced by the Google Generative AI API.
+//
+// Supported versions (extracted from model names like "gemini-3.1-flash-thinking"):
+//   - "2.5" → gemini-2.5-flash-thinking, gemini-2.5-pro
+//   - "3"   → gemini-3-flash
+//   - "3.1" → gemini-3.1-flash-lite, gemini-3.1-pro-*
+//   - "3.6" → gemini-3.6-flash-high/medium
+//   - "3.7" → gemini-3.7-flash-high/low/medium
+//   - "3.8" → gemini-3.8-flash-high/low/medium
+//   - "default" → fallback when version cannot be determined
 const GEMINI_THINKING_BUDGET_LIMITS = {
     '2.5': 24576,
+    '3': 24576,
+    '3.1': 24576,
+    '3.6': 24576,
+    '3.7': 24576,
+    '3.8': 24576,
+    'default': 24576,
 };
-const GEMINI_DEFAULT_THINKING_BUDGET = 16000;
-const GEMINI_DEFAULT_THINKING_BUDGET_LIMIT = 128000;
+const GEMINI_DEFAULT_THINKING_BUDGET = 24576;
+const GEMINI_DEFAULT_THINKING_BUDGET_LIMIT = 24576;
 
 /**
  * Clamp thinking budget to the maximum supported by a Gemini model.

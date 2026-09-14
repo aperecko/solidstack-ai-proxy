@@ -192,18 +192,56 @@ export async function saveAccounts(configPath, accounts, settings, activeIndex) 
         await withFileLock(lockPath, async () => {
             await mkdir(dirname(configPath), { recursive: true });
 
-            const config = {
-                accounts: accounts.filter(acc => acc.source !== '1password' && acc.type !== 'apikey').map(acc => ({
+            // Read disk version to merge updates made by external processes (e.g. quota-harvester)
+            let onDiskAccounts = [];
+            try {
+                const existingData = JSON.parse(await readFile(configPath, 'utf-8'));
+                onDiskAccounts = existingData.accounts || [];
+            } catch (e) {}
+
+            const onDiskMap = new Map(onDiskAccounts.map(a => [a.email, a]));
+
+            const mergedAccounts = accounts.filter(acc => acc.source !== '1password' && acc.type !== 'apikey').map(acc => {
+                const onDisk = onDiskMap.get(acc.email);
+                let refreshToken = (acc.source === 'oauth' || acc.refreshToken?.startsWith('PENDING_AUTH')) ? acc.refreshToken : undefined;
+                let isInvalid = acc.isInvalid || false;
+                let invalidReason = acc.invalidReason || null;
+                let corporateFootprint = acc.corporateFootprint;
+                let projectId = acc.projectId;
+
+                // If onDisk has a real refresh token and in-memory is missing it or PENDING_AUTH, preserve disk!
+                if (onDisk && onDisk.refreshToken && !onDisk.refreshToken.startsWith('PENDING_AUTH')) {
+                    if (!refreshToken || refreshToken.startsWith('PENDING_AUTH')) {
+                        refreshToken = onDisk.refreshToken;
+                    }
+                }
+
+                // If onDisk is NOT invalid, but in-memory was marked invalid, preserve valid state if token exists
+                if (onDisk && onDisk.isInvalid === false && isInvalid === true && refreshToken && !refreshToken.startsWith('PENDING_AUTH')) {
+                    isInvalid = false;
+                    invalidReason = null;
+                }
+
+                // Preserve corporateFootprint from disk if missing in memory
+                if (onDisk && onDisk.corporateFootprint && !corporateFootprint) {
+                    corporateFootprint = onDisk.corporateFootprint;
+                }
+
+                if (onDisk && onDisk.projectId && !projectId) {
+                    projectId = onDisk.projectId;
+                }
+
+                return {
                     email: acc.email,
                     source: acc.source,
                     enabled: acc.enabled !== false,
                     dbPath: acc.dbPath || null,
-                    refreshToken: (acc.source === 'oauth' || acc.refreshToken?.startsWith('PENDING_AUTH')) ? acc.refreshToken : undefined,
+                    refreshToken,
                     apiKey: acc.source === 'manual' ? acc.apiKey : undefined,
-                    projectId: acc.projectId || undefined,
+                    projectId: projectId || undefined,
                     addedAt: acc.addedAt || undefined,
-                    isInvalid: acc.isInvalid || false,
-                    invalidReason: acc.invalidReason || null,
+                    isInvalid,
+                    invalidReason,
                     verifyUrl: acc.verifyUrl || null,
                     modelRateLimits: acc.modelRateLimits || {},
                     lastUsed: acc.lastUsed,
@@ -212,8 +250,13 @@ export async function saveAccounts(configPath, accounts, settings, activeIndex) 
                     quotaThreshold: acc.quotaThreshold,
                     modelQuotaThresholds: Object.keys(acc.modelQuotaThresholds || {}).length > 0 ? acc.modelQuotaThresholds : undefined,
                     disabledBy429: acc.disabledBy429 || false,
-                    consecutiveFailures: acc.consecutiveFailures || 0
-                })),
+                    consecutiveFailures: acc.consecutiveFailures || 0,
+                    corporateFootprint
+                };
+            });
+
+            const config = {
+                accounts: mergedAccounts,
                 settings: settings,
                 activeIndex: activeIndex
             };

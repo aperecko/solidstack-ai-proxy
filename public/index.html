@@ -459,6 +459,15 @@
                     </button>
                     <button
                         class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
+                        :class="{'active': $store.global.activeTab === 'moodtracker'}"
+                        @click="$store.global.activeTab = 'moodtracker'">
+                        <svg class="w-5 h-5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.828 14.828a4 4 0 01-5.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <span>Mood Tracker</span>
+                    </button>
+                    <button
+                        class="nav-item flex items-center gap-3 px-6 py-3 text-sm font-medium text-gray-400 hover:text-white hover:bg-white/5"
                         :class="{'active': $store.global.activeTab === 'memory'}"
                         @click="$store.global.activeTab = 'memory'">
                         <svg class="w-5 h-5 text-indigo-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -812,6 +821,8 @@
             <div x-show="$store.global.activeTab === 'prompt'" x-load-view="'prompt'" x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from" class="w-full"></div>
             <div x-show="$store.global.activeTab === 'openclaw'" x-load-view="'openclaw'" x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from" class="w-full"></div>
             <div x-show="$store.global.activeTab === 'evolution'" x-load-view="'evolution'" x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from" class="w-full"></div>
+            <div x-show="$store.global.activeTab === 'moodtracker'" x-load-view="'moodtracker'"
+                x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from" class="w-full"></div>
             <div x-show="$store.global.activeTab === 'ui-evolution'" x-load-view="'ui-evolution'" x-transition:enter="fade-enter-active" x-transition:enter-start="fade-enter-from" class="w-full"></div>
 
             <!-- Recovered Capability Views -->
@@ -1225,6 +1236,7 @@
     <script src="js/components/network.js"></script>
     <script src="js/components/keyring.js"></script>
     <script src="js/components/evolution.js"></script>
+    <script src="js/components/mood-tracker.js"></script>
     <script src="js/components/openclaw.js"></script>
 
     <!-- 4. App (registers Alpine components from window.Components) -->

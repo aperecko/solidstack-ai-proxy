@@ -91,6 +91,53 @@ export function isNetworkError(error) {
 import https from 'https';
 import http from 'http';
 import { Readable } from 'stream';
+import { HttpsProxyAgent } from 'https-proxy-agent';
+import { HttpProxyAgent } from 'http-proxy-agent';
+
+/**
+ * Determine the forward-proxy agent for native https/http requests.
+ *
+ * Honors HTTP_PROXY/HTTPS_PROXY and the NO_PROXY glob-as-suffix list (env
+ * or explicit array). Loop safety: the cloud-code hosts pinned to 127.0.0.1
+ * in /etc/hosts (cloudcode-pa.googleapis.com, daily-cloudcode-pa.googleapis.com)
+ * MUST be in NO_PROXY — sending their CONNECT to ja3proxy would make ja3proxy
+ * resolve them back to the local ssl-proxy interceptor on :443, looping the pile.
+ * Non-pinned googleapis hosts (daily-cloudcode-pa.sandbox.googleapis.com) are
+ * proxied through ja3proxy to get a Chrome TLS fingerprint upstream.
+ */
+const PINNED_BY_ETC_HOSTS = ['cloudcode-pa.googleapis.com', 'daily-cloudcode-pa.googleapis.com'];
+
+function noProxyList() {
+    const env = process.env.no_proxy || process.env.NO_PROXY || '';
+    const entries = env.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+    for (const p of PINNED_BY_ETC_HOSTS) {
+        if (!entries.includes(p)) entries.push(p);
+    }
+    return entries;
+}
+
+function isNoProxyHost(hostname, entries) {
+    const host = String(hostname || '').toLowerCase().replace(/\.$/, '');
+    for (const e of entries) {
+        if (e === '*') return true;
+        if (e.startsWith('.')) { if (host.endsWith(e)) return true; continue; }
+        if (host === e) return true;
+        if (host.endsWith('.' + e)) return true;
+    }
+    return false;
+}
+
+export function proxyAgentFor(url) {
+    const proxyUrl = process.env.https_proxy || process.env.HTTPS_PROXY ||
+        process.env.http_proxy || process.env.HTTP_PROXY;
+    if (!proxyUrl) return undefined;
+    const u = new URL(url);
+    const entries = noProxyList();
+    if (isNoProxyHost(u.hostname, entries)) return undefined;
+    return u.protocol === 'http:'
+        ? new HttpProxyAgent(proxyUrl)
+        : new HttpsProxyAgent(proxyUrl);
+}
 
 /**
  * Resilient native HTTPS/HTTP fetch transport that bypasses undici socket stalls on macOS/multi-WAN.
@@ -110,11 +157,13 @@ export async function throttledFetch(url, options = {}) {
         try {
             const u = new URL(url);
             const protocol = u.protocol === 'http:' ? http : https;
+            const proxyAgent = options.agent || proxyAgentFor(url);
             const req = protocol.request(u, {
                 method: options.method || 'GET',
                 headers: options.headers || {},
                 signal: options.signal,
-                timeout: options.timeout || 60000
+                timeout: options.timeout || 60000,
+                ...(proxyAgent ? { agent: proxyAgent } : {})
             }, (res) => {
                 let bodyPromise = null;
                 const getBuffer = () => {

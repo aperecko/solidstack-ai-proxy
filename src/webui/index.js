@@ -15,9 +15,12 @@
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
+import { fileURLToPath } from 'url';
 import express from 'express';
 import { getPublicConfig, saveConfig, config } from '../config.js';
 import { DEFAULT_PORT, ACCOUNT_CONFIG_PATH, MAX_ACCOUNTS, DEFAULT_PRESETS, DEFAULT_SERVER_PRESETS } from '../constants.js';
+
+const OMNI_SYNC_SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), '../account-manager/omniroute_sync.py');
 import { readClaudeConfig, updateClaudeConfig, replaceClaudeConfig, getClaudeConfigPath, readPresets, savePreset, deletePreset } from '../utils/claude-config.js';
 import { readServerPresets, saveServerPreset, updateServerPreset, deleteServerPreset } from '../utils/server-presets.js';
 import { logger } from '../utils/logger.js';
@@ -97,6 +100,29 @@ async function removeAccount(email) {
 async function addAccount(accountData) {
     const { accounts, settings, activeIndex } = await loadAccounts(ACCOUNT_CONFIG_PATH);
 
+    // Auto-assign corporateFootprint if not explicitly provided
+    if (!accountData.corporateFootprint && accountData.email) {
+        if (accountData.email.endsWith('@adamassist.com')) {
+            accountData.corporateFootprint = {
+                role: 'Swarm Worker',
+                region: 'US-Detroit',
+                egressNode: 'dtw.socks.privado.io'
+            };
+        } else if (accountData.email.endsWith('@reseller.mysolidstate.ca')) {
+            accountData.corporateFootprint = {
+                role: 'Swarm Worker',
+                region: 'US-Dallas',
+                egressNode: 'dfw.socks.privado.io'
+            };
+        } else {
+            accountData.corporateFootprint = {
+                role: 'Personal',
+                region: 'Local',
+                egressNode: 'local'
+            };
+        }
+    }
+
     // Check if account already exists
     const existingIndex = accounts.findIndex(a => a.email === accountData.email);
     if (existingIndex !== -1) {
@@ -131,6 +157,15 @@ async function addAccount(accountData) {
     }
 
     await saveAccounts(ACCOUNT_CONFIG_PATH, accounts, settings, activeIndex);
+
+    // Direct In-Line Sync to OmniRoute SQLite provider_connections
+    try {
+        const { execSync } = await import('child_process');
+        execSync(`python3 "${OMNI_SYNC_SCRIPT}" "${accountData.email}"`, { stdio: 'inherit' });
+        logger.info(`[WebUI] Direct In-Line Sync: Synced ${accountData.email} to OmniRoute SQLite.`);
+    } catch (e) {
+        logger.warn(`[WebUI] OmniRoute direct sync note for ${accountData.email}: ${e.message}`);
+    }
 }
 
 /**
@@ -307,6 +342,10 @@ export function mountWebUI(app, dirname, accountManager) {
     const distPath = path.join(dirname, '../../dist');
     if (fs.existsSync(distPath)) {
         app.use('/control-plane', express.static(distPath));
+        // Vite emits root-relative asset URLs. Mirror the built asset directory
+        // under the gateway root so the prefixed control plane can load its CSS
+        // and JS without changing the generated bundle.
+        app.use('/assets', express.static(path.join(distPath, 'assets')));
     }
 
     // Legacy Commander assets and views remain the default dashboard.
