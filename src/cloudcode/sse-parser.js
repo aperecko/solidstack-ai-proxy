@@ -51,10 +51,17 @@ export async function parseThinkingSSEResponse(response, originalModel) {
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
+        let lineStart = 0;
+        let lineEnd = buffer.indexOf('\n');
 
-        for (const line of lines) {
+        while (lineEnd !== -1) {
+            let line = buffer.substring(lineStart, lineEnd);
+            if (line.endsWith('\r')) {
+                line = line.slice(0, -1);
+            }
+            lineStart = lineEnd + 1;
+            lineEnd = buffer.indexOf('\n', lineStart);
+
             if (!line.startsWith('data:')) continue;
             const jsonText = line.slice(5).trim();
             if (!jsonText) continue;
@@ -100,6 +107,7 @@ export async function parseThinkingSSEResponse(response, originalModel) {
                 logger.debug('[CloudCode] SSE parse warning:', e.message, 'Raw:', jsonText.slice(0, 100));
             }
         }
+        buffer = lineStart > 0 ? buffer.substring(lineStart) : buffer;
     }
 
     flushThinking();

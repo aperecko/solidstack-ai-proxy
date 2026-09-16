@@ -92,7 +92,25 @@ import https from 'https';
 import http from 'http';
 import { Readable } from 'stream';
 import { HttpsProxyAgent } from 'https-proxy-agent';
-import { HttpProxyAgent } from 'http-proxy-agent';
+
+// Persistent connection pools for HTTP and HTTPS to minimize TTFT and eliminate handshake overhead
+export const pooledHttpAgent = new http.Agent({
+    keepAlive: true,
+    keepAliveMsecs: 30000,
+    maxSockets: 128,
+    maxFreeSockets: 32,
+    timeout: 60000
+});
+
+export const pooledHttpsAgent = new https.Agent({
+    keepAlive: true,
+    keepAliveMsecs: 30000,
+    maxSockets: 128,
+    maxFreeSockets: 32,
+    timeout: 60000
+});
+
+const proxyAgentCache = new Map();
 
 /**
  * Determine the forward-proxy agent for native https/http requests.
@@ -134,9 +152,20 @@ export function proxyAgentFor(url) {
     const u = new URL(url);
     const entries = noProxyList();
     if (isNoProxyHost(u.hostname, entries)) return undefined;
-    return u.protocol === 'http:'
-        ? new HttpProxyAgent(proxyUrl)
-        : new HttpsProxyAgent(proxyUrl);
+
+    const cacheKey = `${proxyUrl}|${u.protocol}`;
+    let cached = proxyAgentCache.get(cacheKey);
+    if (!cached) {
+        cached = new HttpsProxyAgent(proxyUrl, {
+            keepAlive: true,
+            keepAliveMsecs: 30000,
+            maxSockets: 128,
+            maxFreeSockets: 32,
+            timeout: 60000
+        });
+        proxyAgentCache.set(cacheKey, cached);
+    }
+    return cached;
 }
 
 /**
@@ -157,13 +186,15 @@ export async function throttledFetch(url, options = {}) {
         try {
             const u = new URL(url);
             const protocol = u.protocol === 'http:' ? http : https;
+            const defaultAgent = protocol === http ? pooledHttpAgent : pooledHttpsAgent;
             const proxyAgent = options.agent || proxyAgentFor(url);
+            const agentToUse = proxyAgent || defaultAgent;
             const req = protocol.request(u, {
                 method: options.method || 'GET',
                 headers: options.headers || {},
                 signal: options.signal,
                 timeout: options.timeout || 60000,
-                ...(proxyAgent ? { agent: proxyAgent } : {})
+                agent: agentToUse
             }, (res) => {
                 let bodyPromise = null;
                 const getBuffer = () => {
