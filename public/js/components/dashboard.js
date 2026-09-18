@@ -47,20 +47,7 @@ window.Components.dashboard = () => ({
                 this.fetchKeyringStatus();
             }
         }, 60000);
-    },
 
-    async fetchKeyringStatus() {
-        try {
-            const res = await fetch('/api/keyring/status');
-            if (res.ok) {
-                const data = await res.json();
-                if (!this.$store.data) this.$store.data = {};
-                this.$store.data.keyringStatus = data;
-            }
-        } catch (e) {
-            console.error('Failed to fetch keyring status', e);
-        }
-    },
         // Update stats when dashboard becomes active (skip initial trigger)
         this.$watch('$store.global.activeTab', (val, oldVal) => {
             if (val === 'dashboard' && oldVal !== undefined) {
@@ -121,6 +108,19 @@ window.Components.dashboard = () => ({
                     }
                 }
             });
+        }
+    },
+
+    async fetchKeyringStatus() {
+        try {
+            const res = await fetch('/api/keyring/status');
+            if (res.ok) {
+                const data = await res.json();
+                if (!this.$store.data) this.$store.data = {};
+                this.$store.data.keyringStatus = data;
+            }
+        } catch (e) {
+            console.error('Failed to fetch keyring status', e);
         }
     },
 
