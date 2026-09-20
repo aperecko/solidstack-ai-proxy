@@ -24,13 +24,24 @@ const tests = [
     { name: 'Streaming Whitespace', file: 'test-streaming-whitespace.cjs' },
     { name: '403 Account Rotation (Unit)', file: 'test-403-account-rotation.cjs' },
     { name: '403 Account Rotation (Integration)', file: 'test-403-integration.cjs' },
-    { name: 'Version Detection', file: 'test-version-detection.js' }
+    { name: 'Version Detection', file: 'test-version-detection.js' },
+    // Python: Cloud Code request-shape regression + optional JS cross-language parity.
+    // Offline by default; pass --live <email> to assert real text + usageMetadata.
+    { name: 'Google AI Connector (Python)', file: 'test-google-ai-connector.py', interpreter: 'python3.13' }
 ];
+
+/**
+ * Pick an interpreter for a test file. Python tests declare `interpreter`;
+ * everything else runs under node.
+ */
+function interpreterFor(test) {
+    return test.interpreter || 'node';
+}
 
 async function runTest(test) {
     return new Promise((resolve) => {
         const testPath = path.join(__dirname, test.file);
-        const child = spawn('node', [testPath], {
+        const child = spawn(interpreterFor(test), [testPath], {
             stdio: 'inherit'
         });
 
