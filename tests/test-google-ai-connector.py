@@ -175,6 +175,80 @@ def test_sse_parser():
     check("text after thinking", parts[1].get("text") == "hi")
 
 
+def test_network_hardening():
+    """TLS is enforced for the request URL and for every redirect hop."""
+    import urllib.error
+
+    try:
+        cc._post("http://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist", {}, {})
+        check("http:// endpoint refused", False, "no error raised")
+    except ValueError as exc:
+        check("http:// endpoint refused", "non-HTTPS" in str(exc), str(exc))
+    except Exception as exc:
+        check("http:// endpoint refused", False, f"{type(exc).__name__}: {exc}")
+
+    handler = cc._HttpsOnlyRedirectHandler()
+    try:
+        handler.redirect_request(None, None, 302, "Found", {}, "http://evil.example.com/")
+        check("redirect downgrade to http:// refused", False, "no error raised")
+    except urllib.error.URLError as exc:
+        check("redirect downgrade to http:// refused", "non-HTTPS redirect" in str(exc), str(exc))
+    except Exception as exc:
+        check("redirect downgrade to http:// refused", False, f"{type(exc).__name__}: {exc}")
+
+    check("upstream error body read is bounded", cc.MAX_ERROR_BODY_BYTES <= 65536,
+          f"MAX_ERROR_BODY_BYTES={cc.MAX_ERROR_BODY_BYTES}")
+
+
+def test_error_surfacing():
+    """A terminal ban must not be masked by a fallback project."""
+    original = cc.load_code_assist
+
+    def raiser(message):
+        def _raise(*_args, **_kwargs):
+            raise RuntimeError(message)
+        return _raise
+
+    try:
+        cc.invalidate()
+        cc.load_code_assist = raiser("ACCOUNT_BANNED: disabled for violation of terms of service")
+        try:
+            cc.get_project_id("banned@example.invalid", "TOKEN")
+            check("ACCOUNT_BANNED propagates out of get_project_id", False, "swallowed")
+        except RuntimeError as exc:
+            check("ACCOUNT_BANNED propagates out of get_project_id",
+                  "ACCOUNT_BANNED" in str(exc), str(exc))
+
+        cc.invalidate()
+        cc.load_code_assist = raiser("boom")
+        try:
+            cc.get_project_id("noproj@example.invalid", "TOKEN")
+            check("unresolvable project raises instead of silent DEFAULT fallback",
+                  False, "returned a fallback project")
+        except RuntimeError as exc:
+            check("unresolvable project raises instead of silent DEFAULT fallback",
+                  "boom" in str(exc), str(exc))
+    finally:
+        cc.load_code_assist = original
+        cc.invalidate()
+
+
+def test_session_store_permissions():
+    """The session store must not be group/world readable."""
+    import os
+    import stat as stat_mod
+
+    cc._save_sessions()
+    if not cc.SESSION_FILE.exists():
+        check("session store written", False, f"{cc.SESSION_FILE} missing")
+        return
+
+    file_mode = stat_mod.S_IMODE(os.stat(cc.SESSION_FILE).st_mode)
+    dir_mode = stat_mod.S_IMODE(os.stat(cc.SESSION_DIR).st_mode)
+    check("session file has no group/other bits", file_mode & 0o077 == 0, oct(file_mode))
+    check("session dir has no group/other bits", dir_mode & 0o077 == 0, oct(dir_mode))
+
+
 def test_js_cross_language_parity():
     """Diff this port against the real JS builder. The strongest shape guard."""
     if not shutil.which("node"):
@@ -217,18 +291,31 @@ console.log(JSON.stringify({{
     ours["headers"] = cc.build_headers(
         "TOKEN", "gemini-2.5-flash", "text/event-stream", ours["payload"]["request"]["sessionId"])
 
+    # requestId and sessionId are deliberately random per process, so they are
+    # normalised out; their presence and mutual consistency are asserted instead.
+    # (Comparing them directly only ever passed by accident, because the JS and
+    # Python implementations happen to share ~/.solidstack/sessions.)
+    volatile = {"requestId", "sessionId", "X-Machine-Session-Id"}
+
     def strip(obj):
         if isinstance(obj, dict):
-            return {k: strip(v) for k, v in sorted(obj.items()) if k != "requestId"}
+            return {k: strip(v) for k, v in sorted(obj.items()) if k not in volatile}
         if isinstance(obj, list):
             return [strip(v) for v in obj]
         return obj
 
     reference_stripped = {
         "payload": strip(reference["payload"]),
-        "headers": strip({k: v for k, v in reference["headers"].items()}),
+        "headers": strip(reference["headers"]),
     }
     ours_stripped = {"payload": strip(ours["payload"]), "headers": strip(ours["headers"])}
+
+    check("JS session header matches its own payload sessionId",
+          reference["headers"].get("X-Machine-Session-Id")
+          == reference["payload"]["request"]["sessionId"])
+    check("both implementations emit a sessionId",
+          bool(reference["payload"]["request"].get("sessionId"))
+          and bool(ours["payload"]["request"].get("sessionId")))
 
     check("payload identical to JS buildCloudCodeRequest",
           reference_stripped["payload"] == ours_stripped["payload"],
@@ -298,6 +385,12 @@ def main():
     test_thinking_and_caps()
     print("[sse parser]")
     test_sse_parser()
+    print("[network hardening]")
+    test_network_hardening()
+    print("[error surfacing]")
+    test_error_surfacing()
+    print("[session store permissions]")
+    test_session_store_permissions()
     print("[js cross-language parity]")
     test_js_cross_language_parity()
     if args.live:

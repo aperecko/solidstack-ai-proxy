@@ -64,9 +64,13 @@ DEFAULT_MAX_OUTPUT_TOKENS = 8192
 CAPACITY_BACKOFF_TIERS_MS = [5000, 10000, 20000, 30000, 60000]
 DEFAULT_CAPACITY_RETRIES = 1
 
-# Session store mirrors session-manager.js
+# Session store mirrors session-manager.js.
+# Restricted modes: the store lives beside other ~/.solidstack state, so it is
+# not world-readable even though session IDs are not credentials themselves.
 SESSION_DIR = Path.home() / ".solidstack" / "sessions"
 SESSION_FILE = SESSION_DIR / "cloudcode-sessions.json"
+SESSION_DIR_MODE = 0o700
+SESSION_FILE_MODE = 0o600
 
 # ── Enums (constants.js IDE_TYPE / PLATFORM / PLUGIN_TYPE) ───────────────────
 IDE_TYPE_ANTIGRAVITY = 9
@@ -236,8 +240,17 @@ def _load_sessions() -> None:
 def _save_sessions() -> None:
     try:
         SESSION_DIR.mkdir(parents=True, exist_ok=True)
+        try:
+            os.chmod(SESSION_DIR, SESSION_DIR_MODE)
+        except OSError:
+            pass
         tmp = SESSION_FILE.with_suffix(f".tmp.{int(time.time() * 1000)}")
         tmp.write_text(json.dumps(_session_cache, indent=2))
+        # Chmod before the atomic replace so the file is never briefly world-readable.
+        try:
+            os.chmod(tmp, SESSION_FILE_MODE)
+        except OSError:
+            pass
         tmp.replace(SESSION_FILE)
     except Exception:
         pass
@@ -261,16 +274,41 @@ _load_sessions()
 
 
 # ── HTTP ─────────────────────────────────────────────────────────────────────
+class _HttpsOnlyRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """
+    Refuse any redirect that would drop the request off TLS.
+
+    urllib follows cross-scheme redirects by default, so an intercepted or
+    misconfigured upstream could silently downgrade a bearer-token request to
+    cleartext HTTP. Certificates are already verified by the default
+    HTTPSHandler; this closes the downgrade path.
+    """
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not str(newurl).lower().startswith("https://"):
+            raise urllib.error.URLError(f"refusing non-HTTPS redirect to {newurl}")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_OPENER = urllib.request.build_opener(_HttpsOnlyRedirectHandler)
+
+# Cap on how much of an upstream error body is buffered into memory before
+# parsing, so a hostile/oversized response cannot exhaust the process.
+MAX_ERROR_BODY_BYTES = 8192
+
+
 def _post(url: str, body: dict, headers: dict, timeout: int = 60):
+    if not str(url).lower().startswith("https://"):
+        raise ValueError(f"refusing non-HTTPS endpoint: {url}")
     req = urllib.request.Request(
         url, data=json.dumps(body).encode(), headers=headers, method="POST"
     )
-    return urllib.request.urlopen(req, timeout=timeout)
+    return _OPENER.open(req, timeout=timeout)
 
 
 def _error_body(exc: urllib.error.HTTPError) -> str:
     try:
-        return exc.read().decode()[:800]
+        return exc.read(MAX_ERROR_BODY_BYTES).decode()[:800]
     except Exception:
         return ""
 
@@ -397,15 +435,31 @@ def get_project_id(account_email: str, token: str, refresh: bool = False) -> str
         if now < expiry:
             return project
 
+    discovery_error = None
     project = None
     try:
         data = load_code_assist(token)
         project = extract_project(data)
-    except Exception:
-        project = None
+    except RuntimeError as exc:
+        # A ToS ban is terminal. Falling through to a fallback project would
+        # mask it behind a confusing downstream error (the same silent-failure
+        # shape that hid the original empty-response defect).
+        if "ACCOUNT_BANNED" in str(exc):
+            raise
+        discovery_error = exc
+    except Exception as exc:
+        discovery_error = exc
 
     if not project:
         project = _sqlite_project(account_email)
+
+    # Deliberate divergence from the JS fallback-to-DEFAULT_PROJECT_ID: if live
+    # discovery failed and no cached project exists, surface the real cause
+    # instead of sending a request that is guaranteed to fail confusingly.
+    if not project and discovery_error is not None:
+        raise RuntimeError(
+            f"could not resolve a project for {account_email}: {discovery_error}"
+        )
 
     if not project:
         project = DEFAULT_PROJECT_ID
