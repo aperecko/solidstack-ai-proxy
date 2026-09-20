@@ -26,6 +26,7 @@ Wire-format invariants (these are the ones the first Python port got wrong):
 
 import json
 import os
+import socket
 import time
 import uuid
 import platform as _platform
@@ -46,9 +47,29 @@ PROD = "https://cloudcode-pa.googleapis.com"
 # interception, so only the sandbox endpoint reliably reaches real Google upstream.
 ENDPOINTS = [SANDBOX, DAILY, PROD]
 
-# loadCodeAssist order (constants.js LOAD_CODE_ASSIST_ENDPOINTS) — prod first,
-# it works better for fresh/unprovisioned accounts.
-LOAD_CODE_ASSIST_ENDPOINTS = [PROD, DAILY]
+# loadCodeAssist order.
+#
+# Deliberate divergence from constants.js LOAD_CODE_ASSIST_ENDPOINTS [PROD, DAILY],
+# based on measurement rather than preference. On the SolidStack host, /etc/hosts
+# pins cloudcode-pa.googleapis.com and daily-cloudcode-pa.googleapis.com to
+# 127.0.0.1 for the Antigravity interceptor, so a cold discovery paid ~8.4s per
+# unreachable endpoint before falling through. Measured medians, same account and
+# token, identical 3869-byte response body from all three:
+#
+#   PROD     8,641ms
+#   DAILY    8,448ms
+#   SANDBOX    660ms   <- 13x faster, byte-identical payload
+#
+# constants.js already notes that "only the sandbox endpoint reliably reaches real
+# Google upstream", which applies to discovery as much as to generation, so
+# sandbox-first is also closer to the documented intent. The other endpoints are
+# still tried, in order, as fallbacks.
+LOAD_CODE_ASSIST_ENDPOINTS = [SANDBOX, PROD, DAILY]
+
+# Per-attempt ceiling for discovery so a black-holed endpoint cannot dominate a
+# request (a /etc/hosts-mapped host with nothing listening hangs until this fires).
+# Override with ANTIGRAVITY_DISCOVERY_TIMEOUT (seconds).
+DISCOVERY_TIMEOUT_S = float(os.environ.get("ANTIGRAVITY_DISCOVERY_TIMEOUT", "5"))
 
 # constants.js DEFAULT_PROJECT_ID
 DEFAULT_PROJECT_ID = "rising-fact-p41fc"
@@ -372,7 +393,7 @@ def load_code_assist(token: str, project_id: str = None) -> dict:
         url = f"{endpoint}/v1internal:loadCodeAssist"
         headers = build_headers(token, accept="application/json")
         try:
-            with _post(url, body, headers, timeout=20) as resp:
+            with _post(url, body, headers, timeout=DISCOVERY_TIMEOUT_S) as resp:
                 data = json.loads(resp.read().decode())
             succeeded = True
             return data
@@ -381,6 +402,11 @@ def load_code_assist(token: str, project_id: str = None) -> dict:
             if _is_banned(raw):
                 raise RuntimeError(f"ACCOUNT_BANNED: {raw}")
             last_error = f"HTTP {exc.code} at {endpoint}: {raw}"
+            continue
+        except (TimeoutError, socket.timeout) as exc:
+            # Unreachable/black-holed endpoint: abandon it and try the next one
+            # immediately rather than waiting out the full connect timeout again.
+            last_error = f"timeout after {DISCOVERY_TIMEOUT_S:g}s at {endpoint} ({exc})"
             continue
         except Exception as exc:
             last_error = f"{type(exc).__name__} at {endpoint}: {exc}"

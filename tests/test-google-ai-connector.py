@@ -233,6 +233,50 @@ def test_error_surfacing():
         cc.invalidate()
 
 
+def test_discovery_endpoint_order():
+    """Discovery must try a reachable endpoint first and bound each attempt.
+
+    Measured on the SolidStack host with /etc/hosts pinning the prod and daily
+    Cloud Code hosts to 127.0.0.1: get_project_id cost ~8.4s per unreachable
+    endpoint (prod-first ordering) versus ~0.68s sandbox-first, for a
+    byte-identical 3869-byte loadCodeAssist response. A revert to prod-first
+    reintroduces ~7.8s of dead time per cold discovery, so pin it here.
+    """
+    check("discovery tries sandbox first",
+          cc.LOAD_CODE_ASSIST_ENDPOINTS[0] == cc.SANDBOX,
+          f"order={cc.LOAD_CODE_ASSIST_ENDPOINTS}")
+    check("discovery still falls back to prod and daily",
+          cc.PROD in cc.LOAD_CODE_ASSIST_ENDPOINTS and cc.DAILY in cc.LOAD_CODE_ASSIST_ENDPOINTS)
+    check("per-attempt discovery timeout is bounded",
+          0 < cc.DISCOVERY_TIMEOUT_S <= 10, f"DISCOVERY_TIMEOUT_S={cc.DISCOVERY_TIMEOUT_S}")
+    check("generation order is sandbox-first too",
+          cc.ENDPOINTS[0] == cc.SANDBOX, f"order={cc.ENDPOINTS}")
+
+
+def test_cold_discovery_latency(email):
+    """Cold discovery latency guard (live only).
+
+    One observed run, not field data: a wide 5s bound that only trips on the
+    ~8.4s prod-first regression, not on ordinary network variance.
+    """
+    import time
+
+    cc.invalidate()
+    token = cc.get_access_token(email)
+    try:
+        started = time.perf_counter()
+        cc.get_project_id(email, token, refresh=True)
+        elapsed_ms = (time.perf_counter() - started) * 1000
+    except Exception as exc:
+        check("cold project discovery completes", False, f"{type(exc).__name__}: {exc}")
+        return
+    finally:
+        cc.invalidate()
+
+    print(f"       cold discovery: {elapsed_ms:.0f}ms (budget 5000ms; was ~8445ms prod-first)")
+    check("cold discovery within 5s budget", elapsed_ms < 5000, f"took {elapsed_ms:.0f}ms")
+
+
 def test_session_store_permissions():
     """The session store must not be group/world readable."""
     import os
@@ -389,11 +433,15 @@ def main():
     test_network_hardening()
     print("[error surfacing]")
     test_error_surfacing()
+    print("[discovery endpoint order]")
+    test_discovery_endpoint_order()
     print("[session store permissions]")
     test_session_store_permissions()
     print("[js cross-language parity]")
     test_js_cross_language_parity()
     if args.live:
+        print("[live cold discovery latency]")
+        test_cold_discovery_latency(args.live)
         print("[live end-to-end]")
         test_live(args.live, args.model)
 
