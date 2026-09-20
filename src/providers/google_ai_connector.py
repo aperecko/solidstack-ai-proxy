@@ -1,38 +1,51 @@
 #!/usr/bin/env python3
 """
 google_ai_connector.py
-Exact wire-format match of the Antigravity IDE proxy, ported from the reference
-JS implementation:
+OmniRoute Google auth hub — Cloud Code generation for Antigravity-linked accounts.
 
-  - src/cloudcode/request-builder.js  (buildCloudCodeRequest / buildHeaders)
-  - src/cloudcode/session-manager.js  (deriveSessionId)
-  - src/cloudcode/sse-parser.js       (inner `data.response || data` unwrapping)
-  - src/constants.js                  (headers, enums, endpoint order)
-  - src/account-manager/credentials.js (discoverProject / loadCodeAssist-first)
+Ported from the reference JS implementation, against which the request shape is
+verified field-for-field in tests/test-google-ai-connector.py:
+  src/cloudcode/request-builder.js   buildCloudCodeRequest / buildHeaders
+  src/cloudcode/session-manager.js   deriveSessionId
+  src/cloudcode/sse-parser.js        `data.response || data` unwrapping
+  src/cloudcode/streaming-handler.js endpoint fallback + capacity backoff
+  src/account-manager/credentials.js loadCodeAssist-first project discovery
+  src/constants.js                   enums, headers, endpoint order
 
-Required flow:
-  1. loadCodeAssist  -> cloudaicompanionProject (+ subscription tier)
-  2. streamGenerateContent with that project, a stable sessionId, and the
-     injected Antigravity systemInstruction
+Flow: loadCodeAssist -> cloudaicompanionProject -> streamGenerateContent.
 
-Wire-format invariants (these are the ones the first Python port got wrong):
-  * `metadata` is NOT a valid top-level field on streamGenerateContent -> 400.
-    CLIENT_METADATA belongs to loadCodeAssist/onboardUser only.
-  * `request.systemInstruction` is REQUIRED and must carry role: "user".
-  * `request.sessionId` must match the `X-Machine-Session-Id` request header.
-  * `X-Client-Version` and `User-Agent` must be present.
-  * PLATFORM.DARWIN_ARM64 is 2 (not 3).
+Wire invariants that are easy to get wrong, each of which produced a silent
+empty response before:
+  * `metadata` is NOT a valid top-level generate field (HTTP 400). CLIENT_METADATA
+    belongs to loadCodeAssist only.
+  * `request.systemInstruction` is required and must carry role "user".
+  * `request.sessionId` must equal the X-Machine-Session-Id header.
+  * X-Client-Version and User-Agent must be present.
+  * PLATFORM.DARWIN_ARM64 is 2, not 3.
+
+Documented divergences from the JS reference:
+  * Discovery and generation both try the sandbox endpoint first. Measured: prod
+    and daily cost ~8.4s per attempt on this host (they are /etc/hosts-mapped to
+    a loopback address for the Antigravity interceptor) versus ~0.66s for sandbox,
+    with a byte-identical loadCodeAssist body. constants.js already notes that only
+    sandbox reliably reaches real Google upstream, so this matches its intent.
+  * A failed discovery raises with the real cause instead of silently falling back
+    to DEFAULT_PROJECT_ID, so a terminal ban cannot masquerade as a broken request.
+  * Content conversion is text-only and rejects other block types rather than
+    emitting a wrong functionCall mapping; tool/image blocks need the JS converter.
 """
 
+import dataclasses
 import json
 import os
-import socket
-import time
-import uuid
 import platform as _platform
+import re
+import socket
+import sqlite3
+import time
 import urllib.error
-import urllib.parse
 import urllib.request
+import uuid
 from pathlib import Path
 
 from auth.google_credential_manager import get_access_token
@@ -42,83 +55,60 @@ SANDBOX = "https://daily-cloudcode-pa.sandbox.googleapis.com"
 DAILY = "https://daily-cloudcode-pa.googleapis.com"
 PROD = "https://cloudcode-pa.googleapis.com"
 
-# Generation fallback order (constants.js ANTIGRAVITY_ENDPOINT_FALLBACKS).
-# Sandbox first: the daily/prod hosts may be redirected to localhost for client
-# interception, so only the sandbox endpoint reliably reaches real Google upstream.
+# Generation fallbacks (constants.js ANTIGRAVITY_ENDPOINT_FALLBACKS).
 ENDPOINTS = [SANDBOX, DAILY, PROD]
 
-# loadCodeAssist order.
-#
-# Deliberate divergence from constants.js LOAD_CODE_ASSIST_ENDPOINTS [PROD, DAILY],
-# based on measurement rather than preference. On the SolidStack host, /etc/hosts
-# pins cloudcode-pa.googleapis.com and daily-cloudcode-pa.googleapis.com to
-# 127.0.0.1 for the Antigravity interceptor, so a cold discovery paid ~8.4s per
-# unreachable endpoint before falling through. Measured medians, same account and
-# token, identical 3869-byte response body from all three:
-#
-#   PROD     8,641ms
-#   DAILY    8,448ms
-#   SANDBOX    660ms   <- 13x faster, byte-identical payload
-#
-# constants.js already notes that "only the sandbox endpoint reliably reaches real
-# Google upstream", which applies to discovery as much as to generation, so
-# sandbox-first is also closer to the documented intent. The other endpoints are
-# still tried, in order, as fallbacks.
+# Discovery fallbacks. Sandbox first: see module docstring.
 LOAD_CODE_ASSIST_ENDPOINTS = [SANDBOX, PROD, DAILY]
 
-# Per-attempt ceiling for discovery so a black-holed endpoint cannot dominate a
-# request (a /etc/hosts-mapped host with nothing listening hangs until this fires).
-# Override with ANTIGRAVITY_DISCOVERY_TIMEOUT (seconds).
-DISCOVERY_TIMEOUT_S = float(os.environ.get("ANTIGRAVITY_DISCOVERY_TIMEOUT", "5"))
-
-# constants.js DEFAULT_PROJECT_ID
+# constants.js DEFAULT_PROJECT_ID — only used when discovery returns no project.
 DEFAULT_PROJECT_ID = "rising-fact-p41fc"
 
-# Model generation cap (constants.js GEMINI_MAX_OUTPUT_TOKENS)
-GEMINI_MAX_OUTPUT_TOKENS = 16384
-DEFAULT_MAX_OUTPUT_TOKENS = 8192
+DEFAULT_MODEL = "gemini-2.5-pro"
 
-# Progressive backoff for 503 MODEL_CAPACITY_EXHAUSTED (constants.js
-# CAPACITY_BACKOFF_TIERS_MS / MAX_CAPACITY_RETRIES). JS uses all five tiers
-# (worst case ~2 min on one endpoint); the library default is bounded so a
-# caller that does its own account rotation is not blocked for minutes.
+# request-converter.js: Gemini output is capped; every Gemini thinking version
+# shares one budget ceiling (thinking-utils.js GEMINI_THINKING_BUDGET_LIMITS).
+GEMINI_MAX_OUTPUT_TOKENS = 16384
+GEMINI_MAX_THINKING_BUDGET = 24576
+CLAUDE_DEFAULT_THINKING_BUDGET = 32000
+
+# constants.js CAPACITY_BACKOFF_TIERS_MS / MAX_CAPACITY_RETRIES. JS allows all
+# five tiers (~2 min worst case on one endpoint); the library default is bounded
+# so a caller doing its own account rotation is not blocked for minutes.
 CAPACITY_BACKOFF_TIERS_MS = [5000, 10000, 20000, 30000, 60000]
 DEFAULT_CAPACITY_RETRIES = 1
+DEFAULT_TIMEOUT_S = 120
 
-# Session store mirrors session-manager.js.
-# Restricted modes: the store lives beside other ~/.solidstack state, so it is
-# not world-readable even though session IDs are not credentials themselves.
-SESSION_DIR = Path.home() / ".solidstack" / "sessions"
-SESSION_FILE = SESSION_DIR / "cloudcode-sessions.json"
-SESSION_DIR_MODE = 0o700
-SESSION_FILE_MODE = 0o600
+# Per-attempt ceiling for discovery, so a black-holed endpoint cannot dominate a
+# request. Override with ANTIGRAVITY_DISCOVERY_TIMEOUT (seconds).
+DISCOVERY_TIMEOUT_S = float(os.environ.get("ANTIGRAVITY_DISCOVERY_TIMEOUT", "5"))
 
 # ── Enums (constants.js IDE_TYPE / PLATFORM / PLUGIN_TYPE) ───────────────────
 IDE_TYPE_ANTIGRAVITY = 9
 PLUGIN_TYPE_GEMINI = 2
-_PLATFORM_ENUM = {
+
+PLATFORM_VALUES = {
     ("darwin", "arm64"): 2,   # DARWIN_ARM64
     ("darwin", "x86_64"): 1,  # DARWIN_AMD64
-    ("darwin", "amd64"): 1,
     ("linux", "aarch64"): 4,  # LINUX_ARM64
     ("linux", "arm64"): 4,
     ("linux", "x86_64"): 3,   # LINUX_AMD64
     ("linux", "amd64"): 3,
     ("win32", "amd64"): 5,    # WINDOWS_AMD64
-    ("windows", "amd64"): 5,
-    ("windows", "x86_64"): 5,
 }
 
 
-def _platform_enum() -> int:
+def platform_enum() -> int:
     os_name = _platform.system().lower()
     arch = _platform.machine().lower()
-    return _PLATFORM_ENUM.get((os_name, arch), 0)
+    if os_name == "windows":
+        os_name = "win32"
+    return PLATFORM_VALUES.get((os_name, arch), 0)
 
 
 CLIENT_METADATA = {
     "ideType": IDE_TYPE_ANTIGRAVITY,
-    "platform": _platform_enum(),
+    "platform": platform_enum(),
     "pluginType": PLUGIN_TYPE_GEMINI,
 }
 
@@ -130,54 +120,50 @@ _FALLBACK_UA_VERSION = os.environ.get("FALLBACK_ANTIGRAVITY_VERSION", "2.0.3")
 
 _PRODUCT_JSON_PATHS = [
     "/Applications/Antigravity IDE.app/Contents/Resources/app/product.json",
-    str(Path.home() / "Applications/Antigravity IDE.app/Contents/Resources/app/product.json"),
     "/Applications/Antigravity.app/Contents/Resources/app/product.json",
     str(Path.home() / "Applications/Antigravity.app/Contents/Resources/app/product.json"),
 ]
 
-
-def _read_product_json() -> dict:
-    for raw in _PRODUCT_JSON_PATHS:
-        try:
-            with open(raw) as fh:
-                data = json.load(fh)
-            if data and (data.get("version") or data.get("ideVersion")):
-                return data
-        except Exception:
-            continue
-    return {}
-
-
-_PRODUCT_JSON = None
+_PRODUCT_JSON_CACHE = None
 
 
 def _product_json() -> dict:
-    global _PRODUCT_JSON
-    if _PRODUCT_JSON is None:
-        _PRODUCT_JSON = _read_product_json()
-    return _PRODUCT_JSON
+    global _PRODUCT_JSON_CACHE
+    if _PRODUCT_JSON_CACHE is None:
+        _PRODUCT_JSON_CACHE = {}
+        for path in _PRODUCT_JSON_PATHS:
+            try:
+                with open(path) as handle:
+                    data = json.load(handle)
+            except Exception:
+                continue
+            if data and (data.get("version") or data.get("ideVersion")):
+                _PRODUCT_JSON_CACHE = data
+                break
+    return _PRODUCT_JSON_CACHE
 
 
 def get_client_version() -> str:
-    env = os.environ.get("ANTIGRAVITY_CLIENT_VERSION")
-    if env:
-        return env
-    return _product_json().get("version") or _FALLBACK_CLIENT_VERSION
-
-
-def _os_name() -> str:
-    name = _platform.system().lower()
-    return name if name in ("darwin", "win32", "linux") else "linux"
+    return (
+        os.environ.get("ANTIGRAVITY_CLIENT_VERSION")
+        or _product_json().get("version")
+        or _FALLBACK_CLIENT_VERSION
+    )
 
 
 def get_user_agent() -> str:
-    env = os.environ.get("FALLBACK_ANTIGRAVITY_VERSION")
-    version = env or _product_json().get("ideVersion") or _FALLBACK_UA_VERSION
-    return f"antigravity/{version} {_os_name()}/{_platform.machine().lower()}"
+    system = _platform.system().lower()
+    os_name = system if system in ("darwin", "win32", "linux") else "linux"
+    version = (
+        os.environ.get("FALLBACK_ANTIGRAVITY_VERSION")
+        or _product_json().get("ideVersion")
+        or _FALLBACK_UA_VERSION
+    )
+    return f"antigravity/{version} {os_name}/{_platform.machine().lower()}"
 
 
 def antigravity_headers() -> dict:
-    """Fresh header dict — values are read lazily so env/product.json overrides apply."""
+    """Read lazily so env / product.json overrides are picked up per call."""
     return {
         "User-Agent": get_user_agent(),
         "Content-Type": "application/json",
@@ -187,17 +173,13 @@ def antigravity_headers() -> dict:
     }
 
 
-# Back-compat alias (older callers imported the module-level constant)
-ANTIGRAVITY_HEADERS = antigravity_headers()
-
-
 def build_headers(token: str, model: str = "", accept: str = "application/json",
                   session_id: str = None) -> dict:
     """Port of request-builder.js buildHeaders()."""
     headers = {"Authorization": f"Bearer {token}", **antigravity_headers()}
     if session_id:
         headers["X-Machine-Session-Id"] = session_id
-    if model and "claude" in model.lower() and "thinking" in model.lower():
+    if model and get_model_family(model) == "claude" and "thinking" in model.lower():
         headers["anthropic-beta"] = "interleaved-thinking-2025-05-14"
     if accept != "application/json":
         headers["Accept"] = accept
@@ -223,7 +205,6 @@ def is_thinking_model(model_name: str) -> bool:
     if "gemini" in lower:
         if "thinking" in lower:
             return True
-        import re
         match = re.search(r"gemini-(\d+)", lower)
         if match and int(match.group(1)) >= 3:
             return True
@@ -238,43 +219,67 @@ ANTIGRAVITY_SYSTEM_INSTRUCTION = (
     "**Proactiveness**"
 )
 
-# ── Caches ───────────────────────────────────────────────────────────────────
-# { email -> (project_id, expiry_ts) }
-_project_cache: dict = {}
-# { email -> session_id }
-_session_cache: dict = {}
+
+def _system_instruction(system: str = None) -> dict:
+    """request-builder.js: inject the Antigravity identity plus a copy the model is
+    told to ignore, which stops it identifying as Antigravity in output."""
+    parts = [
+        {"text": ANTIGRAVITY_SYSTEM_INSTRUCTION},
+        {"text": f"Please ignore the following [ignore]{ANTIGRAVITY_SYSTEM_INSTRUCTION}[/ignore]"},
+    ]
+    if system:
+        parts.append({"text": system})
+    return {"role": "user", "parts": parts}
 
 
 # ── Session IDs (session-manager.js) ─────────────────────────────────────────
-def _load_sessions() -> None:
+# Session IDs are stable per account and persisted so prompt caching survives a
+# restart. Restricted modes: this store sits beside other ~/.solidstack state.
+SESSION_DIR = Path.home() / ".solidstack" / "sessions"
+SESSION_FILE = SESSION_DIR / "cloudcode-sessions.json"
+SESSION_DIR_MODE = 0o700
+SESSION_FILE_MODE = 0o600
+
+_session_cache: dict = {}
+
+
+def _read_session_file() -> dict:
     try:
-        if SESSION_FILE.exists():
-            data = json.loads(SESSION_FILE.read_text())
-            if isinstance(data, dict):
-                for key, value in data.items():
-                    if isinstance(value, str):
-                        _session_cache[key] = value
+        data = json.loads(SESSION_FILE.read_text())
     except Exception:
-        pass
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {k: v for k, v in data.items() if isinstance(v, str)}
 
 
-def _save_sessions() -> None:
+def _write_session_file(sessions: dict) -> None:
     try:
         SESSION_DIR.mkdir(parents=True, exist_ok=True)
-        try:
-            os.chmod(SESSION_DIR, SESSION_DIR_MODE)
-        except OSError:
-            pass
-        tmp = SESSION_FILE.with_suffix(f".tmp.{int(time.time() * 1000)}")
-        tmp.write_text(json.dumps(_session_cache, indent=2))
-        # Chmod before the atomic replace so the file is never briefly world-readable.
-        try:
-            os.chmod(tmp, SESSION_FILE_MODE)
-        except OSError:
-            pass
+        os.chmod(SESSION_DIR, SESSION_DIR_MODE)
+        tmp = SESSION_FILE.with_suffix(f".tmp.{os.getpid()}")
+        tmp.write_text(json.dumps(sessions, indent=2))
+        # chmod before the atomic replace so the file is never briefly world-readable
+        os.chmod(tmp, SESSION_FILE_MODE)
         tmp.replace(SESSION_FILE)
     except Exception:
         pass
+
+
+def _load_sessions() -> None:
+    _session_cache.update(_read_session_file())
+
+
+def _save_sessions() -> None:
+    """Merge into the file rather than overwriting it.
+
+    Another process may have derived sessions since this one loaded, and a
+    whole-file write would drop its entries -- silently breaking prompt-cache
+    continuity for accounts this process was never asked about.
+    """
+    merged = _read_session_file()
+    merged.update(_session_cache)
+    _write_session_file(merged)
 
 
 def _generate_binary_style_id() -> str:
@@ -291,18 +296,30 @@ def derive_session_id(account_email: str = None) -> str:
     return _session_cache[account_email]
 
 
+def clear_sessions(account_email: str = None) -> None:
+    """Drop stored session IDs, rotating prompt-cache continuity for the account."""
+    if account_email is None:
+        _session_cache.clear()
+        _write_session_file({})
+        return
+    _session_cache.pop(account_email, None)
+    # Remove from disk too: a merge-on-save would otherwise resurrect it.
+    remaining = _read_session_file()
+    remaining.pop(account_email, None)
+    _write_session_file(remaining)
+
+
 _load_sessions()
 
 
 # ── HTTP ─────────────────────────────────────────────────────────────────────
 class _HttpsOnlyRedirectHandler(urllib.request.HTTPRedirectHandler):
-    """
-    Refuse any redirect that would drop the request off TLS.
+    """Refuse a redirect that would drop the request off TLS.
 
     urllib follows cross-scheme redirects by default, so an intercepted or
-    misconfigured upstream could silently downgrade a bearer-token request to
-    cleartext HTTP. Certificates are already verified by the default
-    HTTPSHandler; this closes the downgrade path.
+    misconfigured upstream could downgrade a bearer-token POST to cleartext.
+    Certificates are already verified by the default HTTPSHandler; this closes
+    only the downgrade path.
     """
 
     def redirect_request(self, req, fp, code, msg, headers, newurl):
@@ -313,32 +330,44 @@ class _HttpsOnlyRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 _OPENER = urllib.request.build_opener(_HttpsOnlyRedirectHandler)
 
-# Cap on how much of an upstream error body is buffered into memory before
-# parsing, so a hostile/oversized response cannot exhaust the process.
+# Caps the buffered upstream error body so an oversized response cannot exhaust
+# memory just to produce a diagnostic.
 MAX_ERROR_BODY_BYTES = 8192
 
 
-def _post(url: str, body: dict, headers: dict, timeout: int = 60):
+def _post(url: str, body: dict, headers: dict, timeout: int):
     if not str(url).lower().startswith("https://"):
         raise ValueError(f"refusing non-HTTPS endpoint: {url}")
-    req = urllib.request.Request(
+    request = urllib.request.Request(
         url, data=json.dumps(body).encode(), headers=headers, method="POST"
     )
-    return _OPENER.open(req, timeout=timeout)
+    return _OPENER.open(request, timeout=timeout)
 
 
-def _error_body(exc: urllib.error.HTTPError) -> str:
+def _read_error(exc: urllib.error.HTTPError):
+    """Return (status, body), reading the body at most once.
+
+    HTTPError is a stream: a second read() returns b''. Retrying on capacity and
+    *then* classifying would otherwise lose the upstream reason and silently
+    disable the ban check, so the body is memoised on the exception.
+    """
+    body = getattr(exc, "_cc_body", None)
+    if body is None:
+        try:
+            body = exc.read(MAX_ERROR_BODY_BYTES).decode("utf-8", "replace")
+        except Exception:
+            body = ""
+        try:
+            exc._cc_body = body
+        except Exception:
+            pass
+    return exc.code, body
+
+
+def _error_reason(body: str) -> str:
+    """Google's structured reason, e.g. MODEL_CAPACITY_EXHAUSTED."""
     try:
-        return exc.read(MAX_ERROR_BODY_BYTES).decode()[:800]
-    except Exception:
-        return ""
-
-
-def _error_reason(raw: str) -> str:
-    """Pull Google's structured `reason` (e.g. MODEL_CAPACITY_EXHAUSTED)."""
-    try:
-        details = json.loads(raw).get("error", {}).get("details", [])
-        for detail in details:
+        for detail in json.loads(body).get("error", {}).get("details", []):
             if detail.get("reason"):
                 return detail["reason"]
     except Exception:
@@ -346,75 +375,74 @@ def _error_reason(raw: str) -> str:
     return ""
 
 
-def _is_banned(raw: str) -> bool:
-    lower = (raw or "").lower()
+def _is_banned(body: str) -> bool:
+    lower = (body or "").lower()
     return "has been disabled" in lower and "violation of terms of service" in lower
 
 
-def _is_capacity_exhausted(raw: str) -> bool:
-    """503 MODEL_CAPACITY_EXHAUSTED / error_number 2010 — retry same endpoint."""
-    return _error_reason(raw) == "MODEL_CAPACITY_EXHAUSTED" or "MODEL_CAPACITY_EXHAUSTED" in (raw or "")
+def _is_capacity_exhausted(body: str) -> bool:
+    return _error_reason(body) == "MODEL_CAPACITY_EXHAUSTED"
 
 
-def _open_capacity_aware(url: str, payload: dict, headers: dict, timeout: int,
-                        capacity_retries: int):
-    """
-    POST and retry the SAME endpoint with progressive backoff while upstream
-    reports MODEL_CAPACITY_EXHAUSTED (request-converter parity with the JS
-    streaming/message handlers). Returns the open response.
-
-    Non-capacity HTTP errors propagate untouched so the caller can decide
-    whether to fall through to the next endpoint.
-    """
+def _attempt(url: str, payload: dict, headers: dict, timeout: int, capacity_retries: int):
+    """Open one endpoint, retrying the same endpoint while upstream reports
+    model-capacity exhaustion (streaming-handler.js CAPACITY_BACKOFF_TIERS_MS)."""
     attempts = max(0, capacity_retries)
     for attempt in range(attempts + 1):
         try:
-            return _post(url, payload, headers, timeout=timeout)
+            return _post(url, payload, headers, timeout)
         except urllib.error.HTTPError as exc:
-            raw = _error_body(exc)
-            if attempt < attempts and _is_capacity_exhausted(raw):
+            _, body = _read_error(exc)
+            if attempt < attempts and _is_capacity_exhausted(body):
                 tier = CAPACITY_BACKOFF_TIERS_MS[min(attempt, len(CAPACITY_BACKOFF_TIERS_MS) - 1)]
                 time.sleep(tier / 1000.0)
                 continue
             raise
 
 
-# ── loadCodeAssist (credentials.js discoverProject) ──────────────────────────
+def _record_failure(exc: Exception, endpoint: str, timeout: int, failures: list) -> None:
+    """Classify one endpoint failure.
+
+    Terminal conditions raise; everything else is noted so the next endpoint can
+    be tried. Kept in one place so both public entry points classify identically.
+    """
+    if isinstance(exc, urllib.error.HTTPError):
+        status, body = _read_error(exc)
+        if _is_banned(body):
+            raise RuntimeError(f"ACCOUNT_BANNED: {body}")
+        if status in (400, 401, 403):
+            # Client/auth errors are not endpoint-specific.
+            raise RuntimeError(f"HTTP {status} at {endpoint}: {body}")
+        reason = _error_reason(body)
+        failures.append(f"{endpoint}: HTTP {status}{' ' + reason if reason else ''}")
+        return
+    if isinstance(exc, (TimeoutError, socket.timeout)):
+        failures.append(f"{endpoint}: timeout after {timeout}s")
+        return
+    failures.append(f"{endpoint}: {type(exc).__name__}: {exc}")
+
+
+def _summary(operation: str, account_email: str, model: str, failures: list) -> str:
+    return f"{operation} failed for {model} on {account_email}: " + " | ".join(failures)
+
+
+# ── loadCodeAssist / project discovery (credentials.js discoverProject) ──────
 def load_code_assist(token: str, project_id: str = None) -> dict:
-    """Call loadCodeAssist (prod -> daily) and return the raw response dict."""
+    """Call loadCodeAssist and return the raw response, or raise with every attempt."""
     metadata = dict(CLIENT_METADATA)
     if project_id:
         metadata["duetProject"] = project_id
     body = {"metadata": metadata, "mode": 1}
 
-    succeeded = False
-    last_error = None
+    failures = []
     for endpoint in LOAD_CODE_ASSIST_ENDPOINTS:
-        url = f"{endpoint}/v1internal:loadCodeAssist"
-        headers = build_headers(token, accept="application/json")
         try:
-            with _post(url, body, headers, timeout=DISCOVERY_TIMEOUT_S) as resp:
-                data = json.loads(resp.read().decode())
-            succeeded = True
-            return data
-        except urllib.error.HTTPError as exc:
-            raw = _error_body(exc)
-            if _is_banned(raw):
-                raise RuntimeError(f"ACCOUNT_BANNED: {raw}")
-            last_error = f"HTTP {exc.code} at {endpoint}: {raw}"
-            continue
-        except (TimeoutError, socket.timeout) as exc:
-            # Unreachable/black-holed endpoint: abandon it and try the next one
-            # immediately rather than waiting out the full connect timeout again.
-            last_error = f"timeout after {DISCOVERY_TIMEOUT_S:g}s at {endpoint} ({exc})"
-            continue
+            with _post(f"{endpoint}/v1internal:loadCodeAssist", body,
+                       build_headers(token), timeout=DISCOVERY_TIMEOUT_S) as response:
+                return json.loads(response.read().decode())
         except Exception as exc:
-            last_error = f"{type(exc).__name__} at {endpoint}: {exc}"
-            continue
-
-    if not succeeded:
-        raise RuntimeError(f"loadCodeAssist failed on all endpoints: {last_error}")
-    raise RuntimeError("loadCodeAssist failed on all endpoints")
+            _record_failure(exc, endpoint, int(DISCOVERY_TIMEOUT_S), failures)
+    raise RuntimeError(f"loadCodeAssist failed: {' | '.join(failures)}")
 
 
 def extract_project(data: dict):
@@ -427,33 +455,36 @@ def extract_project(data: dict):
 
 
 def _sqlite_project(account_email: str):
-    """Last-resort project lookup from the OmniRoute connection store."""
-    import sqlite3
-    db = Path.home() / ".omniroute" / "storage.sqlite"
-    if not db.exists():
+    """Last resort: the project recorded by the OmniRoute sync."""
+    database = Path.home() / ".omniroute" / "storage.sqlite"
+    if not database.exists():
         return None
     try:
-        conn = sqlite3.connect(str(db), timeout=5.0)
+        connection = sqlite3.connect(str(database), timeout=5.0)
         try:
-            row = conn.execute(
+            row = connection.execute(
                 "SELECT project_id FROM provider_connections "
                 "WHERE provider='antigravity' AND email=? AND is_active=1",
                 (account_email,),
             ).fetchone()
         finally:
-            conn.close()
+            connection.close()
         return row[0] if row and row[0] else None
     except Exception:
         return None
 
 
-def get_project_id(account_email: str, token: str, refresh: bool = False) -> str:
-    """
-    Resolve cloudaicompanionProject for an account.
+_project_cache: dict = {}
+PROJECT_CACHE_TTL_S = 1800
 
-    Mirrors JS getProjectForAccount(): loadCodeAssist is authoritative, with
-    'aicode-consumers' being a perfectly valid real project for free-tier
-    Google-account onboarding.
+
+def get_project_id(account_email: str, token: str, *, refresh: bool = False) -> str:
+    """Resolve cloudaicompanionProject, which loadCodeAssist alone decides.
+
+    Takes the caller's token rather than acquiring one, so discovery stays a pure
+    function of (account, token) and can be exercised without credential access.
+    'aicode-consumers' is a legitimate project value for free-tier Google
+    accounts, not a placeholder.
     """
     now = time.time()
     if not refresh and account_email in _project_cache:
@@ -464,99 +495,102 @@ def get_project_id(account_email: str, token: str, refresh: bool = False) -> str
     discovery_error = None
     project = None
     try:
-        data = load_code_assist(token)
-        project = extract_project(data)
+        project = extract_project(load_code_assist(token))
     except RuntimeError as exc:
-        # A ToS ban is terminal. Falling through to a fallback project would
-        # mask it behind a confusing downstream error (the same silent-failure
-        # shape that hid the original empty-response defect).
+        # A ban is terminal; falling through would mask it behind a confusing
+        # downstream failure. This is the same silent-failure shape that hid the
+        # original empty-response defect.
         if "ACCOUNT_BANNED" in str(exc):
             raise
-        discovery_error = exc
-    except Exception as exc:
         discovery_error = exc
 
     if not project:
         project = _sqlite_project(account_email)
-
-    # Deliberate divergence from the JS fallback-to-DEFAULT_PROJECT_ID: if live
-    # discovery failed and no cached project exists, surface the real cause
-    # instead of sending a request that is guaranteed to fail confusingly.
     if not project and discovery_error is not None:
         raise RuntimeError(
             f"could not resolve a project for {account_email}: {discovery_error}"
         )
 
-    if not project:
-        project = DEFAULT_PROJECT_ID
-
-    _project_cache[account_email] = (project, now + 1800)
+    project = project or DEFAULT_PROJECT_ID
+    _project_cache[account_email] = (project, now + PROJECT_CACHE_TTL_S)
     return project
 
 
-# ── Payload construction (request-builder.js buildCloudCodeRequest) ──────────
-def _build_system_instruction(system_text: str = None) -> dict:
-    # [ignore] wrapping prevents the model identifying as "Antigravity"
-    # (matches CLIProxyAPI v6.6.89 behaviour used by the JS path).
-    parts = [
-        {"text": ANTIGRAVITY_SYSTEM_INSTRUCTION},
-        {"text": f"Please ignore the following [ignore]{ANTIGRAVITY_SYSTEM_INSTRUCTION}[/ignore]"},
-    ]
-    if system_text:
-        parts.append({"text": system_text})
-    return {"role": "user", "parts": parts}
+def invalidate(account_email: str = None) -> None:
+    """Drop cached project discovery. Session IDs are untouched (see clear_sessions)."""
+    if account_email is None:
+        _project_cache.clear()
+    else:
+        _project_cache.pop(account_email, None)
 
 
-def _to_contents(messages, is_claude: bool):
+# ── Payload (request-builder.js buildCloudCodeRequest) ───────────────────────
+def _resolve_contents(prompt: str = None, messages: list = None) -> list:
+    """Normalise and validate caller input into Google contents.
+
+    Deliberately runs before any credential or network work, so malformed input
+    cannot cost a token mint or a project-discovery round-trip.
+    """
+    if messages is None:
+        if prompt is None:
+            raise ValueError("either prompt or messages is required")
+        if not prompt.strip():
+            # A blank prompt would otherwise be sent as the placeholder '.',
+            # spending a quota-gated request on nothing.
+            raise ValueError("prompt must be non-empty")
+        messages = [{"role": "user", "content": prompt}]
+    return _to_contents(messages)
+
+
+def _to_contents(messages: list) -> list:
+    """Convert Anthropic-style messages to Google contents.
+
+    Text only. Unsupported block types are rejected explicitly rather than mapped
+    to a guessed functionCall/functionResponse shape.
+    """
     contents = []
-    for msg in messages:
-        role = "model" if msg.get("role") in ("assistant", "model") else "user"
-        content = msg.get("content", "")
+    for message in messages:
+        role = "model" if message.get("role") in ("assistant", "model") else "user"
+        content = message.get("content", "")
+
         if isinstance(content, str):
-            parts = [{"text": content}]
-        else:
+            parts = [{"text": content}] if content else []
+        elif isinstance(content, list):
             parts = []
-            for block in content or []:
-                if not isinstance(block, dict):
-                    continue
-                if block.get("type") == "text" and block.get("text"):
+            for block in content:
+                block_type = block.get("type", "text") if isinstance(block, dict) else None
+                if block_type != "text":
+                    raise ValueError(
+                        f"unsupported content block {block_type!r}: this connector converts "
+                        "text only (tool/image blocks require the JS converter)"
+                    )
+                if block.get("text"):
                     parts.append({"text": block["text"]})
-                elif block.get("type") == "tool_result":
-                    parts.append({
-                        "functionResponse": {
-                            "name": block.get("tool_use_id", "tool"),
-                            "response": {"result": block.get("content")},
-                        }
-                    })
-                elif block.get("type") == "tool_use":
-                    parts.append({
-                        "functionCall": {
-                            "name": block.get("name"),
-                            "args": block.get("input", {}),
-                        }
-                    })
-                elif block.get("text"):
-                    parts.append({"text": block["text"]})
-        if not parts:
-            parts = [{"text": "."}]
-        contents.append({"role": role, "parts": parts})
+        else:
+            raise ValueError(f"unsupported message content: {type(content).__name__}")
+
+        # Google requires at least one part per content entry.
+        contents.append({"role": role, "parts": parts or [{"text": "."}]})
+
+    if not contents:
+        raise ValueError("no messages to send")
     return contents
 
 
 def build_payload(account_email: str, model: str, project_id: str, *,
-                  prompt: str = None, messages=None, system: str = None,
-                  temperature: float = None, max_tokens: int = None,
+                  contents: list = None, prompt: str = None, messages: list = None,
+                  system: str = None, temperature: float = None, max_tokens: int = None,
                   top_p: float = None, top_k: int = None) -> dict:
-    family = get_model_family(model)
-    is_claude = family == "claude"
+    """Port of buildCloudCodeRequest().
 
-    if messages is None:
-        messages = [{"role": "user", "content": prompt or ""}]
-
-    session_id = derive_session_id(account_email)
+    Accepts either prepared `contents` (so callers can validate before doing any
+    credential work) or a prompt/messages pair to convert.
+    """
+    if contents is None:
+        contents = _resolve_contents(prompt, messages)
 
     generation_config = {}
-    if max_tokens:
+    if max_tokens is not None:
         generation_config["maxOutputTokens"] = max_tokens
     if temperature is not None:
         generation_config["temperature"] = temperature
@@ -564,263 +598,242 @@ def build_payload(account_email: str, model: str, project_id: str, *,
         generation_config["topP"] = top_p
     if top_k is not None:
         generation_config["topK"] = top_k
-    if max_tokens is None:
-        generation_config["maxOutputTokens"] = DEFAULT_MAX_OUTPUT_TOKENS
 
     if is_thinking_model(model):
-        if is_claude:
-            generation_config["thinkingConfig"] = {
-                "include_thoughts": True,
-                "thinking_budget": 32000,
-            }
-        else:
-            generation_config["thinkingConfig"] = {
-                "includeThoughts": True,
-                "thinkingBudget": 24576,
-            }
+        generation_config["thinkingConfig"] = (
+            {"include_thoughts": True, "thinking_budget": CLAUDE_DEFAULT_THINKING_BUDGET}
+            if get_model_family(model) == "claude"
+            else {"includeThoughts": True, "thinkingBudget": GEMINI_MAX_THINKING_BUDGET}
+        )
 
-    google_request = {
-        "contents": _to_contents(messages, is_claude),
-        "generationConfig": generation_config,
-        "sessionId": session_id,
-        "systemInstruction": _build_system_instruction(system),
-    }
+    if get_model_family(model) == "gemini":
+        cap = generation_config.get("maxOutputTokens")
+        if isinstance(cap, int) and cap > GEMINI_MAX_OUTPUT_TOKENS:
+            generation_config["maxOutputTokens"] = GEMINI_MAX_OUTPUT_TOKENS
 
     payload = {
         "project": project_id or DEFAULT_PROJECT_ID,
         "model": model,
-        "request": google_request,
+        "request": {
+            "contents": contents,
+            "generationConfig": generation_config,
+            "sessionId": derive_session_id(account_email),
+            "systemInstruction": _system_instruction(system),
+        },
         "userAgent": "antigravity",
         "requestType": "agent",
         "requestId": "agent-" + str(uuid.uuid4()),
     }
     if account_email and account_email.endswith("@gmail.com"):
         payload["enabledCreditTypes"] = ["GOOGLE_ONE_AI"]
-
-    # Cap Gemini output tokens (request-converter.js)
-    if family == "gemini":
-        cap = generation_config.get("maxOutputTokens")
-        if isinstance(cap, int) and cap > GEMINI_MAX_OUTPUT_TOKENS:
-            generation_config["maxOutputTokens"] = GEMINI_MAX_OUTPUT_TOKENS
-
     return payload
 
 
 # ── SSE parsing (sse-parser.js) ──────────────────────────────────────────────
-def _unwrap(chunk: dict) -> dict:
-    """Cloud Code wraps payloads as {response: {...}} — fall back to bare."""
+def _parse_event(line: str):
+    """Yield the unwrapped inner response for one SSE line, if any."""
+    line = line.rstrip("\r")
+    if not line.startswith("data:"):
+        return
+    text = line[5:].strip()
+    if not text or text == "[DONE]":
+        return
+    try:
+        chunk = json.loads(text)
+    except json.JSONDecodeError:
+        return
+    if not isinstance(chunk, dict):
+        return
     inner = chunk.get("response")
-    return inner if isinstance(inner, dict) else chunk
+    yield inner if isinstance(inner, dict) else chunk
 
 
-def _accumulate(raw_text: str, state: dict) -> None:
-    """Feed raw SSE bytes into the accumulator state (mutated in place)."""
-    state["buffer"] += raw_text
-    while "\n" in state["buffer"]:
-        line, state["buffer"] = state["buffer"].split("\n", 1)
-        if line.endswith("\r"):
-            line = line[:-1]
-        if not line.startswith("data:"):
-            continue
-        json_text = line[5:].strip()
-        if not json_text or json_text == "[DONE]":
-            continue
-        try:
-            data = json.loads(json_text)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(data, dict):
-            continue
+def _sse_events(response):
+    """Incremental SSE parser; yields unwrapped inner response dicts."""
+    buffer = ""
+    for raw in response:
+        buffer += raw.decode("utf-8", "replace")
+        while "\n" in buffer:
+            line, buffer = buffer.split("\n", 1)
+            yield from _parse_event(line)
+    if buffer:
+        yield from _parse_event(buffer)
 
-        inner = _unwrap(data)
-        if isinstance(inner.get("usageMetadata"), dict) and inner["usageMetadata"]:
-            state["usage"] = inner["usageMetadata"]
+
+@dataclasses.dataclass
+class _Accumulated:
+    parts: list
+    usage: dict
+    model_version: str
+    finish_reason: str
+
+    @property
+    def text(self) -> str:
+        return "".join(part.get("text", "") for part in self.parts if not part.get("thought"))
+
+    @property
+    def thinking(self) -> str:
+        return "".join(part.get("text", "") for part in self.parts if part.get("thought"))
+
+
+def _accumulate(events) -> _Accumulated:
+    parts, thinking, signature = [], [], None
+    usage, model_version, finish_reason = None, None, "STOP"
+
+    for inner in events:
+        if inner.get("usageMetadata"):
+            usage = inner["usageMetadata"]
         if inner.get("modelVersion"):
-            state["model_version"] = inner["modelVersion"]
-
-        for candidate in inner.get("candidates", []) or []:
+            model_version = inner["modelVersion"]
+        for candidate in inner.get("candidates") or []:
             if candidate.get("finishReason"):
-                state["finish_reason"] = candidate["finishReason"]
-            for part in candidate.get("content", {}).get("parts", []) or []:
+                finish_reason = candidate["finishReason"]
+            for part in (candidate.get("content") or {}).get("parts") or []:
                 if part.get("thought") is True:
                     if part.get("text"):
-                        state["thinking"].append(part["text"])
+                        thinking.append(part["text"])
                     if part.get("thoughtSignature"):
-                        state["thought_signature"] = part["thoughtSignature"]
-                elif part.get("functionCall"):
-                    state["parts"].append(part)
+                        signature = part["thoughtSignature"]
+                elif part.get("functionCall") or part.get("inlineData"):
+                    parts.append(part)
                 elif part.get("text"):
-                    state["parts"].append({"text": part["text"]})
-                elif part.get("inlineData"):
-                    state["parts"].append(part)
+                    parts.append({"text": part["text"]})
+
+    if thinking:
+        block = {"thought": True, "text": "".join(thinking)}
+        if signature:
+            block["thoughtSignature"] = signature
+        parts.insert(0, block)
+
+    return _Accumulated(parts, usage or {}, model_version, finish_reason)
 
 
-def _new_state() -> dict:
-    return {
-        "buffer": "",
-        "parts": [],
-        "thinking": [],
-        "thought_signature": None,
-        "usage": None,
-        "model_version": None,
-        "finish_reason": "STOP",
-    }
+# ── One request path ─────────────────────────────────────────────────────────
+@dataclasses.dataclass
+class _Prepared:
+    payload: dict
+    headers: dict
+    project: str
+    timeout: int
+    capacity_retries: int
 
 
-def _assembled_text(state: dict) -> str:
-    return "".join(p.get("text", "") for p in state["parts"] if p.get("text"))
-
-
-def _assemble_response(state: dict, project_id: str) -> dict:
-    parts = list(state["parts"])
-    if state["thinking"]:
-        thinking_part = {"thought": True, "text": "".join(state["thinking"])}
-        if state["thought_signature"]:
-            thinking_part["thoughtSignature"] = state["thought_signature"]
-        parts = [thinking_part] + parts
-    return {
-        "candidates": [{
-            "content": {"parts": parts, "role": "model"},
-            "finishReason": state["finish_reason"],
-        }],
-        "usageMetadata": state["usage"],
-        "modelVersion": state["model_version"],
-        "project": project_id,
-        "text": _assembled_text(state),
-        "thinking": "".join(state["thinking"]),
-    }
-
-
-# ── Public API ───────────────────────────────────────────────────────────────
-_PAYLOAD_KEYS = {"messages", "system", "temperature", "max_tokens", "top_p", "top_k", "project_id"}
-
-
-def _prepare(account_email: str, prompt, model: str, kwargs: dict):
-    """Shared token/project/payload/header setup for generate + stream."""
-    payload_kwargs = {k: v for k, v in kwargs.items() if k in _PAYLOAD_KEYS}
-    capacity_retries = kwargs.get("capacity_retries", DEFAULT_CAPACITY_RETRIES)
-    timeout = kwargs.get("timeout", 120)
+def _prepare(account_email, model, *, prompt, messages, system, temperature,
+             max_tokens, top_p, top_k, project_id, capacity_retries, timeout) -> _Prepared:
+    # Validate and convert the caller's input first, so a malformed request fails
+    # before it mints a token, writes a session, or pays a discovery round-trip.
+    contents = _resolve_contents(prompt, messages)
 
     token = get_access_token(account_email)
-    project_id = payload_kwargs.pop("project_id", None) or get_project_id(account_email, token)
-    payload = build_payload(account_email, model, project_id, prompt=prompt, **payload_kwargs)
-    session_id = payload["request"]["sessionId"]
-    return token, project_id, payload, session_id, capacity_retries, timeout
+    project = project_id or get_project_id(account_email, token)
+    payload = build_payload(
+        account_email, model, project, contents=contents, system=system,
+        temperature=temperature, max_tokens=max_tokens, top_p=top_p, top_k=top_k,
+    )
+    headers = build_headers(token, model, "text/event-stream", payload["request"]["sessionId"])
+    return _Prepared(payload, headers, project, timeout, capacity_retries)
 
 
-def cloudcode_generate(account_email: str, prompt: str = None,
-                       model: str = "gemini-2.5-pro", **kwargs) -> dict:
+def cloudcode_stream(account_email: str, prompt: str = None, model: str = DEFAULT_MODEL, *,
+                     messages: list = None, system: str = None, temperature: float = None,
+                     max_tokens: int = None, top_p: float = None, top_k: int = None,
+                     project_id: str = None, capacity_retries: int = DEFAULT_CAPACITY_RETRIES,
+                     timeout: int = DEFAULT_TIMEOUT_S):
+    """Stream unwrapped Cloud Code response chunks, trying each endpoint in turn.
+
+    An endpoint is only abandoned for the next one while nothing has been yielded
+    yet. Once any chunk reaches the caller the stream is committed, so a later
+    failure raises a `stream truncated` error rather than restarting elsewhere.
     """
-    Generate content via cloudcode-pa, returning the assembled response dict.
+    request = _prepare(
+        account_email, model, prompt=prompt, messages=messages, system=system,
+        temperature=temperature, max_tokens=max_tokens, top_p=top_p, top_k=top_k,
+        project_id=project_id, capacity_retries=capacity_retries, timeout=timeout,
+    )
 
-    Extra keyword args are forwarded to build_payload: messages, system,
-    temperature, max_tokens, top_p, top_k, project_id. Also accepted:
-    capacity_retries (default 1), timeout (seconds, default 120).
-    """
-    token, project_id, payload, session_id, capacity_retries, timeout = _prepare(
-        account_email, prompt, model, kwargs)
-
-    errors = []
+    failures = []
     for endpoint in ENDPOINTS:
         url = f"{endpoint}/v1internal:streamGenerateContent?alt=sse"
-        headers = build_headers(token, model, "text/event-stream", session_id)
+        produced = False
         try:
-            state = _new_state()
-            with _open_capacity_aware(url, payload, headers, timeout, capacity_retries) as resp:
-                for raw_line in resp:
-                    _accumulate(raw_line.decode("utf-8", "replace"), state)
-            _accumulate("\n", state)
-
-            if _assembled_text(state) or state["parts"]:
-                return _assemble_response(state, project_id)
-            errors.append(f"{endpoint}: empty response")
-        except urllib.error.HTTPError as exc:
-            raw = _error_body(exc)
-            reason = _error_reason(raw)
-            if _is_banned(raw):
-                raise RuntimeError(f"ACCOUNT_BANNED: {raw}")
-            if exc.code in (400, 401, 403):
-                # Client/auth errors will not be fixed by another endpoint.
-                raise RuntimeError(f"HTTP {exc.code} at {endpoint}: {raw}")
-            errors.append(f"{endpoint}: HTTP {exc.code} {reason or raw[:160]}")
-            continue
+            with _attempt(url, request.payload, request.headers,
+                          request.timeout, request.capacity_retries) as response:
+                for inner in _sse_events(response):
+                    produced = True
+                    yield inner
         except Exception as exc:
-            errors.append(f"{endpoint}: {type(exc).__name__}: {exc}")
+            if produced:
+                # Chunks are already committed to the caller. Falling through to
+                # another endpoint would append a second stream's tokens to the
+                # first, silently corrupting the response. Fail loudly instead,
+                # and say so clearly: the caller must not treat what it received
+                # as a complete answer.
+                raise RuntimeError(
+                    f"stream truncated after partial output from {endpoint} "
+                    f"({type(exc).__name__}: {exc})"
+                ) from exc
+            _record_failure(exc, endpoint, request.timeout, failures)
             continue
+        if produced:
+            return
+        failures.append(f"{endpoint}: empty stream")
 
-    raise RuntimeError(f"generateContent failed for {account_email} ({model}): " + " | ".join(errors))
+    raise RuntimeError(_summary("streamGenerateContent", account_email, model, failures))
 
 
-def cloudcode_stream(account_email: str, prompt: str = None,
-                     model: str = "gemini-2.5-pro", **kwargs):
-    """Raw SSE streaming — yields unwrapped inner response dicts."""
-    token, project_id, payload, session_id, capacity_retries, timeout = _prepare(
-        account_email, prompt, model, kwargs)
+def cloudcode_generate(account_email: str, prompt: str = None, model: str = DEFAULT_MODEL, *,
+                       messages: list = None, system: str = None, temperature: float = None,
+                       max_tokens: int = None, top_p: float = None, top_k: int = None,
+                       project_id: str = None,
+                       capacity_retries: int = DEFAULT_CAPACITY_RETRIES,
+                       timeout: int = DEFAULT_TIMEOUT_S) -> dict:
+    """Assemble a full Cloud Code response.
 
-    errors = []
+    Returns candidates, usageMetadata, modelVersion, project plus convenience
+    `text` and `thinking` strings. Raises if no endpoint produced content.
+    """
+    request = _prepare(
+        account_email, model, prompt=prompt, messages=messages, system=system,
+        temperature=temperature, max_tokens=max_tokens, top_p=top_p, top_k=top_k,
+        project_id=project_id, capacity_retries=capacity_retries, timeout=timeout,
+    )
+
+    failures = []
     for endpoint in ENDPOINTS:
         url = f"{endpoint}/v1internal:streamGenerateContent?alt=sse"
-        headers = build_headers(token, model, "text/event-stream", session_id)
         try:
-            with _open_capacity_aware(url, payload, headers, timeout, capacity_retries) as resp:
-                buffer = ""
-                emitted = False
-                for raw_line in resp:
-                    buffer += raw_line.decode("utf-8", "replace")
-                    while "\n" in buffer:
-                        line, buffer = buffer.split("\n", 1)
-                        if line.endswith("\r"):
-                            line = line[:-1]
-                        if not line.startswith("data:"):
-                            continue
-                        json_text = line[5:].strip()
-                        if not json_text or json_text == "[DONE]":
-                            continue
-                        try:
-                            chunk = json.loads(json_text)
-                        except json.JSONDecodeError:
-                            continue
-                        if isinstance(chunk, dict):
-                            emitted = True
-                            yield _unwrap(chunk)
-            if emitted:
-                return
-            errors.append(f"{endpoint}: empty stream")
-        except urllib.error.HTTPError as exc:
-            raw = _error_body(exc)
-            if _is_banned(raw):
-                raise RuntimeError(f"ACCOUNT_BANNED: {raw}")
-            if exc.code in (400, 401, 403):
-                raise RuntimeError(f"HTTP {exc.code} at {endpoint}: {raw}")
-            errors.append(f"{endpoint}: HTTP {exc.code} {_error_reason(raw) or raw[:160]}")
-            continue
-        except Exception as exc:
-            errors.append(f"{endpoint}: {type(exc).__name__}: {exc}")
-            continue
+            with _attempt(url, request.payload, request.headers,
+                          request.timeout, request.capacity_retries) as response:
+                accumulated = _accumulate(_sse_events(response))
 
-    raise RuntimeError(f"streamGenerateContent failed for {account_email} ({model}): " + " | ".join(errors))
+            if not accumulated.parts:
+                failures.append(f"{endpoint}: empty response")
+                continue
+
+            return {
+                "candidates": [{
+                    "content": {"parts": accumulated.parts, "role": "model"},
+                    "finishReason": accumulated.finish_reason,
+                }],
+                "usageMetadata": accumulated.usage,
+                "modelVersion": accumulated.model_version,
+                "project": request.project,
+                "text": accumulated.text,
+                "thinking": accumulated.thinking,
+            }
+        except Exception as exc:
+            _record_failure(exc, endpoint, request.timeout, failures)
+
+    raise RuntimeError(_summary("generateContent", account_email, model, failures))
 
 
 def get_bearer_token(account_email: str) -> str:
     return get_access_token(account_email)
 
 
-def get_token(account_email: str) -> str:
-    return get_access_token(account_email)
-
-
-def invalidate(account_email: str = None) -> None:
-    """Drop cached project/session state (pass None to flush all accounts)."""
-    if account_email is None:
-        _project_cache.clear()
-        _session_cache.clear()
-    else:
-        _project_cache.pop(account_email, None)
-        _session_cache.pop(account_email, None)
-
-
 if __name__ == "__main__":  # pragma: no cover - manual smoke test
     import sys
+
     who = sys.argv[1] if len(sys.argv) > 1 else "adamperecko@gmail.com"
     which = sys.argv[2] if len(sys.argv) > 2 else "gemini-2.5-flash"
     result = cloudcode_generate(who, "Reply with exactly: PONG", model=which)
