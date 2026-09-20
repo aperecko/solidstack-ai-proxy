@@ -1,0 +1,39 @@
+name: Test
+
+# The full suite in tests/run-all.cjs expects a proxy on :8080 backed by
+# authenticated Google accounts, which a hosted runner cannot provide. CI runs
+# the offline subset through the same runner developers use locally, plus a
+# parse gate over the JS surface the offline tests do not reach.
+#
+# Reproduce this locally with: node tests/run-all.cjs --offline
+on:
+  pull_request:
+
+jobs:
+  test:
+    name: Offline suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check every source file parses
+        run: find src -name '*.js' -print0 | xargs -0 -n1 node --check
+
+      - name: Run offline test suite
+        run: node tests/run-all.cjs --offline

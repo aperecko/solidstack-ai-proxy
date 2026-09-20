@@ -3,13 +3,17 @@
  * Test Runner
  *
  * Runs all tests in sequence and reports results.
- * Usage: node tests/run-all.cjs
+ * Usage: node tests/run-all.cjs [--offline] [test filter]
+ *
+ * Tests marked `offline: true` need no live proxy server and no authenticated
+ * account, so --offline (what CI runs) is a strict subset of the full suite.
+ * The rest are listed as skipped rather than silently dropped.
  */
 const { spawn } = require('child_process');
 const path = require('path');
 
 const tests = [
-    { name: 'Account Selection Strategies', file: 'test-strategies.cjs' },
+    { name: 'Account Selection Strategies', file: 'test-strategies.cjs', offline: true },
     { name: 'Cache Control Stripping', file: 'test-cache-control.cjs' },
     { name: 'Thinking Signatures', file: 'test-thinking-signatures.cjs' },
     { name: 'Multi-turn Tools (Non-Streaming)', file: 'test-multiturn-thinking-tools.cjs' },
@@ -20,14 +24,14 @@ const tests = [
     { name: 'Cross-Model Thinking', file: 'test-cross-model-thinking.cjs' },
     { name: 'OAuth No-Browser Mode', file: 'test-oauth-no-browser.cjs' },
     { name: 'Empty Response Retry', file: 'test-empty-response-retry.cjs' },
-    { name: 'Schema Sanitizer', file: 'test-schema-sanitizer.cjs' },
-    { name: 'Streaming Whitespace', file: 'test-streaming-whitespace.cjs' },
-    { name: '403 Account Rotation (Unit)', file: 'test-403-account-rotation.cjs' },
+    { name: 'Schema Sanitizer', file: 'test-schema-sanitizer.cjs', offline: true },
+    { name: 'Streaming Whitespace', file: 'test-streaming-whitespace.cjs', offline: true },
+    { name: '403 Account Rotation (Unit)', file: 'test-403-account-rotation.cjs', offline: true },
     { name: '403 Account Rotation (Integration)', file: 'test-403-integration.cjs' },
-    { name: 'Version Detection', file: 'test-version-detection.js' },
+    { name: 'Version Detection', file: 'test-version-detection.js', offline: true },
     // Python: Cloud Code request-shape regression + optional JS cross-language parity.
     // Offline by default; pass --live <email> to assert real text + usageMetadata.
-    { name: 'Google AI Connector (Python)', file: 'test-google-ai-connector.py', interpreter: 'python3.13' }
+    { name: 'Google AI Connector (Python)', file: 'test-google-ai-connector.py', interpreter: 'python3.13', offline: true }
 ];
 
 /**
@@ -65,11 +69,22 @@ async function main() {
     console.log('');
 
     // Check if running specific test
-    const specificTest = process.argv[2];
+    const args = process.argv.slice(2);
+    const offlineOnly = args.includes('--offline');
+    const specificTest = args.find(arg => !arg.startsWith('--'));
     let testsToRun = tests;
 
+    if (offlineOnly) {
+        const skipped = tests.filter(t => !t.offline);
+        testsToRun = testsToRun.filter(t => t.offline);
+        console.log(`--offline: running ${testsToRun.length} of ${tests.length} tests.`);
+        console.log(`Skipping ${skipped.length} that need a live server, an authenticated account, or both:`);
+        skipped.forEach(t => console.log(`  - ${t.name} (${t.file})`));
+        console.log('');
+    }
+
     if (specificTest) {
-        testsToRun = tests.filter(t =>
+        testsToRun = testsToRun.filter(t =>
             t.file.includes(specificTest) || t.name.toLowerCase().includes(specificTest.toLowerCase())
         );
         if (testsToRun.length === 0) {
