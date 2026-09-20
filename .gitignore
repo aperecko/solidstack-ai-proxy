@@ -34,6 +34,12 @@ tests/utils/*.jpeg
 dist/
 build/
 
+# Python bytecode — never commit compiled modules. Bytecode embeds string
+# constants verbatim, so a stale .pyc can leak values that were later removed
+# from source (and it churns diffs on every interpreter bump).
+__pycache__/
+*.py[cod]
+
 # macOS resource forks
 Icon
 Icon?
