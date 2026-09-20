@@ -20,8 +20,16 @@ OMNI_ENV = Path.home() / ".omniroute" / "server.env"
 OMNI_DB = Path.home() / ".omniroute" / "storage.sqlite"
 ACCOUNTS_JSON = Path.home() / ".config" / "antigravity-proxy" / "accounts.json"
 
-CLIENT_ID = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com"
-CLIENT_SECRET = "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"
+# Env-overridable, matching the JS contract (src/constants.js OAUTH_CONFIG): the
+# in-repo value is only a fallback for the shared installed-app OAuth client.
+CLIENT_ID = os.environ.get(
+    "ANTIGRAVITY_CLIENT_ID",
+    "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com",
+)
+CLIENT_SECRET = os.environ.get(
+    "ANTIGRAVITY_CLIENT_SECRET",
+    "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",
+)
 SCOPE = "https://www.googleapis.com/auth/cclog https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email openid https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/experimentsandconfigs"
 
 
