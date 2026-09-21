@@ -534,7 +534,8 @@
                                         x-show="displayMode === 'family'">
                                         <input type="checkbox" :checked="isFamilySelected(family)"
                                             @change="toggleFamily(family)"
-                                            class="checkbox checkbox-xs checkbox-primary">
+                                            class="checkbox checkbox-xs checkbox-primary"
+         aria-label="Toggle Family">
                                         <div class="w-2 h-2 rounded-full flex-shrink-0"
                                             :style="'background-color:' + getFamilyColor(family)"></div>
                                         <span class="text-xs text-gray-300 font-medium group-hover:text-white"
@@ -561,7 +562,8 @@
                                                     class="flex items-center gap-2 px-2 py-1 rounded hover:bg-white/5 cursor-pointer group">
                                                     <input type="checkbox" :checked="isModelSelected(family, model)"
                                                         @change="toggleModel(family, model)"
-                                                        class="checkbox checkbox-xs checkbox-primary">
+                                                        class="checkbox checkbox-xs checkbox-primary"
+         aria-label="Toggle Model">
                                                     <div class="w-2 h-2 rounded-full flex-shrink-0"
                                                         :style="'background-color:' + getModelColor(family, modelIndex)">
                                                     </div>

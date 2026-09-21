@@ -215,6 +215,11 @@ function extractUsage(events) {
         const deltaUsage = messageDelta.data.usage;
         usage.output_tokens = deltaUsage.output_tokens || 0;
         // Also check for cache tokens in delta (may be updated)
+        // Patch input_tokens from message_delta — Google SSE sends usageMetadata on the
+        // last chunk so message_start always has input_tokens=0. The real value arrives here.
+        if (deltaUsage.input_tokens !== undefined && deltaUsage.input_tokens > 0) {
+            usage.input_tokens = deltaUsage.input_tokens;
+        }
         if (deltaUsage.cache_read_input_tokens !== undefined) {
             usage.cache_read_input_tokens = deltaUsage.cache_read_input_tokens;
         }

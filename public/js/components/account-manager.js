@@ -15,8 +15,6 @@ window.Components.accountManager = () => ({
     selectedAccountLimits: {},
     selectedAccount: null,
     quotaModalShowDetails: false,
-    currentPage: 1,
-    pageSize: 50,
     sortCol: 'email',
     sortAsc: true,
 
@@ -123,15 +121,10 @@ window.Components.accountManager = () => ({
         return result.sort((a, b) => this.compareAccounts(a, b));
     },
     
-    get pagedAccounts() {
-        const start = (this.currentPage - 1) * this.pageSize;
-        return this.filteredAccounts.slice(start, start + this.pageSize);
-    },
-    
     poolExpanded: {},
     
-    get pagedAccountPools() {
-        const pageAccs = this.pagedAccounts;
+    get accountPools() {
+        const pageAccs = this.filteredAccounts;
         
         const FAMILY_MAP = {
           'aptsoultuions@gmail.com': 'Adam\'s Family (Pro)',
@@ -237,7 +230,7 @@ window.Components.accountManager = () => ({
     togglePool(poolName) {
         try {
             console.log("togglePool called for:", poolName);
-            const pool = this.pagedAccountPools.find(p => p.name === poolName);
+            const pool = this.accountPools.find(p => p.name === poolName);
             const currentState = this.poolExpanded[poolName] !== undefined ? this.poolExpanded[poolName] : (pool ? pool.hasIssues : false);
             console.log("Current state:", currentState, "Setting to:", !currentState);
             
@@ -248,10 +241,6 @@ window.Components.accountManager = () => ({
         }
     },
     
-    get totalPages() {
-        return Math.ceil(this.filteredAccounts.length / this.pageSize);
-    },
-
     formatEmail(email) {
         if (!email || email.length <= 40) return email;
 
@@ -369,7 +358,20 @@ window.Components.accountManager = () => ({
 
             const data = await response.json();
             if (data.status === 'ok' && data.url) {
-                // Launch clean window via backend (zero toomanysessions error)
+                // Federated swarm accounts must establish the Entra session
+                // before Google starts the Workspace SAML hand-off. Open both
+                // pages in clean windows; the OAuth tab can then continue with
+                // the Entra session instead of ending at signin/rejected.
+                if (data.federated && data.federatedLoginUrl) {
+                    await fetch('/api/swarm/launch-clean-window', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ email, url: data.federatedLoginUrl })
+                    });
+                    await new Promise(resolve => setTimeout(resolve, 750));
+                }
+
+                // Launch clean OAuth window via backend (zero toomanysessions error)
                 await fetch('/api/swarm/launch-clean-window', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -977,7 +979,8 @@ window.Components.accountManager = () => ({
             Alpine.store('global').showToast(`Opened clean window for ${email} (Password copied!)`, 'success');
         } catch (e) {
             console.error('Failed to launch clean window:', e);
-            window.open(`https://accounts.google.com/AccountChooser?Email=${encodeURIComponent(email)}&continue=https://myaccount.google.com`, '_blank');
+            const tenantId = '3a8f2256-4edc-496f-8dd2-0e1cdfb93252';
+            window.open(`https://login.microsoftonline.com/${tenantId}/login?login_hint=${encodeURIComponent(email)}`, '_blank');
         }
     },
 

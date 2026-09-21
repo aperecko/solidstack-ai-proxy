@@ -53,7 +53,7 @@
                 <input type="text"
                        x-model="searchQuery"
                        :placeholder="$store.global.t('searchAccounts')"
-                       :aria-label="$store.global.t('searchAccounts')"
+                       aria-label="Search accounts" :aria-label="$store.global.t('searchAccounts')"
                        class="input-search-sm w-48 pl-9 h-8"
                        @keydown.escape="searchQuery = ''">
                 <svg class="w-4 h-4 absolute left-3 top-2 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -79,7 +79,7 @@
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
                 </svg>
                 <span x-text="$store.global.t('import') || 'Import'">Import</span>
-                <input type="file" accept=".json" class="hidden" @change="importAccounts($event)">
+                <input type="file" accept=".json" aria-label="Import Accounts" class="hidden" @change="importAccounts($event)">
             </label>
 
             <button class="btn btn-xs btn-outline border-space-border text-gray-400 hover:text-white transition-all gap-2 h-8"
@@ -236,7 +236,7 @@
             </tbody>
 
             <!-- Account Rows -->
-                <template x-for="pool in pagedAccountPools" :key="pool.name">
+                <template x-for="pool in accountPools" :key="pool.name">
                     <!-- We use a virtual wrapper for x-for, but render tbody for the group -->
                     <tbody class="pool-group">
                         <tr class="bg-space-900/80 border-b border-space-border/50 cursor-pointer hover:bg-space-800 transition-colors select-none"
@@ -307,7 +307,8 @@
                                         <label class="relative inline-flex items-center cursor-pointer">
                                             <input type="checkbox" class="sr-only peer"
                                                 :checked="acc.enabled !== false"
-                                                @change="toggleAccount(acc.email, $el.checked)">
+                                                @change="toggleAccount(acc.email, $el.checked)"
+         aria-label="Toggle Account">
                                             <div class="w-7 h-4 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-neon-cyan"></div>
                                         </label>
                                     </td>
@@ -538,22 +539,7 @@
         </table>
     </div>
 
-    <!-- Pagination Controls -->
-    <div x-show="totalPages > 1" class="flex justify-between items-center mt-4 px-2">
-        <div class="text-sm text-gray-500 font-mono">
-            Showing <span x-text="((currentPage - 1) * pageSize) + 1"></span> - 
-            <span x-text="Math.min(currentPage * pageSize, filteredAccounts.length)"></span> of 
-            <span x-text="filteredAccounts.length"></span>
-        </div>
-        <div class="join">
-            <button class="join-item btn btn-sm border-space-border/30 bg-space-900/50 hover:bg-space-800 text-gray-400 hover:text-white"
-                :disabled="currentPage === 1"
-                @click="currentPage--">« Prev</button>
-            <button class="join-item btn btn-sm border-space-border/30 bg-space-900/50 hover:bg-space-800 text-gray-400 hover:text-white"
-                :disabled="currentPage === totalPages"
-                @click="currentPage++">Next »</button>
-        </div>
-    </div>
+    <!-- Pagination Controls Removed -->
 
     <!-- Account Status Info -->
     <div x-show="$store.data.accounts.length > 0" class="mt-4 px-6 py-3 bg-space-900/20 rounded-lg border border-space-border/20">
@@ -998,7 +984,8 @@
                 <div x-show="thresholdDialog.addingModel" class="pt-3 border-t border-space-border/30" x-cloak>
                     <div class="flex gap-2">
                         <select class="select select-sm select-bordered flex-1 bg-space-800 border-space-border text-white text-xs"
-                                x-model="thresholdDialog.newModelId">
+                                x-model="thresholdDialog.newModelId"
+         aria-label="Threshold Dialog new Model Id">
                             <option value="">Select model...</option>
                             <template x-for="model in getAvailableModelsForThreshold()" :key="model">
                                 <option :value="model" x-text="model"></option>
@@ -1007,7 +994,8 @@
                         <input type="number" min="0" max="99" step="1"
                             class="input input-sm input-bordered w-16 bg-space-800 border-space-border text-white font-mono text-center"
                             x-model="thresholdDialog.newModelThreshold"
-                            placeholder="10">
+                            placeholder="10"
+         aria-label="Threshold Dialog new Model Threshold">
                         <span class="text-gray-500 text-xs self-center">%</span>
                     </div>
                     <div class="flex gap-2 mt-2">

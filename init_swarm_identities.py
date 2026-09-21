@@ -79,7 +79,7 @@ def process_domains():
             
             proxy_map = {
                 'TX': 'dfw.socks.privado.io',
-                'NY': 'ny.socks.privado.io',
+                'NY': 'dca.socks.privado.io',
                 'CA': 'yul.socks.privado.io',
                 'UK': 'lhr.socks.privado.io',
                 'IN': 'bom.socks.privado.io'

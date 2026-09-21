@@ -54,7 +54,8 @@ async function runTests() {
     console.log('');
 
     // Import the ESM module
-    const { extractCodeFromInput } = await import('../src/auth/oauth.js');
+    const { extractCodeFromInput, getAuthorizationUrl } = await import('../src/auth/oauth.js');
+    const { getSwarmLoginUrl } = await import('../src/constants.js');
 
     let allPassed = true;
     const results = [];
@@ -80,7 +81,24 @@ async function runTests() {
         }
     }
 
-    // ===== Test Group 1: Valid URL Inputs =====
+    // ===== Test Group 1: Federated SSO URL Inputs =====
+    console.log('\\n--- Federated SSO URL Inputs ---');
+
+    await test('Use Entra login URL for an adamassist swarm account', () => {
+        const url = getSwarmLoginUrl('19@adamassist.com');
+        const passed = url === 'https://login.microsoftonline.com/3a8f2256-4edc-496f-8dd2-0e1cdfb93252/login?login_hint=19%40adamassist.com';
+        return { passed, message: url };
+    });
+
+    await test('Preserve swarm login hint in Antigravity OAuth URL', () => {
+        const { url } = getAuthorizationUrl('http://localhost:51121/oauth-callback', '19@adamassist.com');
+        const parsed = new URL(url);
+        const passed = parsed.searchParams.get('login_hint') === '19@adamassist.com' &&
+            parsed.searchParams.get('hd') === 'adamassist.com';
+        return { passed, message: `login_hint=${parsed.searchParams.get('login_hint')}, hd=${parsed.searchParams.get('hd')}` };
+    });
+
+    // ===== Test Group 2: Valid URL Inputs =====
     console.log('\n--- Valid URL Inputs ---');
 
     await test('Parse full callback URL with code and state', () => {

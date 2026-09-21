@@ -1,11 +1,18 @@
 /**
  * OmniRoute Bridge — connects ai-proxy's GUI Interceptor to OmniRoute's account pool.
  *
- * Instead of using ai-proxy's local 3-account AccountManager for Google Cloud Code
- * requests, the bridge queries OmniRoute's management API for the best available
- * Antigravity account (from 34 accounts) and returns a fresh OAuth access token.
+ * AUTHORITY SPLIT (OmniRoute is primary):
+ *   - OmniRoute owns account SELECTION + HEALTH (which connection serves the request).
+ *   - ai-proxy owns TRANSPORT + TOKEN MINTING (email-keyed: the local account store
+ *     holds the same fleet's refresh tokens, so after OmniRoute picks an email we mint
+ *     the Google access token locally via the wrapped AccountManager).
+ *   - ai-proxy's local HybridStrategy pool is a pure fail-safe used ONLY when the
+ *     OmniRoute bridge is unhealthy/unreachable.
  *
- * Falls back to the local AccountManager if OmniRoute is unreachable.
+ * Rationale: OmniRoute's management API never exposes access tokens in connection
+ * payloads (tokens live encrypted in its SQLite store), so the old 2026-09 design
+ * that tried `GET /api/providers/:id/access-token` was a permanent silent no-op that
+ * made every GUI request fall through to the local stale pool.
  */
 
 import { logger } from './utils/logger.js';
@@ -18,12 +25,36 @@ let _connectionsCache = null;
 let _connectionsCacheTime = 0;
 const CACHE_TTL_MS = 30_000;
 
-// Token expiration safety buffer: refresh/skip tokens expiring within 10 minutes
-const TOKEN_EXPIRY_BUFFER_MS = 600_000;
-
 // Track per-connection usage for round-robin / LRU selection
-const _lastUsed    = new Map();  // connectionId → timestamp
-const _failureCounts = new Map(); // connectionId → consecutive failure count
+const _lastUsed      = new Map();  // connectionId → timestamp
+const _failureCounts   = new Map();  // connectionId → { count, lastAt }
+// Persistent email→connectionId index — survives cache refreshes so that
+// failure reporting via markRateLimited (email-keyed) is never silently
+// dropped during cold-cache windows.
+const _emailToId       = new Map(); // connectionId → { count, lastAt } — consecutive failure count with last-failure timestamp
+
+// Failures older than this are decayed away so a single upstream throttle burst
+// (e.g. Google CAPACITY_EXHAUSTED storm) can't permanently lock the whole pool
+// out of bridge selection. Configurable via OMNIROUTE_FAILURE_DECAY_MS (default 10m).
+const FAILURE_DECAY_MS = Number(process.env.OMNIROUTE_FAILURE_DECAY_MS) || (10 * 60 * 1000);
+
+/**
+ * Return the effective failure count for a connection, applying time-based decay:
+ * if the most recent failure is older than FAILURE_DECAY_MS the entry is dropped
+ * entirely (count resets to 0) so the connection becomes selectable again.
+ */
+function getEffectiveFailureCount(connectionId) {
+    const rec = _failureCounts.get(connectionId);
+    if (!rec) return 0;
+    const ageMs = Date.now() - rec.lastAt;
+    if (ageMs >= FAILURE_DECAY_MS) {
+        _failureCounts.delete(connectionId);
+        return 0;
+    }
+    // Exponential half-life: count halves every FAILURE_DECAY_MS/4 (default 2.5 min)
+    const halfLifeMs = FAILURE_DECAY_MS / 4;
+    return rec.count * Math.pow(0.5, ageMs / halfLifeMs);
+}
 
 // Bridge health tracking
 let _bridgeHealthy = true;
@@ -32,8 +63,18 @@ let _consecutiveBridgeFailures = 0;
 const MAX_BRIDGE_FAILURES = 3; // Fall back to local pool after 3 consecutive failures
 
 /**
+ * Token minting is intentionally NOT done against OmniRoute's API.
+ * OmniRoute never exposes decrypted access tokens over HTTP (by design), and the
+ * formerly-assumed `/api/providers/:id/access-token` endpoint does not exist in the
+ * shipped build — every fetch attempt 404'd and the caller-side skip logic silently
+ * starved the selection path of candidates. Tokens are minted locally instead, keyed
+ * by the connection's email against the local account store (same fleet identity).
+ */
+
+/**
  * Fetch all Antigravity connections from OmniRoute.
  * Caches results for CACHE_TTL_MS to avoid hammering the API.
+ * Warm the connection cache in the background (no-op if cache is warm).
  */
 async function fetchConnections(forceRefresh = false) {
     const now = Date.now();
@@ -56,8 +97,6 @@ async function fetchConnections(forceRefresh = false) {
         }
 
         const data = await res.json();
-        // /api/providers returns { connections: [...] } — no accessToken in list
-        // We cache connections for health/LRU tracking; tokens are handled by OmniRoute internally
         const connections = (data.connections || data || [])
             .filter(c => c.provider === 'antigravity' && c.isActive && c.testStatus === 'active');
 
@@ -65,6 +104,22 @@ async function fetchConnections(forceRefresh = false) {
         _connectionsCacheTime = now;
         _bridgeHealthy = true;
         _consecutiveBridgeFailures = 0;
+        // Seed new connections mid-queue (not front-of-queue) to avoid hammering
+        // freshly-added accounts; rebuild email→id index for failure reporting.
+        for (const c of connections) {
+            _emailToId.set((c.email || c.name || '').toLowerCase(), c.id);
+            if (!_lastUsed.has(c.id)) {
+                _lastUsed.set(c.id, Date.now() - CACHE_TTL_MS / 2);
+            }
+        }
+        // Seed new connections mid-queue (not front-of-queue) to avoid hammering
+        // freshly-added accounts; rebuild email→id index for failure reporting.
+        for (const c of connections) {
+            _emailToId.set((c.email || c.name || '').toLowerCase(), c.id);
+            if (!_lastUsed.has(c.id)) {
+                _lastUsed.set(c.id, Date.now() - CACHE_TTL_MS / 2);
+            }
+        }
 
         return connections;
     } catch (err) {
@@ -103,22 +158,15 @@ async function selectAccount(model, excludeAccounts = []) {
     const now = Date.now();
     const excludeSet = new Set(excludeAccounts.map(e => e.toLowerCase()));
 
-    // Filter candidates
+    // Filter candidates. NOTE: accessToken is intentionally NOT required here —
+    // OmniRoute never ships tokens over its API; ai-proxy mints tokens locally for
+    // whichever connection email is selected (see header comment).
     const candidates = connections.filter(c => {
         // Skip excluded accounts
         if (excludeSet.has((c.email || c.name || '').toLowerCase())) return false;
 
-        // Skip accounts without access tokens
-        if (!c.accessToken) return false;
-
-        // Skip accounts with expired tokens (with 10-min safety buffer)
-        if (c.tokenExpiresAt) {
-            const expiresAt = new Date(c.tokenExpiresAt).getTime();
-            if (expiresAt < now + TOKEN_EXPIRY_BUFFER_MS) return false;
-        }
-
         // Skip accounts with too many consecutive failures
-        const failures = _failureCounts.get(c.id) || 0;
+        const failures = getEffectiveFailureCount(c.id);
         if (failures >= 5) return false;
 
         // Skip accounts with high backoff
@@ -134,8 +182,8 @@ async function selectAccount(model, excludeAccounts = []) {
 
     // Sort by: lowest failure count → least recently used → lowest backoff
     candidates.sort((a, b) => {
-        const failA = _failureCounts.get(a.id) || 0;
-        const failB = _failureCounts.get(b.id) || 0;
+        const failA = getEffectiveFailureCount(a.id);
+        const failB = getEffectiveFailureCount(b.id);
         if (failA !== failB) return failA - failB;
 
         const usedA = _lastUsed.get(a.id) || 0;
@@ -182,15 +230,17 @@ function reportSuccess(connectionId) {
  * Increments failure count and optionally forces a cache refresh.
  */
 function reportFailure(connectionId, errorType) {
-    const current = _failureCounts.get(connectionId) || 0;
-    _failureCounts.set(connectionId, current + 1);
+    const rec = _failureCounts.get(connectionId) || { count: 0, lastAt: 0 };
+    rec.count += 1;
+    rec.lastAt = Date.now();
+    _failureCounts.set(connectionId, rec);
 
     // Force cache refresh on rate limit or auth errors so we get updated health data
     if (errorType === 'rate_limit' || errorType === 'auth_error') {
         _connectionsCacheTime = 0; // Invalidate cache
     }
 
-    logger.info(`[OmniRoute Bridge] Reported failure for ${connectionId} (type=${errorType}, count=${current + 1})`);
+    logger.info(`[OmniRoute Bridge] Reported failure for ${connectionId} (type=${errorType}, count=${rec.count})`);
 }
 
 /**
@@ -214,7 +264,7 @@ async function getAvailableAccounts() {
         isActive: c.isActive,
         testStatus: c.testStatus,
         backoffLevel: c.backoffLevel || 0,
-        hasToken: !!c.accessToken,
+        hasToken: true, // tokens minted locally; OmniRoute never ships them over HTTP
         tier: (() => {
             try {
                 const psd = typeof c.providerSpecificData === 'string'
@@ -231,13 +281,11 @@ async function getAvailableAccounts() {
  */
 async function getPoolSummary() {
     const connections = await fetchConnections();
-    const now = Date.now();
     const active = connections.filter(c => c.isActive && c.testStatus === 'active');
-    // OmniRoute manages credentials and OAuth refresh tokens internally in SQLite;
-    // connections are valid worker routes when active and not in backoff cooldown.
+    // Tokens are minted locally (email-keyed) — a connection is serveable when
+    // active and not in backoff cooldown.
     const withToken = active;
     const healthy = withToken.filter(c => {
-        if (c.tokenExpiresAt && new Date(c.tokenExpiresAt).getTime() < now + TOKEN_EXPIRY_BUFFER_MS) return false;
         if (c.backoffLevel >= 3) return false;
         return true;
     });
@@ -250,7 +298,7 @@ async function getPoolSummary() {
         active: active.length,
         withToken: withToken.length,
         healthy: healthy.length,
-        cacheAge: _connectionsCacheTime ? Math.round((now - _connectionsCacheTime) / 1000) : null,
+        cacheAge: _connectionsCacheTime ? Math.round((Date.now() - _connectionsCacheTime) / 1000) : null,
     };
 }
 
@@ -402,76 +450,101 @@ function createBridgedAccountManager(accountManager) {
                     // If cache is cold, fall back to local immediately and OmniRoute
                     // will warm up for the next call.
 
-                    if (!_bridgeHealthy || !_connectionsCache) {
-                        // Bridge unhealthy or cache cold → use local pool
+                    if (!_bridgeHealthy) {
+                        // Bridge explicitly unhealthy (OmniRoute unreachable) → use local pool (fail-safe path)
                         return target.selectAccount.call(target, model, opts);
+                    }
+
+                    if (!_connectionsCache) {
+                        // Cache cold — trigger async warm-up in background; return null so caller
+                        // uses native passthrough instead of selecting from the (potentially exhausted)
+                        // local pool. The cache will be warm for the next request within ~5s.
+                        fetchConnections(true).catch(() => {});
+                        return { account: null, cacheWarming: true };
                     }
 
                     const now = Date.now();
                     const excludeSet = new Set((opts.excludeAccounts || []).map(e => e?.toLowerCase?.()));
 
-                    // Try to find a candidate synchronously from warm cache
+                    // OmniRoute is the selection authority. Candidates are ranked by
+                    // bridge-tracked failure count, then LRU. Tokens are NOT required
+                    // here — they are minted locally by email after selection.
                     const candidates = _connectionsCache.filter(c => {
                         if (excludeSet.has((c.email || c.name || '').toLowerCase())) return false;
-                        if (!c.accessToken) return false;
-                        if (c.tokenExpiresAt && new Date(c.tokenExpiresAt).getTime() < now + TOKEN_EXPIRY_BUFFER_MS) return false;
-                        const failures = _failureCounts.get(c.id) || 0;
+                        const failures = getEffectiveFailureCount(c.id);
                         if (failures >= 5) return false;
                         if (c.backoffLevel >= 3) return false;
                         return true;
                     }).sort((a, b) => {
-                        const fA = _failureCounts.get(a.id) || 0;
-                        const fB = _failureCounts.get(b.id) || 0;
+                        const fA = getEffectiveFailureCount(a.id);
+                        const fB = getEffectiveFailureCount(b.id);
                         if (fA !== fB) return fA - fB;
                         return (_lastUsed.get(a.id) || 0) - (_lastUsed.get(b.id) || 0);
                     });
 
-                    if (candidates.length === 0) {
-                        // No OmniRoute candidate → fall back to local pool
-                        return target.selectAccount.call(target, model, opts);
+                    // Map OmniRoute's chosen connection to the local account store so
+                    // the caller can mint a Google access token via the local
+                    // AccountManager's refresh-token machinery.
+                    const localByEmail = new Map(
+                        target.getAllAccounts().map(a => [String(a.email || '').toLowerCase(), a])
+                    );
+
+                    for (const conn of candidates) {
+                        const email = String(conn.email || conn.name || '').toLowerCase();
+                        const local = localByEmail.get(email);
+                        if (!local) continue;                          // connection not in local fleet → skip
+                        if (local.isInvalid || local.enabled === false) continue; // unusable locally (e.g. revoked refresh token)
+
+                        _lastUsed.set(conn.id, now);
+
+                        // Parse tier (OmniRoute's view is authoritative)
+                        let tier = local.subscription?.tier || local.tier || 'pro';
+                        try {
+                            const psd = typeof conn.providerSpecificData === 'string'
+                                ? JSON.parse(conn.providerSpecificData)
+                                : conn.providerSpecificData;
+                            tier = psd?.subscriptionTier || psd?.tier || tier;
+                        } catch {}
+
+                        // Clone the local account so OmniRoute metadata rides along
+                        // without mutating the shared account record. The local
+                        // `source` (e.g. 'oauth') MUST be preserved — credentials.js
+                        // keys the OAuth refresh-token mint on `source === 'oauth'`;
+                        // overriding it to 'omniroute' made every bridged select
+                        // fail with "No valid credentials configured (source: omniroute)"
+                        // whenever the token cache was cold.
+                        const bridgedAccount = {
+                            ...local,
+                            subscription: { ...(local.subscription || {}), tier },
+                            _omnirouteConnectionId: conn.id,
+                            _omnirouteSource: 'omniroute',
+                            healthScore: 100 - ((conn.backoffLevel || 0) * 20),
+                        };
+
+                        omnirouteAccounts.set(bridgedAccount, conn.id);
+
+                        logger.info(`[OmniRoute Bridge] selected ${bridgedAccount.email} (model: ${model || 'auto'})`);
+                        return { account: bridgedAccount };
                     }
 
-                    const conn = candidates[0];
-                    _lastUsed.set(conn.id, now);
-
-                    // Parse tier
-                    let tier = 'pro';
-                    try {
-                        const psd = typeof conn.providerSpecificData === 'string'
-                            ? JSON.parse(conn.providerSpecificData)
-                            : conn.providerSpecificData;
-                        tier = psd?.subscriptionTier || psd?.tier || 'pro';
-                    } catch {}
-
-                    // Synthesize an account object compatible with AccountManager's interface
-                    const syntheticAccount = {
-                        email: conn.email || conn.name,
-                        enabled: true,
-                        isInvalid: false,
-                        subscription: { tier },
-                        _omnirouteToken: conn.accessToken,
-                        _omnirouteConnectionId: conn.id,
-                        // Mirror fields the cloudcode module inspects
-                        source: 'omniroute',
-                        healthScore: 100 - ((conn.backoffLevel || 0) * 20),
-                    };
-
-                    // Store OmniRoute connection data keyed to this account object
-                    omnirouteAccounts.set(syntheticAccount, conn.id);
-
-                    logger.info(`[OmniRoute Bridge] /v1/messages: selected ${syntheticAccount.email} (model: ${model || 'auto'})`);
-                    return { account: syntheticAccount };
+                    // OmniRoute is healthy but yielded no usable candidate.
+                    // Per the OmniRoute-primary contract, do NOT churn the local
+                    // HybridStrategy pool (its health view is stale/secondary) —
+                    // return empty and let the caller emit a fast 503/502.
+                    logger.warn(`[OmniRoute Bridge] No eligible candidates (pool=${_connectionsCache.length}, excluded=${excludeSet.size}) — bypassing local pool (bridge healthy)`);
+                    return { account: null, omnirouteNoCandidate: true };
                 };
             }
 
-            // Intercept getTokenForAccount — return OmniRoute token if synthetic account
+            // Intercept getTokenForAccount — mint via the local AccountManager for
+            // OmniRoute-selected accounts (they are clones of local account records,
+            // so the local refresh-token path applies directly). The legacy
+            // `_omnirouteToken` fast path stays for back-compat.
             if (prop === 'getTokenForAccount') {
                 return async function(account) {
                     if (account?._omnirouteToken) {
-                        // Report this as a "use" so success/failure tracking works
                         return account._omnirouteToken;
                     }
-                    // Not an OmniRoute account — delegate to local
                     return target.getTokenForAccount.call(target, account);
                 };
             }
@@ -489,8 +562,9 @@ function createBridgedAccountManager(accountManager) {
             // Intercept markRateLimited to also report failure to OmniRoute
             if (prop === 'markRateLimited') {
                 return function(email, cooldownMs, model) {
-                    // Find connectionId for this email in cache
-                    const conn = _connectionsCache?.find(c => c.email === email || c.name === email);
+                    // Use persistent _emailToId map (works even when cache is null/stale)
+                    const _resolvedConnId = _emailToId.get(email?.toLowerCase?.());
+                    const conn = _resolvedConnId ? { id: _resolvedConnId } : _connectionsCache?.find(c => c.email === email || c.name === email);
                     if (conn) {
                         reportFailure(conn.id, 'rate_limit');
                     }
@@ -541,7 +615,7 @@ export const OMNIROUTE_MODEL_MAP = {
     'gemini-3.5-flash-extra-low': 'antigravity/gemini-3.1-flash-lite',
 
     // ── Gemini Pro & Agent Models ──
-    'gemini-3.1-pro-high': 'antigravity/gemini-3.1-pro-low',
+    'gemini-3.1-pro-high': 'antigravity/gemini-3.1-pro-high',
     'gemini-3.1-pro-low': 'antigravity/gemini-3.1-pro-low',
     'gemini-2.5-pro': 'antigravity/gemini-3.1-pro-low',
     'gemini-pro-agent': 'antigravity/gemini-pro-agent',
@@ -608,5 +682,7 @@ export const omnirouteBridge = {
     formatAccountBadge,
     modelMap: OMNIROUTE_MODEL_MAP,
 };
+
+export { createBridgedAccountManager };
 
 export default omnirouteBridge;

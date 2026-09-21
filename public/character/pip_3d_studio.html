@@ -518,11 +518,13 @@
             <button id="rotate-btn" class="btn btn-active" onclick="toggleAutoRotate()">⏸ Pause 360° Rotation</button>
             <div class="toggle-row" style="margin-top: 4px;">
                 <span>Rotation Speed</span>
-                <input type="range" id="speed-slider" min="0.2" max="3.0" step="0.1" value="1.0" style="width: 120px; accent-color: #38bdf8;" oninput="updateSpeed(this.value)">
+                <input type="range" id="speed-slider" min="0.2" max="3.0" step="0.1" value="1.0" style="width: 120px; accent-color: #38bdf8;" oninput="updateSpeed(this.value)"
+         aria-label="Speed slider">
             </div>
             <div class="toggle-row" style="margin-top: 4px;">
                 <span>Zoom Scale</span>
-                <input type="range" id="zoom-slider" min="0.6" max="1.8" step="0.05" value="1.0" style="width: 120px; accent-color: #38bdf8;" oninput="updateZoom(this.value)">
+                <input type="range" id="zoom-slider" min="0.6" max="1.8" step="0.05" value="1.0" style="width: 120px; accent-color: #38bdf8;" oninput="updateZoom(this.value)"
+         aria-label="Zoom slider">
             </div>
         </div>
 

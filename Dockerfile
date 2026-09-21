@@ -1,15 +1,14 @@
-FROM node:20-slim
+FROM node:20-bullseye-slim
+
+RUN apt-get update && apt-get install -y curl iptables iproute2 && \
+    curl -fsSL https://tailscale.com/install.sh | sh
 
 WORKDIR /app
-
-# Copy package.json and lockfile
-COPY package*.json ./
-
-# Install dependencies (this also runs the prepare script for tailwind)
-RUN npm install --ignore-scripts
-
-# Copy application source
+COPY package.json ./
+RUN npm install --production || echo "No package.json found"
 COPY . .
 
-# Start the proxy
-CMD ["npm", "start"]
+COPY entrypoint.sh /app/entrypoint.sh
+RUN chmod +x /app/entrypoint.sh
+
+CMD ["/app/entrypoint.sh"]

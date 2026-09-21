@@ -15,6 +15,7 @@ import {
 } from '../constants.js';
 import { logger } from '../utils/logger.js';
 import { throttledFetch } from '../utils/helpers.js';
+import { OMNIROUTE_MODEL_MAP } from '../omniroute-bridge.js';
 
 // Model validation cache
 const modelCache = {
@@ -124,6 +125,20 @@ export async function listModels(token) {
         description: 'Qwen 2.5 Coder 32B (NIM Free)'
     });
 
+    // Inject OmniRoute models
+    Object.entries(OMNIROUTE_MODEL_MAP).forEach(([modelId, _]) => {
+        // We want to add them if they aren't already in the model list
+        if (!modelList.find(m => m.id === modelId)) {
+            modelList.push({
+                id: modelId,
+                object: 'model',
+                created: Math.floor(Date.now() / 1000),
+                owned_by: 'omniroute',
+                description: `OmniRoute: ${modelId}`
+            });
+        }
+    });
+
     // Warm the model validation cache
     modelCache.validModels = new Set(modelList.map(m => m.id));
     modelCache.lastFetched = Date.now();
@@ -215,14 +230,14 @@ export async function getModelQuotas(token, projectId = null, tier = null) {
 
         if (modelData.quotaInfo) {
             quotas[modelId] = {
-                // When remainingFraction is missing but resetTime is present, quota is exhausted (0%)
-                remainingFraction: modelData.quotaInfo.remainingFraction ?? (isClaude ? 1.0 : (modelData.quotaInfo.resetTime ? 0 : null)),
+                // No positive fraction => treat as exhausted; never assume unlimited or unmetered.
+                remainingFraction: modelData.quotaInfo.remainingFraction ?? 0,
                 resetTime: modelData.quotaInfo.resetTime ?? null
             };
         } else {
-            // Fallback for models without explicit quota limits (e.g. free tier or unlimited models)
+            // No quotaInfo for this model: absent upstream confirmation => exhausted, never unlimited.
             quotas[modelId] = {
-                remainingFraction: isClaude ? 0 : 1.0,
+                remainingFraction: 0,
                 resetTime: null
             };
         }

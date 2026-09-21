@@ -897,7 +897,7 @@
                             <template x-if="authUrl">
                                 <div>
                                     <div class="flex items-center gap-2 mb-2">
-                                        <input type="text" readonly :value="authUrl" 
+                                        <input type="text" readonly aria-label="Authentication URL" :value="authUrl" 
                                                class="input input-xs input-bordered flex-1 bg-space-800 text-gray-300 font-mono">
                                         <button class="btn btn-xs btn-ghost text-neon-cyan" @click="copyLink" :title="$store.global.t('linkCopied')">
                                             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -908,7 +908,8 @@
                                     <div class="flex items-center gap-2">
                                         <input type="text" x-model="callbackInput" 
                                                :placeholder="$store.global.t('pasteCallbackPlaceholder')"
-                                               class="input input-xs input-bordered flex-1 bg-space-800 text-gray-300 font-mono">
+                                               class="input input-xs input-bordered flex-1 bg-space-800 text-gray-300 font-mono"
+         aria-label="Callback">
                                         <button class="btn btn-xs btn-success" 
                                                 @click="completeManualAuth" 
                                                 :disabled="!callbackInput || submitting"
@@ -993,10 +994,11 @@
                 <svg class="w-5 h-5 text-neon-purple shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                 </svg>
-                <input type="text" 
+                <input type="text" aria-label="Command palette search" 
                        x-model="$store.global.commandSearch" 
                        x-ref="commandInput"
-                       x-init="$watch('$store.global.showCommandPalette', value => { if (value) $nextTick(() => $refs.commandInput.focus()) })"
+                       x-init="$watch('$store.global.showCommandPalette', value =
+         aria-label="Command Search"> { if (value) $nextTick(() => $refs.commandInput.focus()) })"
                        placeholder="Type a view name, port, or action..." 
                        class="w-full bg-transparent border-none text-white text-sm font-mono focus:outline-none placeholder-gray-500">
                 <button @click="$store.global.showCommandPalette = false" class="text-[10px] text-gray-500 hover:text-gray-300 font-mono px-2 py-0.5 rounded border border-space-border/60">ESC</button>
@@ -1074,7 +1076,8 @@
                             <span class="text-neon-cyan font-bold uppercase" x-text="$store.global.activeTab"></span>
                         </div>
                         <div class="w-px h-3 bg-space-border/60"></div>
-                        <select x-model="selectedModel" class="bg-space-950 border border-space-border/60 rounded px-1.5 py-0.5 text-[9px] font-mono text-gray-400 hover:text-gray-300 focus:outline-none focus:border-neon-purple/50 cursor-pointer transition-colors shadow-inner">
+                        <select x-model="selectedModel" class="bg-space-950 border border-space-border/60 rounded px-1.5 py-0.5 text-[9px] font-mono text-gray-400 hover:text-gray-300 focus:outline-none focus:border-neon-purple/50 cursor-pointer transition-colors shadow-inner"
+         aria-label="Selected Model">
                             <option value="auto">Smart Pool (Auto)</option>
                             <option value="claude-3-7-sonnet">Claude 3.7 Sonnet</option>
                             <option value="gemini-2.5-pro">Gemini 2.5 Pro</option>
@@ -1170,10 +1173,11 @@
         <!-- Input Bar -->
         <div class="p-3 border-t border-space-border bg-space-950">
             <form @submit.prevent="sendMessage()" class="flex items-center gap-2">
-                <input type="text" 
+                <input type="text" aria-label="Ask Lorax Copilot" 
                        x-model="queryText"
                        placeholder="Ask Lorax Copilot about active view..." 
-                       class="flex-1 bg-space-900 border border-space-border rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-neon-purple transition-all placeholder-gray-600">
+                       class="flex-1 bg-space-900 border border-space-border rounded-xl px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-neon-purple transition-all placeholder-gray-600"
+         aria-label="Query">
                 <button type="submit" 
                         :disabled="!queryText.trim() || isLoading"
                         class="p-2 rounded-xl bg-neon-purple text-white hover:bg-purple-600 disabled:opacity-40 transition-all">

@@ -17,9 +17,11 @@ import { sendMessage } from './cloudcode/message-handler.js';
 import { sendMessageStream } from './cloudcode/streaming-handler.js';
 import { config } from './config.js';
 import { resolveModelMapping } from './constants.js';
+import { omnirouteBridge } from './omniroute-bridge.js';
 import { globalThrottle } from './utils/throttle.js';
 import { logger as baseLogger } from './utils/logger.js';
 import { readNetworkGate, sendNetworkUnavailable } from './utils/network-gate.js';
+import * as geminiStudio from './providers/gemini-studio.js';
 
 // Wrap base logger with a prefix tag for this module
 const logger = {
@@ -741,6 +743,113 @@ export function mountOpenAICompat(app, accountManager, ensureInitialized, fallba
             // Resolve requested model with semantic aliases & auto-routing heuristics
             const requestedModel = resolveRequestedModel(model, openaiMessages, system);
 
+            // Fast path for Raw Google Keys
+            if (req.apiProfile?.tier === 'raw-google') {
+                try {
+                    const response = await geminiStudio.generateContent(anthropicMessages, req.apiProfile.rawKey, {
+                        model: requestedModel,
+                        system: system,
+                        temperature: temperature,
+                        top_p: top_p,
+                        max_tokens: max_tokens || max_completion_tokens,
+                        stream: stream
+                    });
+                    
+                    const openaiResponse = anthropicToOpenAIResponse(response, requestedModel);
+                    
+                    if (stream) {
+                        res.setHeader('Content-Type', 'text/event-stream');
+                        res.setHeader('Cache-Control', 'no-cache');
+                        res.setHeader('Connection', 'keep-alive');
+                        
+                        res.write(`data: ${JSON.stringify({
+                            id: openaiResponse.id,
+                            object: 'chat.completion.chunk',
+                            created: openaiResponse.created,
+                            model: openaiResponse.model,
+                            choices: [{
+                                index: 0,
+                                delta: { role: 'assistant', content: openaiResponse.choices[0].message.content },
+                                finish_reason: null
+                            }]
+                        })}\n\n`);
+                        
+                        res.write(`data: ${JSON.stringify({
+                            id: openaiResponse.id,
+                            object: 'chat.completion.chunk',
+                            created: openaiResponse.created,
+                            model: openaiResponse.model,
+                            choices: [{ index: 0, delta: {}, finish_reason: 'stop' }]
+                        })}\n\n`);
+                        
+                        res.write('data: [DONE]\n\n');
+                        res.end();
+                        return;
+                    }
+                    
+                    return res.json(openaiResponse);
+                } catch (err) {
+                    logger.error(`[GeminiStudio] Error: ${err.message}`);
+                    return res.status(500).json({ error: { message: err.message, type: 'api_error' } });
+                }
+            }
+
+            // OmniRoute-first passthrough: OmniRoute manages account selection, token
+            // refresh, and backoff internally on a healthy pool. Only fall back to the
+            // local AccountManager pool when OmniRoute is unhealthy or returns 5xx.
+            if (omnirouteBridge.isHealthy()) {
+                const omniModel = omnirouteBridge.resolveOmniRouteModel(requestedModel);
+                try {
+                    logger.info(`[OpenAI-Compat] /v1/chat/completions → OmniRoute (${requestedModel} → ${omniModel})`);
+                    const omniBody = { ...req.body, model: omniModel };
+                    const omniController = new AbortController();
+                    const omniTimeout = setTimeout(() => omniController.abort(), 120_000);
+                    const omniRes = await fetch(`${process.env.OMNIROUTE_BASE_URL || 'http://127.0.0.1:20128'}/v1/chat/completions`, {
+                        method: 'POST',
+                        headers: {
+                            'Authorization': `Bearer ${process.env.OMNIROUTE_API_KEY || 'sk-omni-c8786fccb1e71c262854f247fc80c52be27722de31ed0d45'}`,
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(omniBody),
+                        signal: omniController.signal,
+                    });
+                    clearTimeout(omniTimeout);
+
+                    if (!omniRes.ok && omniRes.status >= 500) {
+                        throw new Error(`OmniRoute returned ${omniRes.status}`);
+                    }
+
+                    // Pipe OmniRoute's OpenAI-format response (JSON or SSE) straight back
+                    const contentType = omniRes.headers.get('content-type') || (stream ? 'text/event-stream' : 'application/json');
+                    const responseHeaders = { 'Content-Type': contentType };
+                    if (omniRes.headers.get('cache-control')) responseHeaders['Cache-Control'] = omniRes.headers.get('cache-control');
+                    if (omniRes.headers.get('x-request-id')) responseHeaders['X-Request-Id'] = omniRes.headers.get('x-request-id');
+                    res.writeHead(omniRes.status, responseHeaders);
+
+                    let clientGone = false;
+                    res.on('close', () => { clientGone = true; });
+                    const reader = omniRes.body.getReader();
+                    try {
+                        while (!clientGone) {
+                            const { done, value } = await reader.read();
+                            if (done) break;
+                            res.write(value);
+                        }
+                    } finally {
+                        reader.releaseLock();
+                    }
+                    if (!clientGone) res.end();
+
+                    omnirouteBridge.reportSuccess(null);
+                    logger.info(`/v1/chat/completions completed via OmniRoute pool`);
+                    return;
+                } catch (omniErr) {
+                    clearTimeout?.();
+                    omnirouteBridge.reportFailure(null, 'error');
+                    logger.warn(`[OpenAI-Compat] OmniRoute passthrough failed (${omniErr.message}) — falling back to local pool`);
+                }
+            }
+
             // Optimistic Retry: If all accounts are marked rate-limited for this model, reset them to force a fresh check
             if (accountManager.isAllRateLimited(requestedModel)) {
                 logger.warn(`[OpenAI-Compat] All accounts rate-limited for ${requestedModel}. Resetting state for optimistic retry.`);
@@ -871,7 +980,7 @@ export function mountOpenAICompat(app, accountManager, ensureInitialized, fallba
                     try {
                         const Database = (await import('better-sqlite3')).default;
                         const fs = await import('fs');
-                        const dbPath = '/Users/test/Projects/solidstack/registry/metrics/savings.db';
+                        const dbPath = (process.env.SOLIDSTACK_REPO_ROOT || '/Users/test/Projects/solidstack') + '/registry/metrics/savings.db';
                         if (fs.existsSync(dbPath)) {
                             const db = new Database(dbPath);
                             // LORAX Real-Dollar Retail Pricing Map (per 1M tokens)
@@ -986,7 +1095,7 @@ export function mountOpenAICompat(app, accountManager, ensureInitialized, fallba
                 try {
                     const Database = (await import('better-sqlite3')).default;
                     const fs = await import('fs');
-                    const dbPath = '/Users/test/Projects/solidstack/registry/metrics/savings.db';
+                    const dbPath = (process.env.SOLIDSTACK_REPO_ROOT || '/Users/test/Projects/solidstack') + '/registry/metrics/savings.db';
                     if (fs.existsSync(dbPath)) {
                         const db = new Database(dbPath);
                         const pricing = {

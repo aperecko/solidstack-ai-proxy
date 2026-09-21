@@ -14,7 +14,7 @@ async function main() {
     console.log(`Starting OAuth authentication for ${TARGET_EMAIL} using Chrome ${TARGET_PROFILE}...`);
     
     const redirectUri = `http://localhost:51121/oauth-callback`;
-    const authUrl = getAuthorizationUrl(redirectUri);
+    const authUrl = getAuthorizationUrl(redirectUri, TARGET_EMAIL);
     const { promise, abort } = startCallbackServer(authUrl.state, 600000);
 
     // Open in targeted Chrome Profile

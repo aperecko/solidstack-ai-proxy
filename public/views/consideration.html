@@ -311,13 +311,15 @@
     <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 font-mono">
         <div class="flex items-center gap-2 flex-wrap flex-1">
             <div class="relative flex-1 sm:max-w-xs">
-                <input type="text" x-model="searchQuery" placeholder="Search ideas or patterns..." class="input input-sm input-bordered bg-space-900 border-space-border text-gray-300 text-xs w-full pl-8">
+                <input type="text" x-model="searchQuery" placeholder="Search ideas or patterns..." class="input input-sm input-bordered bg-space-900 border-space-border text-gray-300 text-xs w-full pl-8"
+         aria-label="Search">
                 <svg class="w-4 h-4 absolute left-2.5 top-2.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                 </svg>
             </div>
 
-            <select x-model="categoryFilter" class="select select-sm select-bordered bg-space-900 border-space-border text-gray-300 text-xs">
+            <select x-model="categoryFilter" class="select select-sm select-bordered bg-space-900 border-space-border text-gray-300 text-xs"
+         aria-label="Category Filter">
                 <option value="all">All Categories</option>
                 <option value="skills">Agent Skills</option>
                 <option value="mcp">MCP Protocols</option>
@@ -325,7 +327,8 @@
                 <option value="infrastructure">Infrastructure</option>
             </select>
 
-            <select x-model="statusFilter" class="select select-sm select-bordered bg-space-900 border-space-border text-gray-300 text-xs">
+            <select x-model="statusFilter" class="select select-sm select-bordered bg-space-900 border-space-border text-gray-300 text-xs"
+         aria-label="Status Filter">
                 <option value="all">All Statuses</option>
                 <option value="analyzed">Analyzed</option>
                 <option value="pending">Pending</option>
@@ -475,7 +478,8 @@
                 <p class="text-xs text-gray-400">
                     Submit any GitHub repo, PR, ArXiv paper, or YouTube architecture link to run through the Gemini 2.5 feature analyzer.
                 </p>
-                <input type="url" x-model="evalUrl" placeholder="https://github.com/org/repo or URL" class="input input-bordered w-full bg-space-950 border-space-border text-white text-xs font-mono">
+                <input type="url" x-model="evalUrl" placeholder="https://github.com/org/repo or URL" class="input input-bordered w-full bg-space-950 border-space-border text-white text-xs font-mono"
+         aria-label="Evaluation URL">
             </div>
             <div class="p-4 border-t border-space-border flex justify-end gap-2 font-mono">
                 <button class="btn btn-sm btn-ghost text-gray-400" @click="showEvalModal = false">Cancel</button>

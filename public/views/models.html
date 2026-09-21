@@ -24,7 +24,7 @@
             </div>
             <input type="text"
                 :placeholder="$store.global.t('searchPlaceholder')"
-                :aria-label="$store.global.t('searchPlaceholder')"
+                aria-label="Search models" :aria-label="$store.global.t('searchPlaceholder')"
                 class="input-search-sm pr-10"
                 x-model.debounce="$store.data.filters.search"
                 @input="$store.data.computeQuotaRows()">
@@ -49,7 +49,8 @@
                 <select
                     class="w-full h-full bg-space-800 border border-space-border text-gray-300 rounded-lg pl-4 pr-10 focus:outline-none focus:border-neon-purple focus:ring-1 focus:ring-neon-purple transition-all truncate text-xs cursor-pointer"
                     style="appearance: none; -webkit-appearance: none; -moz-appearance: none; background-image: none;"
-                    x-model="$store.data.filters.account" @change="$store.data.computeQuotaRows()">
+                    x-model="$store.data.filters.account" @change="$store.data.computeQuotaRows()"
+         aria-label="Filters account">
                     <option value="all" x-text="$store.global.t('allAccounts')">All Accounts</option>
                     <template x-for="acc in $store.data.accounts" :key="acc.email">
                         <option :value="acc.email" x-text="Redact.email(acc.email).split('@')[0]"></option>

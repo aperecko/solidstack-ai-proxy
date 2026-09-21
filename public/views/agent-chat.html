@@ -125,7 +125,8 @@
                                   @keydown.enter.prevent="if(!$event.shiftKey) sendMessage()"
                                   placeholder="Direct agent (e.g., 'Analyze the proxy latency', 'Generate a new component layout')... [Enter to send]"
                                   rows="2"
-                                  class="w-full bg-space-900 border border-space-border/80 focus:border-neon-purple rounded-xl px-3.5 py-2.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-neon-purple resize-none custom-scrollbar font-sans"></textarea>
+                                  class="w-full bg-space-900 border border-space-border/80 focus:border-neon-purple rounded-xl px-3.5 py-2.5 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-neon-purple resize-none custom-scrollbar font-sans"
+         aria-label="Message"></textarea>
                     </div>
                     <div class="flex items-center justify-between">
                         <span class="text-[11px] font-mono text-gray-500">Press <kbd class="px-1 py-0.5 rounded bg-space-800 border border-space-border text-gray-400">Enter</kbd> to send, <kbd class="px-1 py-0.5 rounded bg-space-800 border border-space-border text-gray-400">Shift+Enter</kbd> for newline</span>
@@ -168,7 +169,8 @@
                             <input type="checkbox" 
                                    :checked="selectedActionIds.includes(act.id)"
                                    @change="toggleAction(act.id)"
-                                   class="checkbox checkbox-xs checkbox-primary mt-0.5">
+                                   class="checkbox checkbox-xs checkbox-primary mt-0.5"
+         aria-label="Toggle Action">
                             <div class="flex-1 min-w-0">
                                 <div class="flex items-center gap-2">
                                     <span class="text-xs font-bold text-white font-mono" x-text="act.kind"></span>

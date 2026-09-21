@@ -12,7 +12,8 @@
             <!-- Search Bar -->
             <div class="relative">
                 <input type="text" x-model="searchQuery" placeholder="Search 54 tasks..." 
-                       class="h-8 px-3 pr-8 rounded-lg bg-space-900 border border-space-border/60 text-xs font-mono text-white placeholder-gray-500 focus:border-neon-purple focus:outline-none w-48 sm:w-60 transition-all" />
+                       class="h-8 px-3 pr-8 rounded-lg bg-space-900 border border-space-border/60 text-xs font-mono text-white placeholder-gray-500 focus:border-neon-purple focus:outline-none w-48 sm:w-60 transition-all" /
+         aria-label="Search">
                 <span x-show="searchQuery" @click="searchQuery = ''" class="absolute right-2.5 top-2 text-xs text-gray-500 hover:text-white cursor-pointer">&times;</span>
             </div>
 

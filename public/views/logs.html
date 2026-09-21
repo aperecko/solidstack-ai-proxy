@@ -23,22 +23,27 @@
                     </svg>
                 </div>
                 <input type="text" x-model="searchQuery" :placeholder="$store.global.t('grepLogs')"
-                    class="w-full h-7 bg-space-950 border border-space-border rounded text-xs font-mono pl-7 pr-2 focus:border-neon-purple focus:outline-none transition-colors placeholder-gray-700 text-gray-300">
+                    class="w-full h-7 bg-space-950 border border-space-border rounded text-xs font-mono pl-7 pr-2 focus:border-neon-purple focus:outline-none transition-colors placeholder-gray-700 text-gray-300"
+         aria-label="Search">
             </div>
 
             <!-- Filters -->
             <div class="hidden md:flex gap-3 text-[10px] font-mono font-bold uppercase select-none">
                  <label class="flex items-center gap-1.5 cursor-pointer text-blue-400 opacity-50 hover:opacity-100 transition-opacity" :class="{'opacity-100': filters.INFO}">
-                     <input type="checkbox" class="checkbox checkbox-xs checkbox-info rounded-[2px] w-3 h-3 border-blue-400/50" x-model="filters.INFO"> <span x-text="$store.global.t('logLevelInfo')">INFO</span>
+                     <input type="checkbox" class="checkbox checkbox-xs checkbox-info rounded-[2px] w-3 h-3 border-blue-400/50" x-model="filters.INFO"
+         aria-label="Filters INFO"> <span x-text="$store.global.t('logLevelInfo')">INFO</span>
                  </label>
                  <label class="flex items-center gap-1.5 cursor-pointer text-neon-green opacity-50 hover:opacity-100 transition-opacity" :class="{'opacity-100': filters.SUCCESS}">
-                     <input type="checkbox" class="checkbox checkbox-xs checkbox-success rounded-[2px] w-3 h-3 border-neon-green/50" x-model="filters.SUCCESS"> <span x-text="$store.global.t('logLevelSuccess')">SUCCESS</span>
+                     <input type="checkbox" class="checkbox checkbox-xs checkbox-success rounded-[2px] w-3 h-3 border-neon-green/50" x-model="filters.SUCCESS"
+         aria-label="Filters SUCCESS"> <span x-text="$store.global.t('logLevelSuccess')">SUCCESS</span>
                  </label>
                  <label class="flex items-center gap-1.5 cursor-pointer text-yellow-400 opacity-50 hover:opacity-100 transition-opacity" :class="{'opacity-100': filters.WARN}">
-                     <input type="checkbox" class="checkbox checkbox-xs checkbox-warning rounded-[2px] w-3 h-3 border-yellow-400/50" x-model="filters.WARN"> <span x-text="$store.global.t('logLevelWarn')">WARN</span>
+                     <input type="checkbox" class="checkbox checkbox-xs checkbox-warning rounded-[2px] w-3 h-3 border-yellow-400/50" x-model="filters.WARN"
+         aria-label="Filters WARN"> <span x-text="$store.global.t('logLevelWarn')">WARN</span>
                  </label>
                  <label class="flex items-center gap-1.5 cursor-pointer text-red-500 opacity-50 hover:opacity-100 transition-opacity" :class="{'opacity-100': filters.ERROR}">
-                     <input type="checkbox" class="checkbox checkbox-xs checkbox-error rounded-[2px] w-3 h-3 border-red-500/50" x-model="filters.ERROR"> <span x-text="$store.global.t('logLevelError')">ERR</span>
+                     <input type="checkbox" class="checkbox checkbox-xs checkbox-error rounded-[2px] w-3 h-3 border-red-500/50" x-model="filters.ERROR"
+         aria-label="Filters ERROR"> <span x-text="$store.global.t('logLevelError')">ERR</span>
                  </label>
             </div>
         </div>
@@ -60,7 +65,8 @@
             <label class="cursor-pointer flex items-center gap-1.5">
                 <span class="text-[10px] font-mono text-gray-500 uppercase hidden sm:inline-block"
                     x-text="$store.global.t('autoScroll')">Auto-Scroll</span>
-                <input type="checkbox" class="toggle toggle-xs toggle-success" x-model="isAutoScroll">
+                <input type="checkbox" class="toggle toggle-xs toggle-success" x-model="isAutoScroll"
+         aria-label="Auto scroll">
             </label>
 
             <!-- Copy Filtered Logs -->

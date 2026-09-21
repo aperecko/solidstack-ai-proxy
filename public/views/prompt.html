@@ -40,7 +40,8 @@
             <textarea 
                 x-model="roughPrompt"
                 class="flex-1 w-full p-4 bg-transparent border-none resize-none focus:outline-none focus:ring-0 text-gray-300 font-sans text-sm custom-scrollbar"
-                placeholder="Type your rough prompt idea here... e.g. 'Make a python script to resize images in a folder'"></textarea>
+                placeholder="Type your rough prompt idea here... e.g. 'Make a python script to resize images in a folder'"
+         aria-label="Rough prompt"></textarea>
         </div>
 
         <!-- Divider Icon (Desktop only) -->
@@ -85,7 +86,8 @@
                     readonly
                     x-show="expertPrompt || isCompiling"
                     :class="{'opacity-50': isCompiling}"
-                    placeholder="Compiling..."></textarea>
+                    placeholder="Compiling..."
+         aria-label="Expert prompt"></textarea>
             </div>
         </div>
     </div>

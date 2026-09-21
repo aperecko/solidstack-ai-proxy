@@ -179,7 +179,12 @@ document.addEventListener('alpine:init', () => {
                     if (data.status === 'ok') {
                         reAuthEmail = data.email;
                     } else {
-                        Alpine.store('global').showToast('Error finding account: ' + data.error, 'error');
+                        // "No pending account" is completion, not a failure — match
+                        // the informational toast the add-account modal shows.
+                        Alpine.store('global').showToast(
+                            data.message || data.error || 'No pending account found.',
+                            'info'
+                        );
                         return;
                     }
                 } catch(e) {

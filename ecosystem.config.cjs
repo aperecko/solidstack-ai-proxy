@@ -19,7 +19,8 @@ module.exports = {
       NODE_ENV: 'production',
       NODE_OPTIONS: '--use-system-ca --max-old-space-size=1024',
       FALLBACK: 'true',
-      AG_NIM_OVERFLOW: '1'
+      AG_NIM_OVERFLOW: '1',
+      OMNIROUTE_DISABLED: '0'
     }
   },
   {

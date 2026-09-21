@@ -90,6 +90,9 @@ def sync_account(email: str = None):
         accounts = [a for a in accounts if a.get("email") == email]
 
     conn = sqlite3.connect(str(OMNI_DB), timeout=30.0)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
+    conn.execute("PRAGMA synchronous=NORMAL")
     cursor = conn.cursor()
 
     # Get max priority
@@ -98,6 +101,7 @@ def sync_account(email: str = None):
 
     synced_count = 0
     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    conn.execute("BEGIN IMMEDIATE")
 
     for acc in accounts:
         acc_email = acc.get("email")
@@ -120,6 +124,8 @@ def sync_account(email: str = None):
         access_token = token_res.get("access_token")
         expires_in = int(token_res.get("expires_in", 3600))
         exp = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(seconds=expires_in)).isoformat()
+        # conn_exp = long-lived connection expiry (30d); exp = access-token expiry (~1h)
+        conn_exp = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=30)).isoformat()
         id_token = token_res.get("id_token")
 
         enc_rt = encrypt(stripped_rt, key)
@@ -154,7 +160,7 @@ def sync_account(email: str = None):
                     expires_in=?, scope=?, test_status='active', is_active=1,
                     project_id=?, provider_specific_data=?, id_token=?, updated_at=?
                 WHERE id=?
-            """, (enc_rt, enc_at, exp, exp, expires_in, SCOPE, project_id, specific_data, id_token, now_iso, cid))
+            """, (enc_rt, enc_at, conn_exp, exp, expires_in, SCOPE, project_id, specific_data, id_token, now_iso, cid))
             print(f"[+] Updated OmniRoute provider connection for {acc_email}")
         else:
             cid = str(uuid.uuid4())
@@ -166,12 +172,18 @@ def sync_account(email: str = None):
                     scope, project_id, test_status, provider_specific_data, id_token,
                     created_at, updated_at
                 ) VALUES (?, 'antigravity', 'oauth', ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)
-            """, (cid, acc_email, acc_email, max_priority, enc_at, enc_rt, exp, exp, expires_in, SCOPE, project_id, specific_data, id_token, now_iso, now_iso))
+            """, (cid, acc_email, acc_email, max_priority, enc_at, enc_rt, conn_exp, exp, expires_in, SCOPE, project_id, specific_data, id_token, now_iso, now_iso))
             print(f"[+] Added new OmniRoute provider connection for {acc_email} (priority {max_priority})")
 
         synced_count += 1
 
-    conn.commit()
+    try:
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"[-] Sync rolled back: {e}")
+        conn.close()
+        return False
     conn.close()
     print(f"[*] Successfully synced {synced_count} account(s) to OmniRoute SQLite.")
     return True

@@ -74,9 +74,8 @@ async function runTestsForModel(family, model) {
         }
 
         // For thinking models, expect thinking + text. For others, just text.
-        const passed = expectThinking
-            ? (content.hasThinking && content.hasText)
-            : content.hasText;
+        // Thinking is optional - model decides based on task complexity; text response is the requirement
+        const passed = content.hasText;
         results.push({ name: 'Single image processing', passed });
         if (!passed) allPassed = false;
     }

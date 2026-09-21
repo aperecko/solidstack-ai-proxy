@@ -15,11 +15,12 @@
 import '../utils/proxy.js';
 import { createInterface } from 'readline/promises';
 import { stdin, stdout } from 'process';
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from 'fs';
 import { dirname } from 'path';
+import { discoverProject } from '../account-manager/credentials.js';
 import { spawn } from 'child_process';
 import net from 'net';
-import { ACCOUNT_CONFIG_PATH, DEFAULT_PORT, MAX_ACCOUNTS } from '../constants.js';
+import { ACCOUNT_CONFIG_PATH, DEFAULT_PORT, DEFAULT_PROJECT_ID, MAX_ACCOUNTS } from '../constants.js';
 import { discoverSwarmAccounts, provisionSwarmAccounts } from '../account-manager/swarm-admin.js';
 import {
     getAuthorizationUrl,
@@ -546,6 +547,152 @@ async function provisionSwarm(args) {
 }
 
 /**
+ * Persist only the fields Google filled in, leaving every other field intact.
+ *
+ * saveAccounts() above writes a fixed field whitelist, which would drop quota,
+ * corporateFootprint, disabledBy429 and friends for every account and reset
+ * settings/activeIndex. This pass must not do that, so it read-modify-writes the
+ * config itself and renames into place, the way storage.js does.
+ */
+function patchAccounts(updates, settings) {
+    const config = JSON.parse(readFileSync(ACCOUNT_CONFIG_PATH, 'utf-8'));
+    let changed = 0;
+    for (const account of config.accounts || []) {
+        const patch = updates.get(account.email.toLowerCase());
+        if (!patch) continue;
+        if (patch.projectId) account.projectId = patch.projectId;
+        if (patch.subscription) account.subscription = patch.subscription;
+        changed++;
+    }
+    if (settings) config.settings = { ...(config.settings || {}), ...settings };
+    const tmpPath = `${ACCOUNT_CONFIG_PATH}.tmp`;
+    writeFileSync(tmpPath, JSON.stringify(config, null, 2));
+    renameSync(tmpPath, ACCOUNT_CONFIG_PATH);
+    return changed;
+}
+
+/** Wait, used to pace onboarding so Google does not answer 429. */
+function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Enable AI Code Assist (Antigravity) for accounts Google has never licensed.
+ *
+ * The pool can only serve an account once Google has provisioned its Code Assist
+ * entitlement. Until then every pooled request comes back
+ *
+ *   403 "You do not have a valid license of this product."
+ *
+ * because loadCodeAssist reports no project and onboardUser never completed --
+ * which is exactly what the accounts with no projectId look like. This drives
+ * loadCodeAssist -> onboardUser one account at a time and persists only the two
+ * fields Google fills in.
+ *
+ * Google throttles the onboarding endpoint hard (429 RESOURCE_EXHAUSTED), so
+ * serial execution with backoff is the point of this pass rather than a
+ * limitation to work around: firing the swarm at it in parallel is what left the
+ * fleet unlicensed in the first place.
+ *
+ * Usage:
+ *   node src/cli/accounts.js enable-code-assist [--apply] [--only <substr>]
+ *                                               [--limit N] [--delay MS] [--all]
+ */
+async function enableCodeAssist(args) {
+    const apply = args.includes('--apply');
+    const all = args.includes('--all');
+    const onlyIdx = args.indexOf('--only');
+    const only = onlyIdx !== -1 ? args[onlyIdx + 1] : null;
+    const limitIdx = args.indexOf('--limit');
+    const limit = limitIdx !== -1 ? parseInt(args[limitIdx + 1], 10) : Infinity;
+    const delayIdx = args.indexOf('--delay');
+    const delayMs = delayIdx !== -1 ? parseInt(args[delayIdx + 1], 10) : 2000;
+
+    const config = JSON.parse(readFileSync(ACCOUNT_CONFIG_PATH, 'utf-8'));
+    const accounts = config.accounts || [];
+    const eligible = accounts.filter((a) => {
+        if (a.enabled === false || a.isInvalid) return false;
+        if (!a.refreshToken || a.refreshToken.startsWith('PENDING_AUTH')) return false;
+        if (only && !a.email.toLowerCase().includes(only.toLowerCase())) return false;
+        return all ? true : !a.projectId;
+    });
+    const candidates = eligible.slice(0, limit);
+
+    console.log(`\n=== Enable AI Code Assist (Antigravity) ===\n`);
+    console.log(`  accounts in config : ${accounts.length}`);
+    console.log(`  already has project: ${accounts.length - eligible.length}`);
+    console.log(`  to onboard         : ${eligible.length}${candidates.length < eligible.length ? ` (this pass: ${candidates.length})` : ''}`);
+    console.log(`  mode               : ${apply ? 'APPLY' : 'dry run (pass --apply to write)'}`);
+    console.log(`  pacing             : ${delayMs}ms between accounts\n`);
+
+    if (candidates.length === 0) {
+        console.log('Nothing to do — every eligible account already has a Code Assist project.');
+        return;
+    }
+    if (!apply) {
+        for (const a of candidates.slice(0, 20)) console.log(`    would onboard ${a.email}`);
+        if (candidates.length > 20) console.log(`    ... and ${candidates.length - 20} more`);
+        console.log('\nRe-run with --apply to actually provision them.');
+        return;
+    }
+
+    const updates = new Map();
+    let ok = 0;
+    let failed = 0;
+
+    for (let i = 0; i < candidates.length; i++) {
+        const account = candidates[i];
+        const tag = `[${i + 1}/${candidates.length}] ${account.email}`;
+        try {
+            const tokens = await refreshAccessToken(account.refreshToken);
+            const { project, subscription } = await discoverProject(tokens.accessToken, account.projectId);
+
+            // discoverProject falls back to DEFAULT_PROJECT_ID when onboarding did
+            // not complete. That sentinel is not an entitlement — treating it as
+            // success is what would leave these accounts looking licensed but still
+            // answering 403, so require a real project id.
+            if (!project || project === DEFAULT_PROJECT_ID) {
+                failed++;
+                console.log(`${tag}  ✗ still unlicensed (onboardUser did not grant a project)`);
+            } else {
+                updates.set(account.email.toLowerCase(), { projectId: project, subscription });
+                ok++;
+                console.log(`${tag}  ✓ ${project}${subscription?.tier ? ` (${subscription.tier})` : ''}`);
+            }
+        } catch (error) {
+            failed++;
+            const throttled = /429|RESOURCE_EXHAUSTED/i.test(error.message || '');
+            console.log(`${tag}  ✗ ${throttled ? 'throttled (429)' : error.message}`);
+        }
+        await sleep(delayMs);
+    }
+
+    if (updates.size > 0) {
+        const changed = patchAccounts(updates, config.settings);
+        console.log(`\n✓ Wrote Code Assist project ids for ${changed} account(s).`);
+        // Ask the running proxy to pick the change up without a restart.
+        try {
+            const http = await import('http');
+            await new Promise((resolve) => {
+                const req = http.request({
+                    hostname: '127.0.0.1', port: SERVER_PORT,
+                    path: '/api/accounts/reload', method: 'POST'
+                }, () => resolve());
+                req.on('error', () => resolve());
+                req.end();
+            });
+            console.log('✓ Reload signalled to the running proxy.');
+        } catch { /* server not running is fine */ }
+    }
+
+    console.log(`\n=== Summary: ${ok} licensed, ${failed} still blocked ===`);
+    if (failed > 0) {
+        console.log('Re-run to retry the blocked ones — Google throttles the onboard endpoint,\n'
+                  + 'so a fleet-wide sweep usually needs several paced passes.');
+    }
+}
+
+/**
  * Main CLI
  */
 async function main() {
@@ -580,6 +727,9 @@ async function main() {
                 await ensureServerStopped();
                 await autoDiscoverSwarm();
                 break;
+            case 'enable-code-assist':
+                await enableCodeAssist(args.slice(1));
+                break;
             case 'provision-swarm':
                 await provisionSwarm(args.slice(1));
                 break;
@@ -592,6 +742,8 @@ async function main() {
                 console.log('  node src/cli/accounts.js auto-discover   Discover and import all swarm accounts');
                 console.log('  node src/cli/accounts.js provision-swarm <domain> <prefix> <count>');
                 console.log('  node src/cli/accounts.js help            Show this help');
+                console.log('  node src/cli/accounts.js enable-code-assist [--apply]');
+                console.log('                                           License unlicensed accounts for AI Code Assist');
                 console.log('\nOptions:');
                 console.log('  --no-browser    Manual authorization code input (for headless servers)');
                 break;

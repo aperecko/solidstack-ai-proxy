@@ -314,6 +314,15 @@ export const OAUTH_CONFIG = {
 };
 export const OAUTH_REDIRECT_URI = `http://localhost:${OAUTH_CONFIG.callbackPort}/oauth-callback`;
 
+// Swarm workers are federated through the SolidStack Microsoft Entra tenant.
+// Keep this separate from Google OAuth: the Entra login page is the entry point
+// that can route the worker identity through the configured inbound SAML profile.
+export const SWARM_ENTRA_TENANT_ID = '3a8f2256-4edc-496f-8dd2-0e1cdfb93252';
+export function getSwarmLoginUrl(email = '') {
+    const params = email ? `?login_hint=${encodeURIComponent(email)}` : '';
+    return `https://login.microsoftonline.com/${SWARM_ENTRA_TENANT_ID}/login${params}`;
+}
+
 // Minimal Antigravity system instruction (from CLIProxyAPI)
 // Only includes the essential identity portion to reduce token usage and improve response quality
 // Reference: GitHub issue #76, CLIProxyAPI, gcli2api

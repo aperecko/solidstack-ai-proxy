@@ -33,7 +33,7 @@
  * See: docs/scoring-model.md
  */
 
-import { BaseStrategy } from './base-strategy.js';
+import { BaseStrategy, PROTECTED_PERSONAL_ACCOUNTS } from './base-strategy.js';
 import { HealthTracker, TokenBucketTracker, QuotaTracker } from './trackers/index.js';
 import { logger } from '../../utils/logger.js';
 import { config } from '../../config.js';
@@ -50,6 +50,11 @@ const DEFAULT_WEIGHTS = {
 // Default penalty applied to the native IDE account to keep it as last resort.
 // -300 ensures any healthy swarm account (max normal score ~860) always wins.
 const DEFAULT_NATIVE_ACCOUNT_PENALTY = -5000;
+
+// Protected accounts that must NEVER receive automated traffic
+// (canonical set lives in base-strategy.js so every strategy enforces it).
+// isAccountUsable() now hard-excludes them; this -5000 remains as belt-and-suspenders
+// for any path that scores without the usability gate.
 
 /**
  * Detect model family from model ID.
@@ -449,6 +454,12 @@ export class HybridStrategy extends BaseStrategy {
             }
         }
 
+        // Deprioritize Pro/Ultra on Flash models to protect premium quota for reasoning/coding
+        const isFlashOrLite = modelId && (modelId.toLowerCase().includes('flash') || modelId.toLowerCase().includes('lite'));
+        if (isFlashOrLite && (tier === 'pro' || tier === 'ultra')) {
+            tierComponent = -200;
+        }
+
         // ── Model-family quota bonus ─────────────────────────────────────────────
         // Reward accounts that still have quota available for the requested model
         // family. This lets partially-exhausted free accounts (e.g., Gemini quota
@@ -472,12 +483,11 @@ export class HybridStrategy extends BaseStrategy {
         // ── Custom Distribution Strategy ─────────────────────────────────────────
         let distributionScore = 0;
         
-        // 1. Daily Driver Protection
-        // adamperecko@gmail.com is the user's primary interactive account (Gemini web chat).
-        // Apply a massive penalty (-800) so it's strictly OFF-LIMITS for general background
-        // swarm usage, reserving it only for last-resort or explicit native bypass.
-        if (email === 'adamperecko@gmail.com') {
-            distributionScore -= 800;
+        // 1. Personal & Root Admin Protection
+        // Hard-penalize all personal, super-admin, and client accounts so they are NEVER
+        // burned by automated tasks.
+        if (PROTECTED_PERSONAL_ACCOUNTS.has(email?.toLowerCase())) {
+            distributionScore -= 5000;
         }
         
         // 2. US Account Superpowers
@@ -489,10 +499,10 @@ export class HybridStrategy extends BaseStrategy {
         }
         
         // 3. High Priority Swarm Targets
-        // reseller.mysolidstate.ca accounts are Workspace accounts, less restricted.
-        // Give them a slight bump (+25) so they are favored among peers.
-        if (email.endsWith('@reseller.mysolidstate.ca')) {
-            distributionScore += 25;
+        // reseller.mysolidstate.ca and adamassist.com swarm accounts are the primary workers.
+        // Give them a substantial bump (+300) so they are strongly favored.
+        if (email.endsWith('@reseller.mysolidstate.ca') || /^\d+@adamassist\.com$/.test(email)) {
+            distributionScore += 300;
         }
 
         // 4. New Account Discovery Bonus

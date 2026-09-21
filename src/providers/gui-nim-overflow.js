@@ -64,8 +64,8 @@ export function isAgNimModel(modelId) {
 export function resolveNimModel(requestedModel) {
     if (!requestedModel) return NIM_OVERFLOW_MODEL;
     const lower = requestedModel.toLowerCase();
-    if (lower.includes('deepseek') || lower.includes('r1')) {
-        return 'deepseek-ai/deepseek-v4-pro-0813';
+    if (lower.includes('deepseek') || lower.includes('r1') || lower.includes('qwen')) {
+        return 'nvidia/llama-3.1-nemotron-70b-instruct';
     }
     if (lower.includes('nemotron')) {
         return 'nvidia/llama-3.1-nemotron-70b-instruct';
@@ -73,10 +73,7 @@ export function resolveNimModel(requestedModel) {
     if (lower.includes('llama') || lower.includes('vision') || lower.startsWith('fcc-') || lower === 'meta/llama-3.2-11b-vision-instruct') {
         return 'meta/llama-3.2-11b-vision-instruct';
     }
-    if (lower.includes('qwen')) {
-        return 'deepseek-ai/deepseek-v4-pro-0813';
-    }
-    return requestedModel;
+    return 'nvidia/llama-3.1-nemotron-70b-instruct';
 }
 
 /**

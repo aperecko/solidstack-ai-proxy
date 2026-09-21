@@ -15,7 +15,8 @@
             <!-- Search Input -->
             <div class="relative w-56 sm:w-72">
                 <input type="text" x-model="searchQuery" placeholder="Search tools, ports, tags..." 
-                       class="w-full h-10 bg-space-950 border border-space-border/80 rounded-xl text-xs font-mono pl-9 pr-3 text-white focus:border-neon-cyan focus:outline-none transition-all shadow-inner">
+                       class="w-full h-10 bg-space-950 border border-space-border/80 rounded-xl text-xs font-mono pl-9 pr-3 text-white focus:border-neon-cyan focus:outline-none transition-all shadow-inner"
+         aria-label="Search">
                 <svg class="w-4 h-4 text-gray-500 absolute left-3 top-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
                 </svg>
@@ -209,19 +210,22 @@
                                 <template x-if="prop.type === 'string'">
                                     <input type="text" x-model="formPayload[key]" 
                                            class="w-full bg-space-900 border border-space-border rounded-lg px-3 py-2 text-xs font-mono text-white focus:border-neon-cyan focus:outline-none" 
-                                           :placeholder="prop.default || prop.description || ''" />
+                                           :placeholder="prop.default || prop.description || ''" /
+         aria-label="Form Payload">
                                 </template>
 
                                 <!-- Integer / Number Input -->
                                 <template x-if="prop.type === 'integer' || prop.type === 'number'">
                                     <input type="number" x-model.number="formPayload[key]" 
-                                           class="w-full bg-space-900 border border-space-border rounded-lg px-3 py-2 text-xs font-mono text-white focus:border-neon-cyan focus:outline-none" />
+                                           class="w-full bg-space-900 border border-space-border rounded-lg px-3 py-2 text-xs font-mono text-white focus:border-neon-cyan focus:outline-none" /
+         aria-label="Form Payload">
                                 </template>
 
                                 <!-- Boolean Toggle -->
                                 <template x-if="prop.type === 'boolean'">
                                     <label class="cursor-pointer flex items-center gap-3 pt-1">
-                                        <input type="checkbox" x-model="formPayload[key]" class="toggle toggle-sm toggle-primary" />
+                                        <input type="checkbox" x-model="formPayload[key]" class="toggle toggle-sm toggle-primary" /
+         aria-label="Form Payload">
                                         <span class="text-xs text-gray-300 font-mono" x-text="formPayload[key] ? 'Enabled (True)' : 'Disabled (False)'"></span>
                                     </label>
                                 </template>

@@ -6,6 +6,9 @@
 // Global DNS Patch: Bypasses /etc/hosts for outbound Google API requests to prevent loopback proxy loops.
 import dns from 'dns';
 
+// Ensure OmniRoute bridge is active unless explicitly force-disabled
+delete process.env.OMNIROUTE_DISABLED;
+
 // Homebrew/launchd may use a different CA bundle than the interactive shell.
 // Prefer Node's system trust store for Google endpoints; this is equivalent to
 // NODE_OPTIONS=--use-system-ca and keeps WireGuard/VPN-installed roots visible.

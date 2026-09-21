@@ -40,7 +40,7 @@ window.Components.aiCopilot = () => ({
             ],
             processes: [
                 { label: '🔍 Audit Process Memory Drift', prompt: 'Inspect all active daemon PIDs and check for memory leaks or orphaned socket connections.' },
-                { label: '🚀 Verify Service Mobility', prompt: 'Check stationary vs mobile local services across the macOS host (AMACBOOKPRO).' }
+                { label: '🚀 Verify Service Mobility', prompt: 'Check stationary vs mobile local services across the macOS host (${SOLIDSTACK_HOSTNAME}).' }
             ],
             skills: [
                 { label: '💡 Synthesize Idea Vault', prompt: 'Group and cluster all ideas in the Containment Vault. Identify 2 quick-win sprint tasks.' },

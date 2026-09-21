@@ -43,7 +43,7 @@ async function autoAuth() {
     
     console.log(`Found ${pendingAccounts.length} accounts to authenticate.`);
 
-    // Attach to the already-running SolidStack Chrome fleet (Chrome_Automation on :9222).
+    // Attach to the already-running SolidStack Chrome fleet (Chrome on :9222).
     // We never launch a private browser instance — operate on what's already open.
     const browser = await puppeteer.connect({
         browserURL: 'http://localhost:9222',
@@ -59,7 +59,10 @@ async function autoAuth() {
         try {
             // Setup callback server
             const redirectUri = `http://localhost:${OAUTH_CONFIG.callbackPort}/oauth-callback`;
-            const authUrl = getAuthorizationUrl(redirectUri);
+            // Federated swarm users must enter through the tenant SSO profile;
+            // passing the account hint lets Google hand off to Entra instead of
+            // treating the account as a direct Google-password login.
+            const authUrl = getAuthorizationUrl(redirectUri, account.email);
             const { promise, abort } = startCallbackServer(authUrl.state);
 
             // Fresh incognito context per account — guaranteed-clean cookies for the

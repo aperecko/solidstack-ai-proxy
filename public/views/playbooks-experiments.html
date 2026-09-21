@@ -93,7 +93,8 @@
     <div class="bg-space-900 border border-space-border rounded-xl p-6">
         <h3 class="text-lg font-bold text-white mb-3">Help Query</h3>
         <div class="flex gap-3">
-            <input type="text" x-model="helpQuery" @keydown.enter="submitHelpQuery" placeholder="Ask a question..." class="flex-1 bg-black border border-space-border rounded-lg px-4 py-2 text-sm text-white focus:outline-none focus:border-neon-cyan">
+            <input type="text" x-model="helpQuery" @keydown.enter="submitHelpQuery" placeholder="Ask a question..." class="flex-1 bg-black border border-space-border rounded-lg px-4 py-2 text-sm text-white focus:outline-none focus:border-neon-cyan"
+         aria-label="Help query">
             <button @click="submitHelpQuery" :disabled="loading" class="btn bg-neon-cyan text-black border-none hover:bg-white px-6 font-bold rounded-lg transition-colors">
                 <span x-show="!loading">Search</span>
                 <span x-show="loading">Searching...</span>

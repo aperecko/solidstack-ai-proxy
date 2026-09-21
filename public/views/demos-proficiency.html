@@ -150,7 +150,8 @@
             <div>
                 <h3 class="text-sm font-bold text-white uppercase tracking-wider font-mono mb-3">Load Demo Video</h3>
                 <div class="flex gap-2 mb-3">
-                    <input type="text" x-model="videoName" placeholder="Video name/ID" class="flex-1 bg-black border border-space-border rounded-lg px-3 py-1.5 text-xs text-white font-mono focus:border-neon-cyan focus:outline-none">
+                    <input type="text" x-model="videoName" placeholder="Video name/ID" class="flex-1 bg-black border border-space-border rounded-lg px-3 py-1.5 text-xs text-white font-mono focus:border-neon-cyan focus:outline-none"
+         aria-label="Video name">
                     <button @click="loadVideo()" class="btn btn-xs bg-neon-cyan text-black hover:bg-cyan-400 font-bold border-none">Load</button>
                 </div>
             </div>
@@ -167,7 +168,8 @@
             <div>
                 <h3 class="text-sm font-bold text-white uppercase tracking-wider font-mono mb-3">Record Demo Stream</h3>
                 <div class="flex gap-2 mb-3">
-                    <input type="text" x-model="recordId" placeholder="Demo ID" class="flex-1 bg-black border border-space-border rounded-lg px-3 py-1.5 text-xs text-white font-mono focus:border-rose-500 focus:outline-none">
+                    <input type="text" x-model="recordId" placeholder="Demo ID" class="flex-1 bg-black border border-space-border rounded-lg px-3 py-1.5 text-xs text-white font-mono focus:border-rose-500 focus:outline-none"
+         aria-label="Record ID">
                     <button @click="postRecord()" class="btn btn-xs bg-rose-500 text-white hover:bg-rose-600 font-bold border-none">Record</button>
                 </div>
             </div>
@@ -183,7 +185,8 @@
         <div class="bg-space-900 border border-space-border rounded-xl p-6 flex flex-col justify-between">
             <div>
                 <h3 class="text-sm font-bold text-white uppercase tracking-wider font-mono mb-3">Proficiency Advise</h3>
-                <textarea x-model="advisePayload" rows="3" class="w-full bg-black border border-space-border rounded-lg p-2 text-2xs text-white font-mono focus:border-amber-400 focus:outline-none mb-3 custom-scrollbar"></textarea>
+                <textarea x-model="advisePayload" rows="3" class="w-full bg-black border border-space-border rounded-lg p-2 text-2xs text-white font-mono focus:border-amber-400 focus:outline-none mb-3 custom-scrollbar"
+         aria-label="Advice payload"></textarea>
                 <button @click="postAdvise()" :disabled="loadingAdvise" class="w-full btn btn-xs bg-amber-500 text-black hover:bg-amber-400 font-bold border-none">
                     <span x-show="!loadingAdvise">Get Model Recommendation</span>
                     <span x-show="loadingAdvise">Evaluating...</span>

@@ -156,13 +156,26 @@ export function isAccountBanned(errorText) {
  * Code Assist service (e.g. "Your account is not eligible for Gemini Code
  * Assist at this time."). This is an account-level PERMISSION_DENIED — the
  * pooling/retrying against this account will never succeed.
+ *
+ * Two different wordings mean the same thing, and both must be matched or the
+ * account is retried forever as if the failure were transient:
+ *   - onboardUser: "Your account is not eligible for Gemini Code Assist for
+ *     individuals at this time" (reason FREE_TIER_USER_*).
+ *   - inference:   "You do not have a valid license of this product. Please
+ *     contact your administrator to request a license."
+ * The second contains no form of the word "eligible", so an eligibility check
+ * written only against "not eligible" misses it entirely.
  * @param {string} errorText - Error message from API
  * @returns {boolean} True if account is ineligible for the requested service
  */
 export function isEligibilityDenied(errorText) {
     const lower = (errorText || '').toLowerCase();
     return lower.includes('not eligible for') ||
-        lower.includes('ineligible for');
+        lower.includes('ineligible for') ||
+        lower.includes('do not have a valid license') ||
+        lower.includes('not have a valid license') ||
+        lower.includes('request a license') ||
+        lower.includes('free_tier_user_');
 }
 
 /**

@@ -196,14 +196,14 @@ async function autoAuth() {
     
     console.log(`Found ${pendingAccounts.length} accounts to authenticate.`);
 
-    // Attach to the SolidStack Chrome fleet (Chrome_Automation on :9222).
+    // Attach to the SolidStack Chrome fleet (Chrome on :9222).
     // If not currently running, launch Chrome automatically.
     try {
         await fetch('http://localhost:9222/json/version', { signal: AbortSignal.timeout(2000) });
     } catch {
         console.log('[Harvester] Chrome daemon on :9222 not reachable. Launching Chrome...');
         try {
-            execSync('/Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome --remote-debugging-port=9222 --user-data-dir="/Users/test/Library/Application Support/Google/Chrome_Automation" >/dev/null 2>&1 &');
+            execSync('/Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome --remote-debugging-port=9222 --user-data-dir="/Users/test/Library/Application Support/Google/Chrome" >/dev/null 2>&1 &');
             await new Promise(r => setTimeout(r, 2500));
         } catch (e) {
             console.error('[Harvester] Failed to launch Chrome:', e.message);

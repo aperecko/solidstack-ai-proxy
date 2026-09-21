@@ -307,8 +307,10 @@
     <div class="bg-space-900 border border-space-border rounded-2xl flex-1 overflow-hidden flex flex-col">
         <div class="p-4 border-b border-space-border flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-space-950/40 font-mono text-xs">
             <div class="flex items-center gap-2 flex-wrap flex-1">
-                <input type="text" x-model="searchQuery" placeholder="Filter identities or swarm accounts..." class="input input-sm input-bordered bg-space-900 border-space-border text-gray-300 text-xs w-64">
-                <select x-model="tenantFilter" class="select select-sm select-bordered bg-space-900 border-space-border text-gray-300 text-xs">
+                <input type="text" x-model="searchQuery" placeholder="Filter identities or swarm accounts..." class="input input-sm input-bordered bg-space-900 border-space-border text-gray-300 text-xs w-64"
+         aria-label="Search">
+                <select x-model="tenantFilter" class="select select-sm select-bordered bg-space-900 border-space-border text-gray-300 text-xs"
+         aria-label="Tenant Filter">
                     <option value="all">All Tenants (395 Seats)</option>
                     <option value="reseller.mysolidstate.ca">reseller.mysolidstate.ca (297 seats)</option>
                     <option value="adamassist.com">adamassist.com (49 seats)</option>

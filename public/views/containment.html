@@ -245,20 +245,23 @@
     <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 font-mono">
         <div class="flex items-center gap-2 flex-wrap flex-1">
             <div class="relative flex-1 sm:max-w-xs">
-                <input type="text" x-model="searchQuery" placeholder="Search quarantined ideas..." class="input input-sm input-bordered bg-space-900 border-space-border text-gray-300 text-xs w-full pl-8">
+                <input type="text" x-model="searchQuery" placeholder="Search quarantined ideas..." class="input input-sm input-bordered bg-space-900 border-space-border text-gray-300 text-xs w-full pl-8"
+         aria-label="Search">
                 <svg class="w-4 h-4 absolute left-2.5 top-2.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                 </svg>
             </div>
 
-            <select x-model="riskFilter" class="select select-sm select-bordered bg-space-900 border-space-border text-gray-300 text-xs">
+            <select x-model="riskFilter" class="select select-sm select-bordered bg-space-900 border-space-border text-gray-300 text-xs"
+         aria-label="Risk Filter">
                 <option value="all">All Risk Tiers</option>
                 <option value="high">High Risk</option>
                 <option value="moderate">Moderate Risk</option>
                 <option value="low">Low Risk</option>
             </select>
 
-            <select x-model="statusFilter" class="select select-sm select-bordered bg-space-900 border-space-border text-gray-300 text-xs">
+            <select x-model="statusFilter" class="select select-sm select-bordered bg-space-900 border-space-border text-gray-300 text-xs"
+         aria-label="Status Filter">
                 <option value="all">All Vault States</option>
                 <option value="quarantined">Quarantined</option>
                 <option value="evaluating">Evaluating</option>
@@ -420,13 +423,15 @@
             <div class="p-5 space-y-3 font-mono text-xs">
                 <div>
                     <label class="text-[10px] text-gray-500 uppercase font-bold block mb-1">Title</label>
-                    <input type="text" x-model="newItem.title" placeholder="e.g. Unofficial Chromium CDP Extension" class="input input-bordered w-full bg-space-950 border-space-border text-white text-xs">
+                    <input type="text" x-model="newItem.title" placeholder="e.g. Unofficial Chromium CDP Extension" class="input input-bordered w-full bg-space-950 border-space-border text-white text-xs"
+         aria-label="New Item title">
                 </div>
 
                 <div class="grid grid-cols-2 gap-3">
                     <div>
                         <label class="text-[10px] text-gray-500 uppercase font-bold block mb-1">Category</label>
-                        <select x-model="newItem.category" class="select select-bordered w-full bg-space-950 border-space-border text-gray-300 text-xs">
+                        <select x-model="newItem.category" class="select select-bordered w-full bg-space-950 border-space-border text-gray-300 text-xs"
+         aria-label="New Item category">
                             <option value="skills">Agent Skills</option>
                             <option value="infrastructure">Infrastructure</option>
                             <option value="system">Host System</option>
@@ -436,7 +441,8 @@
 
                     <div>
                         <label class="text-[10px] text-gray-500 uppercase font-bold block mb-1">Risk Assessment</label>
-                        <select x-model="newItem.risk_level" class="select select-bordered w-full bg-space-950 border-space-border text-gray-300 text-xs">
+                        <select x-model="newItem.risk_level" class="select select-bordered w-full bg-space-950 border-space-border text-gray-300 text-xs"
+         aria-label="New Item risk level">
                             <option value="low">Low Risk</option>
                             <option value="moderate">Moderate Risk</option>
                             <option value="high">High Risk</option>
@@ -446,12 +452,14 @@
 
                 <div>
                     <label class="text-[10px] text-gray-500 uppercase font-bold block mb-1">Source / Repository URL</label>
-                    <input type="text" x-model="newItem.source" placeholder="https://github.com/... or internal path" class="input input-bordered w-full bg-space-950 border-space-border text-white text-xs">
+                    <input type="text" x-model="newItem.source" placeholder="https://github.com/... or internal path" class="input input-bordered w-full bg-space-950 border-space-border text-white text-xs"
+         aria-label="New Item source">
                 </div>
 
                 <div>
                     <label class="text-[10px] text-gray-500 uppercase font-bold block mb-1">Behavior Abstract & Why Flagged</label>
-                    <textarea x-model="newItem.description" rows="3" placeholder="Describe functionality and why security flagged it..." class="textarea textarea-bordered w-full bg-space-950 border-space-border text-white text-xs font-sans"></textarea>
+                    <textarea x-model="newItem.description" rows="3" placeholder="Describe functionality and why security flagged it..." class="textarea textarea-bordered w-full bg-space-950 border-space-border text-white text-xs font-sans"
+         aria-label="New Item description"></textarea>
                 </div>
             </div>
 

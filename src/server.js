@@ -27,6 +27,7 @@ import { config } from './config.js';
 import { globalThrottle } from './utils/throttle.js';
 import { recordRequest, getQuotaStatus, isG1CreditExhausted, markG1CreditExhausted, G1_CREDIT_EXHAUSTED_COOLDOWN_MS } from './account-manager/quota-store.js';
 import { isAuthError, isRateLimitError, isCapacityExhaustedError, isAccountForbiddenError } from './errors.js';
+import { isEligibilityDenied, isAccountBanned } from './cloudcode/rate-limit-state.js';
 import { quotaRefreshSoon, setQuotaRefreshImpl } from './utils/quota-refresh.js';
 import { selectOptimalModel } from './routing/smart-router.js';
 
@@ -37,6 +38,7 @@ import { forceRefresh } from './auth/token-extractor.js';
 import { resolveTokenToEmail } from './auth/token-resolver.js';
 import { REQUEST_BODY_LIMIT } from './constants.js';
 import { AccountManager } from './account-manager/index.js';
+import { createBridgedAccountManager } from './omniroute-bridge.js';
 import { clearThinkingSignatureCache, getCachedSignatureFamily } from './format/signature-cache.js';
 import { formatDuration } from './utils/helpers.js';
 import { logger } from './utils/logger.js';
@@ -47,6 +49,7 @@ import autonomousJudge from './modules/autonomous-judge.js';
 import { injectActiveRules } from './modules/jit-injector.js';
 import { mountOpenAICompat, mountResponsesCompat } from './openai-compat.js';
 import { isNimEligible } from './providers/nvidia-nim.js';
+import * as geminiStudio from './providers/gemini-studio.js';
 import { streamAgToNim, isAgNimOverflowArmed, NIM_OVERFLOW_MODEL, isAgNimModel, resolveNimModel } from './providers/gui-nim-overflow.js';
 import { createCommanderRouter } from './commander-api.js';
 import { getVerifiedModels } from './cloudcode/model-tester.js';
@@ -59,7 +62,11 @@ import {
 } from './conversation-logger.js';
 import { startInFlight, endInFlight, recordTokenUsage } from './cloudcode/routing-logger.js';
 import { requireBillingGate } from './auth/billing-gate.js';
-import { omnirouteBridge } from './omniroute-bridge.js';
+import { omnirouteBridge, OMNIROUTE_MODEL_MAP } from './omniroute-bridge.js';
+import { runMigrations } from './background/migration-tracker.js';
+import { registerRollupJobs, runQuotaStateSeed } from './background/quota-rollup-worker.js';
+import { guardedRefresh, getCircuitState } from './utils/token-refresh-circuit-breaker.js';
+
 
 // Parse fallback flag directly from command line args to avoid circular dependency
 const args = process.argv.slice(2);
@@ -264,7 +271,8 @@ for (const googleHost of GOOGLE_PROXY_HOSTS) {
 app.disable('x-powered-by');
 
 // Initialize account manager (will be fully initialized on first request or startup)
-export const accountManager = new AccountManager();
+export const rawAccountManager = new AccountManager();
+export const accountManager = createBridgedAccountManager(rawAccountManager);
 
 // Track initialization status
 let isInitialized = false;
@@ -284,6 +292,11 @@ async function ensureInitialized() {
         try {
             await accountManager.initialize(STRATEGY_OVERRIDE);
             isInitialized = true;
+
+            // Background worker bootstrap
+            runMigrations().then(n => { if (n > 0) logger.success(`[Server] Applied ${n} migration(s)`); }).catch(err => logger.warn(`[Server] Migration error: ${err.message}`));
+            registerRollupJobs().catch(err => logger.warn(`[Server] Rollup job reg failed: ${err.message}`));
+            runQuotaStateSeed().catch(() => {});
             const status = accountManager.getStatus();
             logger.success(`[Server] Account pool initialized: ${status.summary}`);
 
@@ -298,6 +311,9 @@ async function ensureInitialized() {
             // Prime quota state on boot so the pool isn't selectable-blind until
             // the first backstop/on-demand sweep fires. Non-blocking.
             refreshAllQuotas().catch(() => {});
+            // Warm the OmniRoute connection cache so the first GUI request doesn't
+            // fall back to the local pool due to a cold cache.
+            omnirouteBridge.fetchConnections(true).catch(() => {});
         } catch (error) {
             initError = error;
             initPromise = null; // Allow retry on failure
@@ -542,7 +558,7 @@ function forwardToGoogle(hostName, req, res, bodyText, account = null, model = n
                 const errorText = body.toString('utf8');
                 logger.warn(`[GUI Interceptor] Upstream rejected request with 400 for ${model || 'unknown model'}: ${errorText.slice(0, 300)}`);
                 
-                if (options.isFallback || retryCount > 0) {
+                if (options.isFallback || retryCount > 0 || (options.fallbackHops || 0) > 0) {
                     logger.warn(`[GUI Interceptor] ⚠️ Trapped 400 error during fallback. Yielding 502 to IDE instead to preserve session.`);
                     safeProxyErrorResponse(res, 502, { error: `Original model capacity exhausted, and fallback failed: ${errorText.slice(0, 100)}` });
                     return;
@@ -653,6 +669,12 @@ function forwardToGoogle(hostName, req, res, bodyText, account = null, model = n
                                                errorText.toLowerCase().includes('insufficient quota');
                     if (isCapacityExhausted) {
                         logger.warn(`[GUI Interceptor] ⚠️ Account ${account.email} CAPACITY_EXHAUSTED on ${model} — skipping rate-limit marking, will retry with next account.`);
+                        if (account?._omnirouteConnectionId) {
+                            omnirouteBridge.reportFailure(account._omnirouteConnectionId, 'capacity_exhausted');
+                        }
+                        if (account?._omnirouteConnectionId) {
+                            omnirouteBridge.reportFailure(account._omnirouteConnectionId, 'capacity_exhausted');
+                        }
                         // Do NOT mark rate-limited (avoids IDE model lock-out UX), but DO
                         // record a persistent health failure so the account is de-prioritized
                         // on FUTURE requests too — not just excluded within this retry loop.
@@ -680,7 +702,9 @@ function forwardToGoogle(hostName, req, res, bodyText, account = null, model = n
                 // balance that /accountLimits reports as 100%). So walk through the
                 // ENTIRE pool — not just 3 accounts — before giving up, bounded by the
                 // number of enabled accounts to avoid unbounded retry loops.
-                const retryBudget = (accountManager.getAllAccounts() || []).filter(a => a.enabled !== false).length;
+                const _localPoolSize = (accountManager.getAllAccounts() || []).filter(a => a.enabled !== false).length;
+                const _omniSize = (() => { try { return Array.isArray(omnirouteBridge?._connectionsCache) ? omnirouteBridge._connectionsCache.length : 0; } catch { return 0; } })();
+                const retryBudget = Math.max(_localPoolSize, _omniSize);
                 if (retryCount < retryBudget) {
                     const nextSel = accountManager.selectAccount(model, {
                         ...options,
@@ -709,15 +733,22 @@ function forwardToGoogle(hostName, req, res, bodyText, account = null, model = n
                     markG1CreditExhausted('antigravity', account.email, model, g1CooldownMs);
                     accountManager.markRateLimited(account.email, g1CooldownMs, model);
                     logger.warn(`[GUI Interceptor] ⚠️ Account ${account.email} G1 credit exhausted on ${model} (error 2008, ${statusCode}). Cooling for ${Math.round(g1CooldownMs/1000)}s.`);
-                } else if (statusCode === 401 || errorText.toLowerCase().includes('not eligible') || errorText.toLowerCase().includes('violation of terms') || errorText.toLowerCase().includes('invalid_token')) {
+                } else if (statusCode === 401 || isEligibilityDenied(errorText) || isAccountBanned(errorText) || errorText.toLowerCase().includes('invalid_token')) {
+                    // Account-level refusal: no amount of rotation, retrying or
+                    // token refreshing will make this account serve. Mark it so the
+                    // pool stops selecting it, instead of walking 200+ accounts per
+                    // request and logging a 403 for each.
                     accountManager.markInvalid(account.email, errorText);
+                    logger.warn(`[GUI Interceptor] 🔒 Account ${account.email} is not licensed for Code Assist — removed from the pool. ${isEligibilityDenied(errorText) ? 'Google refused the entitlement for this account.' : ''}`);
                 } else {
                     accountManager.notifyFailure(account, model);
                 }
 
                 // Auto-retry with next available account
                 accumulateExcluded(options, account.email);
-                const retryBudget = (accountManager.getAllAccounts() || []).filter(a => a.enabled !== false).length;
+                const _localPoolSize = (accountManager.getAllAccounts() || []).filter(a => a.enabled !== false).length;
+                const _omniSize = (() => { try { return Array.isArray(omnirouteBridge?._connectionsCache) ? omnirouteBridge._connectionsCache.length : 0; } catch { return 0; } })();
+                const retryBudget = Math.max(_localPoolSize, _omniSize);
                 if (retryCount < retryBudget && model) {
                     const nextSel = accountManager.selectAccount(model, {
                         ...options,
@@ -854,7 +885,9 @@ function forwardToGoogle(hostName, req, res, bodyText, account = null, model = n
     proxyReq.on('error', async (err) => {
         logger.error(`[GUI Interceptor] Forward error to ${hostName}: ${err.message}`);
         if (!res.headersSent && !res.writableEnded) {
-            const retryBudget = (accountManager.getAllAccounts() || []).filter(a => a.enabled !== false).length;
+            const _localPoolSize = (accountManager.getAllAccounts() || []).filter(a => a.enabled !== false).length;
+                const _omniSize = (() => { try { return Array.isArray(omnirouteBridge?._connectionsCache) ? omnirouteBridge._connectionsCache.length : 0; } catch { return 0; } })();
+                const retryBudget = Math.max(_localPoolSize, _omniSize);
             if (account && model && retryCount < retryBudget) {
                 logger.warn(`[GUI Interceptor] ⚠️ Connection error on account ${account.email} (${err.message}) — attempting retry ${retryCount + 1}/${retryBudget} with next account...`);
                 accumulateExcluded(options, account.email);
@@ -1060,7 +1093,7 @@ async function handleQuotaSummarySynthesis(req, res) {
     const swarmSummaryStr = `${pooled.geminiAccounts || allAcctsList.length} swarm nodes online (100% capacity)`;
 
     // Extract native account window stats (5h reset & level)
-    const nativeAccount = allAcctsList.find(a => a.email === nativeEmail) || allAcctsList.find(a => a.email === 'adamperecko@gmail.com');
+    const nativeAccount = nativeEmail ? allAcctsList.find(a => a.email === nativeEmail) : null;
     let nativeGeminiPct = 10;
     let nativeClaudePct = 2;
     let nativeResetStr = 'resets in 5h';
@@ -1090,23 +1123,44 @@ async function handleQuotaSummarySynthesis(req, res) {
     }
     const nativeStatsStr = `Native ${(nativeEmail || 'adamperecko').split('@')[0]}: ${nativeGeminiPct}% 5h (${nativeResetStr}) | ${nativeClaudePct}% Pro`;
 
-    // Fractions — Gemini weekly tracks the native account's own quota headroom
-    // (always shown as 1.0 since native is shielded from swarm depletion).
-    // Gemini 5h shows the live fraction of swarm accounts currently ready.
-    const geminiWeeklyFraction = 1.0; // native account is explicitly preserved
-    const gemini5hFraction = pooled.geminiAccounts > 0
-        ? Number((readyGemini / pooled.geminiAccounts).toFixed(4))
-        : 1.0;
+    const lastAct = omnirouteBridge?.getLastActivity ? omnirouteBridge.getLastActivity() : null;
+    const timeAgoSec = lastAct?.timestamp ? Math.max(0, Math.round((now - lastAct.timestamp) / 1000)) : 0;
+    const timeAgoStr = timeAgoSec < 60 ? `${timeAgoSec}s ago` : `${Math.round(timeAgoSec / 60)}m ago`;
+
+    const activeEmail = lastAct?.email || nativeEmail;
+    const activeAccount = allAcctsList.find(a => a.email === activeEmail) || nativeAccount;
+    
+    // FLEET AGGREGATE: scan all ready accounts and take the MAX remaining fraction
+    // across the pool — not just the single last-active account. This ensures the
+    // UI reflects true fleet capacity even when the last-used account is drained.
+    let activeGeminiFraction = 1.0;
+    let activeClaudeFraction = 1.0;
+    {
+        let fleetGemMax = null;
+        let fleetClaudeMax = null;
+        for (const acct of allAcctsList) {
+            const quotas = acct._cachedFormattedQuotas || acct.quota?.models;
+            if (!quotas) continue;
+            for (const [m, q] of Object.entries(quotas)) {
+                if (q.remainingFraction == null) continue;
+                if (m.startsWith('gemini')) {
+                    if (fleetGemMax === null || q.remainingFraction > fleetGemMax) fleetGemMax = q.remainingFraction;
+                } else if (m.startsWith('claude') || m.startsWith('gpt')) {
+                    if (fleetClaudeMax === null || q.remainingFraction > fleetClaudeMax) fleetClaudeMax = q.remainingFraction;
+                }
+            }
+        }
+        // Fall back to 1.0 (full) if no quota data cached yet — pool is fresh/healthy
+        if (fleetGemMax !== null) activeGeminiFraction = fleetGemMax;
+        if (fleetClaudeMax !== null) activeClaudeFraction = fleetClaudeMax;
+    }
+
+    const geminiWeeklyFraction = activeGeminiFraction;
+    const gemini5hFraction = activeGeminiFraction;
     const readyGeminiPct = Math.round(gemini5hFraction * 100);
 
-    // Claude fractions: weekly = ready workers / total Pro workers (capacity headroom)
-    //                  5h    = same window, used for velocity pacing display
-    // Safe-floored at 0.35 so Antigravity IDE never locks out prompt submission.
-    const rawClaudeFraction = proAccounts > 0
-        ? (readyClaude > 0 ? Number((readyClaude / proAccounts).toFixed(4)) : 0.0)
-        : 0.0;
-    const claudeFraction = Math.min(1.0, Math.max(0.35, rawClaudeFraction));
-    const claude5hFraction = claudeFraction;
+    const claudeFraction = activeClaudeFraction;
+    const claude5hFraction = activeClaudeFraction;
     const readyClaudePct = Math.round(claudeFraction * 100);
 
     // Dynamic throughput estimates (conservative: 550 reqs/Pro/week, 55 req/5h burst)
@@ -1114,10 +1168,6 @@ async function handleQuotaSummarySynthesis(req, res) {
     const surge5hPool = readyClaude * 55;
     const safePacePerHour = readyClaude > 0 ? readyClaude * 11 : 0;
     const geminiFleetPct = Math.round((readyGemini / Math.max(totalAccounts, 1)) * 100);
-
-    const lastAct = omnirouteBridge?.getLastActivity ? omnirouteBridge.getLastActivity() : null;
-    const timeAgoSec = lastAct?.timestamp ? Math.max(0, Math.round((now - lastAct.timestamp) / 1000)) : 0;
-    const timeAgoStr = timeAgoSec < 60 ? `${timeAgoSec}s ago` : `${Math.round(timeAgoSec / 60)}m ago`;
 
     const payload = {
         groups: [
@@ -1521,77 +1571,15 @@ app.use(async (req, res, next) => {
                 }
             }
 
-            // 2. For AI requests: try OmniRoute passthrough first (handles account
-            //    selection, token management, and backoff internally with 33-account pool).
-            //    Fall back to the local AccountManager pool if OmniRoute is unreachable.
-            if (isAIRequest && requestBodyText != null && omnirouteBridge.isHealthy()) {
-                const omniModel = omnirouteBridge.resolveOmniRouteModel(requestedModel);
-                logger.info(`[OmniRoute Bridge] Forwarding AI request to OmniRoute /api/v1/antigravity (${requestedModel} → ${omniModel})`);
-                try {
-                    let preparedText = sanitizeThoughtPartsForClaude(requestedModel, requestBodyText);
-                    preparedText = injectThoughtSignaturesForGemini(requestedModel, preparedText);
-                    preparedText = injectActiveRules(preparedText);
+            // 2. GUI/IDE requests MUST egress natively to Google's cloudcode-pa endpoint.
+            //    OmniRoute's API surface (verified on 3.8.50) has NO Gemini SSE emitter:
+            //    streamed native/antigravity endpoints return an empty 200 text/event-stream,
+            //    and only /v1/chat/completions streams (OpenAI format, which the AG GUI
+            //    cannot render). Routing through an OpenAI shim also mangles the agent-mode
+            //    protocol (requestType=agent, tools, labels). So: select a pooled account
+            //    below and forward the unchanged AG envelope to Google for native SSE.
 
-                    // Ensure the JSON body contains the exact OmniRoute model ID
-                    try {
-                        const parsed = JSON.parse(preparedText);
-                        if (parsed.model) {
-                            parsed.model = omniModel;
-                            preparedText = JSON.stringify(parsed);
-                        }
-                    } catch {}
-
-                    const omniController = new AbortController();
-                    const omniTimeout = setTimeout(() => omniController.abort(), 120_000);
-                    const omniRes = await fetch(`${process.env.OMNIROUTE_BASE_URL || 'http://127.0.0.1:20128'}/api/v1/antigravity`, {
-                        method: 'POST',
-                        headers: {
-                            'Authorization': `Bearer ${process.env.OMNIROUTE_API_KEY || 'sk-omni-c8786fccb1e71c262854f247fc80c52be27722de31ed0d45'}`,
-                            'Content-Type': 'application/json',
-                            'X-Forwarded-For': req.ip || req.connection.remoteAddress || '127.0.0.1',
-                            'X-Original-Model': requestedModel || '',
-                        },
-                        body: preparedText,
-                        signal: omniController.signal,
-                    });
-                    clearTimeout(omniTimeout);
-
-                    if (!omniRes.ok && omniRes.status >= 500) {
-                        throw new Error(`OmniRoute returned ${omniRes.status}`);
-                    }
-
-                    // Pipe OmniRoute's response headers + body back to the client
-                    const contentType = omniRes.headers.get('content-type') || 'text/event-stream';
-                    const responseHeaders = { 'Content-Type': contentType };
-                    if (omniRes.headers.get('cache-control')) responseHeaders['Cache-Control'] = omniRes.headers.get('cache-control');
-                    if (omniRes.headers.get('x-request-id')) responseHeaders['X-Request-Id'] = omniRes.headers.get('x-request-id');
-                    res.writeHead(omniRes.status, responseHeaders);
-
-                    let clientGone = false;
-                    res.on('close', () => { clientGone = true; });
-                    const reader = omniRes.body.getReader();
-                    try {
-                        while (!clientGone) {
-                            const { done, value } = await reader.read();
-                            if (done) break;
-                            res.write(value);
-                        }
-                    } finally {
-                        reader.releaseLock();
-                    }
-                    if (!clientGone) res.end();
-                    omnirouteBridge.reportSuccess(null); // generic success ping
-                    logger.success(`[OmniRoute Bridge] GUI request completed via OmniRoute pool`);
-                    return;
-                } catch (omniErr) {
-                    clearTimeout?.(); // no-op safety
-                    omnirouteBridge.reportFailure(null, 'error');
-                    logger.warn(`[OmniRoute Bridge] Passthrough failed (${omniErr.message}) — falling back to local pool`);
-                    // Fall through to local pool below
-                }
-            }
-
-            // 2b. Local pool fallback — select account and inject token manually
+            // 2b. Local pool selection — select account and inject token manually
             let account = null;
             let omnirouteConnectionId = null;
             {
@@ -1895,6 +1883,10 @@ app.use('/v1', (req, res, next) => {
         } else if (config.apiKey && providedKey === config.apiKey) {
             isValid = true;
             apiProfile = { tier: 'legacy' }; // Legacy fallback
+        } else if (providedKey.startsWith('AIza')) {
+            // Raw Google GenAI key
+            isValid = true;
+            apiProfile = { tier: 'raw-google', rawKey: providedKey };
         }
     } else {
         // Fallback for local IDE requests that don't send an API key
@@ -2650,6 +2642,9 @@ app.get('/account-limits', async (req, res) => {
                 allModelIds.add(modelId);
             }
         }
+        
+        // Include OmniRoute models
+        Object.keys(OMNIROUTE_MODEL_MAP).forEach(modelId => allModelIds.add(modelId));
 
         const sortedModels = Array.from(allModelIds).sort();
 
@@ -2871,6 +2866,61 @@ app.get('/api/g1-credits', async (req, res) => {
             status: 'error',
             error: error.message
         });
+    }
+});
+
+/**
+ * Proxy Status & Service Health Summary
+ */
+app.get('/api/status', async (req, res) => {
+    try {
+        await ensureInitialized();
+        const status = accountManager.getStatus();
+        res.json({
+            status: 'ok',
+            service: 'ai-proxy',
+            uptime: process.uptime(),
+            timestamp: new Date().toISOString(),
+            routingMode: accountManager.getRoutingMode ? accountManager.getRoutingMode() : 'hybrid',
+            summary: status.summary || {},
+            counts: {
+                total: status.total,
+                available: status.available,
+                rateLimited: status.rateLimited,
+                invalid: status.invalid
+            }
+        });
+    } catch (error) {
+        res.status(500).json({ status: 'error', error: error.message });
+    }
+});
+
+/**
+ * Account Summary Endpoint
+ */
+app.get('/api/accounts/summary', async (req, res) => {
+    try {
+        await ensureInitialized();
+        const status = accountManager.getStatus();
+        const allAccounts = accountManager.getAllAccounts() || [];
+        res.json({
+            status: 'ok',
+            timestamp: new Date().toISOString(),
+            total: allAccounts.length,
+            available: status.available,
+            rateLimited: status.rateLimited,
+            invalid: status.invalid,
+            accounts: allAccounts.map(a => ({
+                email: a.email,
+                enabled: a.enabled !== false,
+                isInvalid: a.isInvalid || false,
+                source: a.source || 'unknown',
+                tier: a.subscription?.tier || a.tier || 'unknown',
+                lastUsed: a.lastUsed ? new Date(a.lastUsed).toISOString() : null
+            }))
+        });
+    } catch (error) {
+        res.status(500).json({ status: 'error', error: error.message });
     }
 });
 
@@ -3152,6 +3202,89 @@ app.post('/v1/messages', requireBillingGate, async (req, res) => {
                     : (typeof msg.content === 'string' ? 'text' : 'unknown');
                 logger.debug(`  [${i}] ${msg.role}: ${contentTypes}`);
             });
+        }
+
+        // Fast path for Gemini Web
+        if (request.model === 'gemini-web' || request.model.startsWith('gemini-web')) {
+            const { generateContent } = await import('./providers/gemini-web.js');
+            const cookies = req.headers['x-gemini-cookies'] || req.body.cookies;
+            if (!cookies) {
+                return res.status(400).json({ error: 'Missing cookies for gemini-web in x-gemini-cookies header or body.cookies' });
+            }
+            try {
+                // If stream is requested, we currently just return the whole block at once since we don't have a streaming handler implemented yet
+                const geminiWebResponse = await generateContent(request.messages, cookies, {
+                    model: request.model,
+                    system: request.system
+                });
+                
+                if (stream) {
+                    res.setHeader('Content-Type', 'text/event-stream');
+                    res.setHeader('Cache-Control', 'no-cache');
+                    res.setHeader('Connection', 'keep-alive');
+                    
+                    // Send it as a single chunk
+                    res.write(`data: ${JSON.stringify({
+                        id: geminiWebResponse.id,
+                        type: 'message',
+                        role: 'assistant',
+                        model: geminiWebResponse.model,
+                        delta: { type: 'text_delta', text: geminiWebResponse.content.map(c => c.text).join('\n') }
+                    })}\n\n`);
+                    res.write('data: [DONE]\n\n');
+                    res.end();
+                    return;
+                }
+                
+                return res.json(geminiWebResponse);
+            } catch (err) {
+                logger.error(`[GeminiWeb] Error: ${err.message}`);
+                return res.status(500).json({ error: err.message });
+            }
+        }
+
+        // Fast path for Raw Google Keys
+        if (req.apiProfile?.tier === 'raw-google') {
+            try {
+                if (stream) {
+                    res.setHeader('Content-Type', 'text/event-stream');
+                    res.setHeader('Cache-Control', 'no-cache');
+                    res.setHeader('Connection', 'keep-alive');
+                    
+                    const streamResult = await geminiStudio.generateContentStream(request.messages, req.apiProfile.rawKey, {
+                        model: request.model,
+                        system: request.system,
+                        temperature: request.temperature,
+                        top_p: request.top_p,
+                        top_k: request.top_k,
+                        max_tokens: request.max_tokens
+                    });
+                    
+                    for await (const chunk of streamResult) {
+                        res.write(chunk);
+                    }
+                    
+                    res.end();
+                    return;
+                }
+                
+                const response = await geminiStudio.generateContent(request.messages, req.apiProfile.rawKey, {
+                    model: request.model,
+                    system: request.system,
+                    temperature: request.temperature,
+                    top_p: request.top_p,
+                    top_k: request.top_k,
+                    max_tokens: request.max_tokens
+                });
+                
+                return res.json(response);
+            } catch (err) {
+                logger.error(`[GeminiStudio] Error: ${err.message}`);
+                return res.status(500).json({
+                    type: 'error',
+                    error: { type: 'api_error', message: err.message }
+                });
+            }
         }
 
         // Prefer OmniRoute passthrough — it manages all 33 AG accounts internally.
@@ -3498,7 +3631,7 @@ const dashboardProxy = createProxyMiddleware({
 });
 
 app.use((req, res, next) => {
-    const flaskRoutes = ['/api/stream', '/api/status', '/api/attention', '/api/heartbeats', '/api/nodes', '/api/services', '/api/containers', '/api/integrations', '/api/taxonomy', '/api/workflow', '/api/coordinator', '/api/locks', '/api/worktrees', '/api/tasks', '/api/task-progress', '/api/handoffs', '/api/openclaw', '/api/blockers', '/api/service-mobility', '/api/ai-accounts', '/api/ai-proxy', '/api/token-usage', '/api/discovered', '/api/discovered-devices', '/api/skills', '/api/model-logs', '/api/features', '/api/aggregator/status', '/api/local-engines', '/api/model-download-status'];
+    const flaskRoutes = ['/api/stream', '/api/attention', '/api/heartbeats', '/api/nodes', '/api/services', '/api/containers', '/api/integrations', '/api/taxonomy', '/api/workflow', '/api/coordinator', '/api/locks', '/api/worktrees', '/api/tasks', '/api/task-progress', '/api/handoffs', '/api/openclaw', '/api/blockers', '/api/service-mobility', '/api/ai-accounts', '/api/ai-proxy', '/api/token-usage', '/api/discovered', '/api/discovered-devices', '/api/skills', '/api/model-logs', '/api/features', '/api/aggregator/status', '/api/local-engines', '/api/model-download-status'];
     
     if (req.path === '/daemon-api' || req.path.startsWith('/daemon-api/')) {
         return daemonProxy(req, res, next);

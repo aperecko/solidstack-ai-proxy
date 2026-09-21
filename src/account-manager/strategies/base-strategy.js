@@ -9,6 +9,26 @@ import { isAccountCoolingDown } from '../rate-limits.js';
 import { getG1CreditExhaustedRemaining } from '../quota-store.js';
 
 /**
+ * Personal, super-admin, and client accounts. These identities are NEVER
+ * eligible for automated pooled traffic: owner personal accounts, tenant
+ * super admins, and client-facing accounts with known license revocation /
+ * recurring depletion (e.g. adamperecko now returns 403 "no valid license"
+ * on every RPC). Opt-out is deliberate per-account, not automatic.
+ */
+export const PROTECTED_PERSONAL_ACCOUNTS = new Set([
+    'adamperecko@gmail.com',
+    'adamtechnicalsolutions@gmail.com',
+    'adampps@gmail.com',
+    'adam@mysolidstate.ca',
+    'adam@adamassist.com',
+    'apps@reseller.mysolidstate.ca',
+    'chris@prettypaws.ca',
+    'chrisjeomara@gmail.com',
+    'falconeerkennels@gmail.com',
+    'unpulg@gmail.com'
+]);
+
+/**
  * @typedef {Object} SelectionResult
  * @property {Object|null} account - The selected account or null if none available
  * @property {number} index - The index of the selected account
@@ -79,6 +99,11 @@ export class BaseStrategy {
 
         // Skip disabled accounts
         if (account.enabled === false) return false;
+
+        // Personal / super-admin / client identities NEVER serve pooled traffic.
+        if (account.email && PROTECTED_PERSONAL_ACCOUNTS.has(account.email.toLowerCase())) {
+            return false;
+        }
 
         // Check if account is cooling down (matches opencode-antigravity-auth)
         if (isAccountCoolingDown(account)) return false;

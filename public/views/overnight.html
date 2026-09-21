@@ -66,17 +66,20 @@
             <div>
                 <label class="block text-xs font-mono text-gray-400 mb-1.5">Max Execution Duration (Hours)</label>
                 <input type="number" step="0.5" x-model="hours" :disabled="status.running"
-                       class="w-full bg-space-950 border border-space-border rounded-xl px-3.5 py-2 text-sm text-gray-200 font-mono focus:border-neon-purple focus:outline-none">
+                       class="w-full bg-space-950 border border-space-border rounded-xl px-3.5 py-2 text-sm text-gray-200 font-mono focus:border-neon-purple focus:outline-none"
+         aria-label="Hours">
             </div>
             <div>
                 <label class="block text-xs font-mono text-gray-400 mb-1.5">Harness / Test Command</label>
                 <input type="text" x-model="testCmd" :disabled="status.running"
-                       class="w-full bg-space-950 border border-space-border rounded-xl px-3.5 py-2 text-sm text-gray-200 font-mono focus:border-neon-purple focus:outline-none">
+                       class="w-full bg-space-950 border border-space-border rounded-xl px-3.5 py-2 text-sm text-gray-200 font-mono focus:border-neon-purple focus:outline-none"
+         aria-label="Test command">
             </div>
             <div>
                 <label class="block text-xs font-mono text-gray-400 mb-1.5">Cycle Interval (Seconds)</label>
                 <input type="number" x-model="intervalSec" :disabled="status.running"
-                       class="w-full bg-space-950 border border-space-border rounded-xl px-3.5 py-2 text-sm text-gray-200 font-mono focus:border-neon-purple focus:outline-none">
+                       class="w-full bg-space-950 border border-space-border rounded-xl px-3.5 py-2 text-sm text-gray-200 font-mono focus:border-neon-purple focus:outline-none"
+         aria-label="Interval seconds">
             </div>
         </div>
 
@@ -228,7 +231,7 @@
             <div class="space-y-2">
                 <div class="text-xs font-mono text-red-400 font-bold">BEFORE MUTATION</div>
                 <div class="relative min-h-[200px] rounded-xl border border-red-500/30 bg-black/40 flex items-center justify-center overflow-hidden">
-                    <img x-ref="beforeImg" src="/lorax_before.png" class="w-full rounded" onerror="this.classList.add('hidden'); this.nextElementSibling.classList.remove('hidden');" onload="this.classList.remove('hidden'); this.nextElementSibling.classList.add('hidden');">
+                    <img x-ref="beforeImg" src="/lorax_before.png" alt="Baseline screenshot recorded before the mutation" class="w-full rounded" onerror="this.classList.add('hidden'); this.nextElementSibling.classList.remove('hidden');" onload="this.classList.remove('hidden'); this.nextElementSibling.classList.add('hidden');">
                     <div class="text-center p-6 text-gray-500 font-mono text-xs hidden">
                         <svg class="w-8 h-8 mx-auto mb-2 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
@@ -240,7 +243,7 @@
             <div class="space-y-2">
                 <div class="text-xs font-mono text-neon-green font-bold">AFTER MUTATION</div>
                 <div class="relative min-h-[200px] rounded-xl border border-neon-green/30 bg-black/40 flex items-center justify-center overflow-hidden">
-                    <img x-ref="afterImg" src="/lorax_after.png" class="w-full rounded" onerror="this.classList.add('hidden'); this.nextElementSibling.classList.remove('hidden');" onload="this.classList.remove('hidden'); this.nextElementSibling.classList.add('hidden');">
+                    <img x-ref="afterImg" src="/lorax_after.png" alt="Screenshot recorded after the mutation" class="w-full rounded" onerror="this.classList.add('hidden'); this.nextElementSibling.classList.remove('hidden');" onload="this.classList.remove('hidden'); this.nextElementSibling.classList.add('hidden');">
                     <div class="text-center p-6 text-gray-500 font-mono text-xs hidden">
                         <svg class="w-8 h-8 mx-auto mb-2 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
@@ -290,7 +293,8 @@
         <div class="flex flex-wrap items-center justify-between gap-3 bg-space-900 border border-space-border/60 rounded-xl p-3">
             <div class="flex items-center gap-2">
                 <span class="text-xs font-mono text-gray-400">Sector Filter:</span>
-                <select x-model="selectedOppSector" class="bg-space-950 border border-space-border text-xs font-mono text-gray-200 rounded-lg px-2.5 py-1.5 focus:border-neon-purple focus:outline-none">
+                <select x-model="selectedOppSector" class="bg-space-950 border border-space-border text-xs font-mono text-gray-200 rounded-lg px-2.5 py-1.5 focus:border-neon-purple focus:outline-none"
+         aria-label="Selected Opp Sector">
                     <option value="all">All 8 Sectors</option>
                     <template x-for="(tasks, sec) in (opportunityData.domains || {})" :key="sec">
                         <option :value="sec" x-text="sec"></option>

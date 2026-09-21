@@ -433,7 +433,7 @@ export function createCommanderRouter(accountManager, ensureInitialized) {
         try {
             const nodesData = parseYamlFile(NODES_PATH);
             const rawNodes = nodesData.nodes || {};
-            const LOCAL_DEV_NODE = 'AMACBOOKPRO';
+            const LOCAL_DEV_NODE = '${SOLIDSTACK_HOSTNAME}';
             const vms = Object.entries(rawNodes)
                 .filter(([n_id]) => n_id === LOCAL_DEV_NODE)
                 .map(([n_id, n_data]) => {

@@ -77,7 +77,8 @@
                 <div class="flex flex-col md:flex-row gap-3 mb-8">
                     <input type="text" x-model="nextStep" @keydown.enter="saveNextStep"
                         class="flex-1 bg-space-950 border border-space-border text-white text-sm rounded-xl px-4 py-3 focus:outline-none focus:border-fuchsia-500/50 transition-all font-mono"
-                        placeholder="What is your single next step? Stave off choice fatigue...">
+                        placeholder="What is your single next step? Stave off choice fatigue..."
+         aria-label="Next step">
                     <button @click="saveNextStep" :disabled="!nextStep.trim()"
                         class="px-6 py-3 bg-fuchsia-600 hover:bg-fuchsia-500 disabled:bg-fuchsia-600/30 disabled:text-gray-500 text-white font-bold rounded-xl text-sm transition-all shadow-[0_0_15px_rgba(217,70,239,0.2)] cursor-pointer">
                         Lock In Target
@@ -134,12 +135,14 @@
                             <label class="text-[10px] font-bold text-gray-400 uppercase">Idea Title</label>
                             <input type="text" x-model="newIdea.title"
                                 class="bg-space-950 border border-space-border text-white text-xs rounded-lg px-3 py-2.5 focus:outline-none focus:border-fuchsia-500/50"
-                                placeholder="Core feature or adjustment name">
+                                placeholder="Core feature or adjustment name"
+         aria-label="New Idea title">
                         </div>
                         <div class="grid grid-cols-3 gap-2">
                             <div class="flex flex-col gap-1.5">
                                 <label class="text-[10px] font-bold text-gray-400 uppercase">Intake Channel</label>
-                                <select x-model="newIdea.channel" class="bg-space-950 border border-space-border text-white text-xs rounded-lg px-2 py-2.5 focus:outline-none">
+                                <select x-model="newIdea.channel" class="bg-space-950 border border-space-border text-white text-xs rounded-lg px-2 py-2.5 focus:outline-none"
+         aria-label="New Idea channel">
                                     <option value="A">Channel A (Sprint)</option>
                                     <option value="B">Channel B (Quarter)</option>
                                     <option value="C">Channel C (Horizon)</option>
@@ -147,7 +150,8 @@
                             </div>
                             <div class="flex flex-col gap-1.5">
                                 <label class="text-[10px] font-bold text-gray-400 uppercase">Energy Cost</label>
-                                <select x-model="newIdea.energy" class="bg-space-950 border border-space-border text-white text-xs rounded-lg px-2 py-2.5 focus:outline-none">
+                                <select x-model="newIdea.energy" class="bg-space-950 border border-space-border text-white text-xs rounded-lg px-2 py-2.5 focus:outline-none"
+         aria-label="New Idea energy">
                                     <option value="High">⚡ High</option>
                                     <option value="Medium">⚖️ Medium</option>
                                     <option value="Low">💤 Low</option>
@@ -155,7 +159,8 @@
                             </div>
                             <div class="flex flex-col gap-1.5">
                                 <label class="text-[10px] font-bold text-gray-400 uppercase">Main Agent</label>
-                                <select x-model="newIdea.mainAgent" class="bg-space-950 border border-space-border text-white text-xs rounded-lg px-2 py-2.5 focus:outline-none">
+                                <select x-model="newIdea.mainAgent" class="bg-space-950 border border-space-border text-white text-xs rounded-lg px-2 py-2.5 focus:outline-none"
+         aria-label="New Idea main Agent">
                                     <option value="Claude">Claude</option>
                                     <option value="SSmcp">SSmcp</option>
                                     <option value="LiteLLM">LiteLLM</option>
@@ -168,7 +173,8 @@
                         <label class="text-[10px] font-bold text-gray-400 uppercase">Rough Concept & Context</label>
                         <textarea x-model="newIdea.description" rows="3"
                             class="bg-space-950 border border-space-border text-white text-xs rounded-lg p-3 focus:outline-none focus:border-fuchsia-500/50 font-mono resize-none"
-                            placeholder="Rough details, constraints, dependencies. Externalize it all."></textarea>
+                            placeholder="Rough details, constraints, dependencies. Externalize it all."
+         aria-label="New Idea description"></textarea>
                     </div>
                     
                     <div class="flex justify-between items-center mt-2">
@@ -176,7 +182,8 @@
                             <label class="text-[10px] font-bold text-gray-400 uppercase">Blocker Dependency (Optional)</label>
                             <input type="text" x-model="newIdea.dependency"
                                 class="bg-space-950 border border-space-border text-white text-xs rounded-lg px-3 py-1.5 w-64 focus:outline-none"
-                                placeholder="e.g. Depends on LiteLLM config">
+                                placeholder="e.g. Depends on LiteLLM config"
+         aria-label="New Idea dependency">
                         </div>
                         <button @click="saveIdea" :disabled="!newIdea.title.trim()"
                             class="px-6 py-3 bg-fuchsia-600 hover:bg-fuchsia-500 disabled:bg-fuchsia-600/30 text-white font-bold rounded-xl text-xs transition-all shadow-[0_0_12px_rgba(217,70,239,0.2)] cursor-pointer">
@@ -288,7 +295,8 @@
                             <span class="text-[10px] font-mono text-gray-500">context/USER-CONTEXT.md</span>
                         </div>
                         <textarea x-model="userContext" rows="18"
-                            class="bg-space-950 border border-space-border text-white text-xs rounded-xl p-4 focus:outline-none focus:border-fuchsia-500/50 font-mono resize-none leading-relaxed"></textarea>
+                            class="bg-space-950 border border-space-border text-white text-xs rounded-xl p-4 focus:outline-none focus:border-fuchsia-500/50 font-mono resize-none leading-relaxed"
+         aria-label="User context"></textarea>
                     </div>
 
                     <!-- Operating Manual Editor -->
@@ -301,7 +309,8 @@
                             <span class="text-[10px] font-mono text-gray-500">.solidstack-you/OPERATING-MANUAL.md</span>
                         </div>
                         <textarea x-model="operatingManual" rows="18"
-                            class="bg-space-950 border border-space-border text-white text-xs rounded-xl p-4 focus:outline-none focus:border-indigo-500/50 font-mono resize-none leading-relaxed"></textarea>
+                            class="bg-space-950 border border-space-border text-white text-xs rounded-xl p-4 focus:outline-none focus:border-indigo-500/50 font-mono resize-none leading-relaxed"
+         aria-label="Operating manual"></textarea>
                     </div>
                 </div>
 
@@ -326,7 +335,8 @@
                 
                 <textarea x-model="geniusInput"
                     class="w-full bg-space-950 border border-space-border rounded-xl p-4 text-xs text-white focus:outline-none focus:border-fuchsia-500/50 transition-all resize-none min-h-[150px] font-mono"
-                    placeholder="Type your rough idea here..."></textarea>
+                    placeholder="Type your rough idea here..."
+         aria-label="Genius input"></textarea>
 
                 <div class="flex justify-end mt-4">
                     <button @click="generatePrompt" :disabled="geniusLoading || !geniusInput.trim()"

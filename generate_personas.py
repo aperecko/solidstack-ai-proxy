@@ -12,7 +12,7 @@ accounts = [
 # Persona mappings for high heuristic realism
 locations = {
     'TX': {'name': 'Dallas, US', 'proxy': 'dfw.socks.privado.io', 'names': {'M': ['James Miller', 'Michael Davis'], 'F': ['Elena Rodriguez', 'Maria Garcia'], 'N': ['Taylor Brooks', 'Casey Smith']}},
-    'NY': {'name': 'New York, US', 'proxy': 'ny.socks.privado.io', 'names': {'M': ['Marcus Johnson', 'David Kim'], 'F': ['Sarah Chen', 'Maya Rossi'], 'N': ['Avery Williams', 'Riley Jones']}},
+    'NY': {'name': 'New York, US', 'proxy': 'dca.socks.privado.io', 'names': {'M': ['Marcus Johnson', 'David Kim'], 'F': ['Sarah Chen', 'Maya Rossi'], 'N': ['Avery Williams', 'Riley Jones']}},
     'CA': {'name': 'Montreal, CA', 'proxy': 'yul.socks.privado.io', 'names': {'M': ['David Tremblay', 'Lucas Dubois'], 'F': ['Chloe Martin', 'Sophie Roy'], 'N': ['Jordan Lee', 'Quinn Taylor']}},
     'UK': {'name': 'London, UK', 'proxy': 'lhr.socks.privado.io', 'names': {'M': ['Oliver Brown', 'Jack Wilson'], 'F': ['Emma Davies', 'Sophie Wright'], 'N': ['Jamie Evans', 'Morgan Hughes']}},
     'IN': {'name': 'Mumbai, IN', 'proxy': 'bom.socks.privado.io', 'names': {'M': ['Raj Patel', 'Arjun Singh'], 'F': ['Priya Sharma', 'Ananya Gupta'], 'N': ['Kiran Desai', 'Samar Verma']}}

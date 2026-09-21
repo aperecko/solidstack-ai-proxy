@@ -10,6 +10,7 @@ import { MIN_SIGNATURE_LENGTH, getModelFamily } from '../constants.js';
 import { EmptyResponseError } from '../errors.js';
 import { cacheSignature, cacheThinkingSignature } from '../format/signature-cache.js';
 import { logger } from '../utils/logger.js';
+import { cacheTimerTTFB, recordCacheTelemetry } from './cache-telemetry.js';
 
 /**
  * Stream SSE response and yield Anthropic-format events
@@ -18,7 +19,7 @@ import { logger } from '../utils/logger.js';
  * @param {string} originalModel - The original model name
  * @yields {Object} Anthropic-format SSE events
  */
-export async function* streamSSEResponse(response, originalModel) {
+export async function* streamSSEResponse(response, originalModel, requestId = null) {
     const messageId = `msg_${crypto.randomBytes(16).toString('hex')}`;
     let hasEmittedStart = false;
     let blockIndex = 0;
@@ -71,10 +72,15 @@ export async function* streamSSEResponse(response, originalModel) {
                 const content = firstCandidate.content || {};
                 const parts = content.parts || [];
 
-                // Emit message_start on first data
-                // Note: input_tokens = promptTokenCount - cachedContentTokenCount (Antigravity includes cached in total)
+                // Emit message_start on first data.
+                // IMPORTANT: Google sends usageMetadata (promptTokenCount/cachedContentTokenCount)
+                // only on the LAST SSE chunk, not the first. At this point inputTokens and
+                // cacheReadTokens are still 0. We emit message_start immediately (required by
+                // Anthropic protocol) and then include the real token counts in message_delta
+                // at the end of the stream so clients see the correct usage.
                 if (!hasEmittedStart && parts.length > 0) {
                     hasEmittedStart = true;
+                    if (requestId) cacheTimerTTFB(requestId);
                     yield {
                         type: 'message_start',
                         message: {
@@ -86,9 +92,9 @@ export async function* streamSSEResponse(response, originalModel) {
                             stop_reason: null,
                             stop_sequence: null,
                             usage: {
-                                input_tokens: inputTokens - cacheReadTokens,
+                                input_tokens: 0,  // real value emitted in message_delta once usageMetadata arrives
                                 output_tokens: 0,
-                                cache_read_input_tokens: cacheReadTokens,
+                                cache_read_input_tokens: 0,  // real value emitted in message_delta
                                 cache_creation_input_tokens: 0
                             }
                         }
@@ -291,11 +297,23 @@ export async function* streamSSEResponse(response, originalModel) {
         type: 'message_delta',
         delta: { stop_reason: stopReason || 'end_turn', stop_sequence: null },
         usage: {
+            // input_tokens is the real value now that usageMetadata has arrived from Google
+            input_tokens: inputTokens - cacheReadTokens,
             output_tokens: outputTokens,
             cache_read_input_tokens: cacheReadTokens,
             cache_creation_input_tokens: 0
         }
     };
 
+    if (requestId) {
+        recordCacheTelemetry({
+            requestId,
+            model: originalModel,
+            family: getModelFamily(originalModel),
+            inputTokens: inputTokens - cacheReadTokens,
+            outputTokens,
+            cacheReadTokens
+        });
+    }
     yield { type: 'message_stop' };
 }

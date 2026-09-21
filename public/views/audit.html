@@ -278,20 +278,23 @@
     <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 font-mono">
         <div class="flex items-center gap-2 flex-wrap flex-1">
             <div class="relative flex-1 sm:max-w-xs">
-                <input type="text" x-model="searchQuery" placeholder="Search patches, files, or vectors..." class="input input-sm input-bordered bg-space-900 border-space-border text-gray-300 text-xs w-full pl-8">
+                <input type="text" x-model="searchQuery" placeholder="Search patches, files, or vectors..." class="input input-sm input-bordered bg-space-900 border-space-border text-gray-300 text-xs w-full pl-8"
+         aria-label="Search">
                 <svg class="w-4 h-4 absolute left-2.5 top-2.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                 </svg>
             </div>
 
-            <select x-model="severityFilter" class="select select-sm select-bordered bg-space-900 border-space-border text-gray-300 text-xs">
+            <select x-model="severityFilter" class="select select-sm select-bordered bg-space-900 border-space-border text-gray-300 text-xs"
+         aria-label="Severity Filter">
                 <option value="all">All Priorities</option>
                 <option value="P0">P0 - Critical</option>
                 <option value="P1">P1 - High</option>
                 <option value="P2">P2 - Medium</option>
             </select>
 
-            <select x-model="categoryFilter" class="select select-sm select-bordered bg-space-900 border-space-border text-gray-300 text-xs">
+            <select x-model="categoryFilter" class="select select-sm select-bordered bg-space-900 border-space-border text-gray-300 text-xs"
+         aria-label="Category Filter">
                 <option value="all">All Categories</option>
                 <option value="architecture">Architecture</option>
                 <option value="security">Security</option>
@@ -312,7 +315,8 @@
                 <thead class="bg-space-950 font-mono text-xs uppercase text-gray-500 sticky top-0 z-10 border-b border-space-border">
                     <tr>
                         <th class="py-3 px-4 w-10">
-                            <input type="checkbox" @change="toggleSelectAll($event)" class="checkbox checkbox-xs border-space-border rounded">
+                            <input type="checkbox" @change="toggleSelectAll($event)" class="checkbox checkbox-xs border-space-border rounded"
+         aria-label="Toggle Select All">
                         </th>
                         <th class="py-3 px-4 font-medium">Patch & Vector</th>
                         <th class="py-3 px-4 font-medium">Target File</th>
@@ -326,7 +330,8 @@
                     <template x-for="patch in filteredPatches" :key="patch.id">
                         <tr class="hover:bg-space-800/50 transition-colors">
                             <td class="py-3 px-4">
-                                <input type="checkbox" :value="patch.id" x-model="selectedPatchIds" class="checkbox checkbox-xs border-space-border rounded">
+                                <input type="checkbox" :value="patch.id" x-model="selectedPatchIds" class="checkbox checkbox-xs border-space-border rounded"
+         aria-label="Selected Patch Ids">
                             </td>
                             <td class="py-3 px-4">
                                 <div class="font-bold text-white font-sans" x-text="patch.title"></div>

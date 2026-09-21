@@ -18,7 +18,7 @@ import os from 'os';
 import { fileURLToPath } from 'url';
 import express from 'express';
 import { getPublicConfig, saveConfig, config } from '../config.js';
-import { DEFAULT_PORT, ACCOUNT_CONFIG_PATH, MAX_ACCOUNTS, DEFAULT_PRESETS, DEFAULT_SERVER_PRESETS } from '../constants.js';
+import { DEFAULT_PORT, ACCOUNT_CONFIG_PATH, MAX_ACCOUNTS, DEFAULT_PRESETS, DEFAULT_SERVER_PRESETS, getSwarmLoginUrl } from '../constants.js';
 
 const OMNI_SYNC_SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), '../account-manager/omniroute_sync.py');
 import { readClaudeConfig, updateClaudeConfig, replaceClaudeConfig, getClaudeConfigPath, readPresets, savePreset, deletePreset } from '../utils/claude-config.js';
@@ -32,6 +32,7 @@ import { getRoutingStats, getSystemUsageReport } from '../cloudcode/routing-logg
 import { eventLogger } from '../utils/event-logger.js';
 import { buildMonitorPage } from './monitor-page.js';
 import { NATIVE_TOOLS, callNativeTool } from '../tool-catalog.js';
+import { clearAccountBrowserContext } from '../account-manager/logout.js';
 
 // Get package version
 const packageVersion = getPackageVersion();
@@ -949,6 +950,7 @@ export function mountWebUI(app, dirname, accountManager) {
         try {
             const { email } = req.params;
             await removeAccount(email);
+            await clearAccountBrowserContext(email);
 
             // Reload AccountManager to pick up changes
             await accountManager.reload();
@@ -1065,7 +1067,7 @@ export function mountWebUI(app, dirname, accountManager) {
     app.post('/api/swarm/launch-clean-window', async (req, res) => {
         try {
             const { email, url } = req.body;
-            const targetUrl = url || `https://accounts.google.com/AccountChooser?Email=${encodeURIComponent(email)}&continue=https://myaccount.google.com`;
+            const targetUrl = url || getSwarmLoginUrl(email);
             const { spawn } = await import('child_process');
             spawn('open', ['-a', 'Google Chrome', targetUrl], { detached: true, stdio: 'ignore' }).unref();
             res.json({ status: 'ok', message: `Launched clean window for ${email}` });
@@ -1201,9 +1203,14 @@ export function mountWebUI(app, dirname, accountManager) {
                     remainingCount: pending.length
                 });
             } else {
-                res.status(404).json({ 
-                    status: 'error', 
-                    error: `All accounts for ${domain || 'fleet'} are active and logged in! (0 pending)` 
+                // "Nothing left to onboard" is a successful answer, not a missing
+                // resource: returning 404 made every page load log a console error
+                // and left callers unable to tell completion from failure.
+                res.json({
+                    status: 'complete',
+                    email: null,
+                    remainingCount: 0,
+                    message: `All accounts for ${domain || 'fleet'} are active and logged in! (0 pending)`
                 });
             }
         } catch (error) {
@@ -2067,7 +2074,18 @@ export function mountWebUI(app, dirname, accountManager) {
                     pendingOAuthFlows.delete(state);
                 });
 
-            res.json({ status: 'ok', url, state });
+            const isFederatedSwarm = typeof loginHint === 'string' &&
+                /^(?:\d+|z\d+)@(adamassist\.com|reseller\.mysolidstate\.ca)$/i.test(loginHint);
+            res.json({
+                status: 'ok',
+                url,
+                state,
+                // Google remains the OAuth authorization endpoint, but swarm
+                // users should establish the Entra session first so Workspace
+                // can complete its inbound SAML hand-off.
+                federated: isFederatedSwarm,
+                federatedLoginUrl: isFederatedSwarm ? getSwarmLoginUrl(loginHint) : null
+            });
         } catch (error) {
             logger.error('[WebUI] Error generating auth URL:', error);
             res.status(500).json({ status: 'error', error: error.message });

@@ -22,7 +22,7 @@
 import { spawn } from 'child_process';
 import { isProtectedZoneServer } from './protected-zones-server.js';
 
-// Map of tenant accounts → fleet profile directories (Chrome_Automation),
+// Map of tenant accounts → fleet profile directories (Chrome),
 // so "open chrome profile 13" is a single tool call, not a manual OAuth flow.
 const FAMILY_PROFILES = {
     'assistaius@gmail.com': 'Profile 24',

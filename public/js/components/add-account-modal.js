@@ -65,7 +65,7 @@ window.Components.addAccountModal = () => ({
                         })
                         .catch(() => {});
                 } else {
-                    Alpine.store('global').showToast(data.error || 'All accounts logged in!', 'info');
+                    Alpine.store('global').showToast(data.message || data.error || 'All accounts logged in!', 'info');
                     return;
                 }
             } catch(e) {

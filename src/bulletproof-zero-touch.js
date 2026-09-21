@@ -64,7 +64,7 @@ async function onboardSingleAccount(email) {
     const { promise, abort } = startCallbackServer(authUrl.state, 180000);
 
     // Using a persistent automation profile instead of a throwaway /tmp directory
-    const profileDir = '/Users/test/Library/Application Support/Google/Chrome_Automation';
+    const profileDir = '/Users/test/Library/Application Support/Google/Chrome';
     
     // Launch natively, no headless, no focus stealing
     const browser = await puppeteerExtra.launch({

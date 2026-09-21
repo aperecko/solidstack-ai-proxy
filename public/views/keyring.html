@@ -141,11 +141,13 @@
                 <div class="space-y-3">
                     <div>
                         <label class="block text-xs font-bold text-gray-400 mb-1">Key Label (For 1Password Vault)</label>
-                        <input type="text" x-model="manualLabel" class="w-full bg-black/40 border border-gray-700 rounded-lg px-4 py-2 focus:border-emerald-500 focus:outline-none text-sm">
+                        <input type="text" x-model="manualLabel" class="w-full bg-black/40 border border-gray-700 rounded-lg px-4 py-2 focus:border-emerald-500 focus:outline-none text-sm"
+         aria-label="Label">
                     </div>
                     <div>
                         <label class="block text-xs font-bold text-gray-400 mb-1">API Key</label>
-                        <input type="password" x-model="manualKey" placeholder="Paste your API key here..." class="w-full bg-black/40 border border-gray-700 rounded-lg px-4 py-2 focus:border-emerald-500 focus:outline-none font-mono text-sm">
+                        <input type="password" x-model="manualKey" placeholder="Paste your API key here..." class="w-full bg-black/40 border border-gray-700 rounded-lg px-4 py-2 focus:border-emerald-500 focus:outline-none font-mono text-sm"
+         aria-label="Key">
                     </div>
                 </div>
 
