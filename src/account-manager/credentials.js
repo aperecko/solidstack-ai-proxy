@@ -4,6 +4,13 @@
  * Handles OAuth token handling and project discovery.
  */
 
+import { exec } from 'child_process';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
 import {
     ANTIGRAVITY_DB_PATH,
     TOKEN_REFRESH_INTERVAL_MS,
@@ -107,6 +114,12 @@ export async function getTokenForAccount(account, tokenCache, onInvalid, onSave)
                 if (onSave) await onSave();
             }
             logger.success(`[AccountManager] Refreshed OAuth token for: ${account.email}`);
+
+            // FIRE-AND-FORGET: Sync this specific token up to OmniRoute so the dashboard stays accurate
+            const syncScript = join(__dirname, 'omniroute_sync.py');
+            exec(`python3 "${syncScript}" "${account.email}"`, (err) => {
+                if (err) logger.debug(`[AccountManager] Background OmniRoute sync failed for ${account.email}: ${err.message}`);
+            });
         } catch (error) {
             // Check if it's a transient network error
             if (isNetworkError(error)) {

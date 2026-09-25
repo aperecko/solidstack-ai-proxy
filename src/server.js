@@ -10,37 +10,33 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import crypto from 'crypto';
-import { createRequire } from 'module';
 import https from 'https';
 import { getSocksAgent } from './utils/socks.js';
 import { Transform } from 'stream';
 import { fileURLToPath } from 'url';
 import { createProxyMiddleware } from 'http-proxy-middleware';
-import { sendMessage, sendMessageStream, listModels, fetchAvailableModels, getModelQuotas, getSubscriptionTier, isValidModel } from './cloudcode/index.js';
+import { sendMessage, sendMessageStream, listModels, isValidModel } from './cloudcode/index.js';
 import { parseResetTime } from './cloudcode/rate-limit-parser.js';
-import { buildFallbackMap, buildPresets, getModelFamily, resolveModelMapping, GEMINI_SKIP_SIGNATURE } from './constants.js';
-import { initFallbackMap, getFallbackChain } from './fallback-config.js';
+import { getModelFamily, resolveModelMapping, GEMINI_SKIP_SIGNATURE } from './constants.js';
+import { getFallbackChain } from './fallback-config.js';
 import { logRoutingTelemetry } from './cloudcode/routing-logger.js';
 import { mountWebUI } from './webui/index.js';
-import { keyringManager } from './providers/keyring-manager.js';
 import { config } from './config.js';
 import { globalThrottle } from './utils/throttle.js';
 import { recordRequest, getQuotaStatus, isG1CreditExhausted, markG1CreditExhausted, G1_CREDIT_EXHAUSTED_COOLDOWN_MS } from './account-manager/quota-store.js';
 import { isAuthError, isRateLimitError, isCapacityExhaustedError, isAccountForbiddenError } from './errors.js';
 import { isEligibilityDenied, isAccountBanned } from './cloudcode/rate-limit-state.js';
-import { quotaRefreshSoon, setQuotaRefreshImpl } from './utils/quota-refresh.js';
+import { quotaRefreshSoon } from './utils/quota-refresh.js';
 import { selectOptimalModel } from './routing/smart-router.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const require = createRequire(import.meta.url);
 import { forceRefresh } from './auth/token-extractor.js';
 import { resolveTokenToEmail } from './auth/token-resolver.js';
 import { REQUEST_BODY_LIMIT } from './constants.js';
 import { AccountManager } from './account-manager/index.js';
 import { createBridgedAccountManager } from './omniroute-bridge.js';
 import { clearThinkingSignatureCache, getCachedSignatureFamily } from './format/signature-cache.js';
-import { formatDuration } from './utils/helpers.js';
 import { logger } from './utils/logger.js';
 import { readNetworkGate, sendNetworkUnavailable } from './utils/network-gate.js';
 import proficiencyTracker from './modules/proficiency-tracker.js';
@@ -51,21 +47,18 @@ import { mountOpenAICompat, mountResponsesCompat } from './openai-compat.js';
 import { isNimEligible } from './providers/nvidia-nim.js';
 import * as geminiStudio from './providers/gemini-studio.js';
 import { streamAgToNim, isAgNimOverflowArmed, NIM_OVERFLOW_MODEL, isAgNimModel, resolveNimModel } from './providers/gui-nim-overflow.js';
-import { createCommanderRouter } from './commander-api.js';
 import { getVerifiedModels } from './cloudcode/model-tester.js';
 import {
     logConversation,
     initStreamingLog,
     accumulateStreamEvent,
-    finalizeStreamingLog,
-    createConversationRouter
+    finalizeStreamingLog
 } from './conversation-logger.js';
 import { startInFlight, endInFlight, recordTokenUsage } from './cloudcode/routing-logger.js';
 import { requireBillingGate } from './auth/billing-gate.js';
-import { omnirouteBridge, OMNIROUTE_MODEL_MAP } from './omniroute-bridge.js';
+import { omnirouteBridge } from './omniroute-bridge.js';
 import { runMigrations } from './background/migration-tracker.js';
 import { registerRollupJobs, runQuotaStateSeed } from './background/quota-rollup-worker.js';
-import { guardedRefresh, getCircuitState } from './utils/token-refresh-circuit-breaker.js';
 
 
 // Parse fallback flag directly from command line args to avoid circular dependency

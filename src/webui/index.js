@@ -14,25 +14,16 @@
 
 import path from 'path';
 import fs from 'fs';
-import os from 'os';
 import { fileURLToPath } from 'url';
 import express from 'express';
-import { getPublicConfig, saveConfig, config } from '../config.js';
-import { DEFAULT_PORT, ACCOUNT_CONFIG_PATH, MAX_ACCOUNTS, DEFAULT_PRESETS, DEFAULT_SERVER_PRESETS, getSwarmLoginUrl } from '../constants.js';
+import { config } from '../config.js';
+import { DEFAULT_PORT, ACCOUNT_CONFIG_PATH, MAX_ACCOUNTS } from '../constants.js';
 
 const OMNI_SYNC_SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), '../account-manager/omniroute_sync.py');
-import { readClaudeConfig, updateClaudeConfig, replaceClaudeConfig, getClaudeConfigPath, readPresets, savePreset, deletePreset } from '../utils/claude-config.js';
-import { readServerPresets, saveServerPreset, updateServerPreset, deleteServerPreset } from '../utils/server-presets.js';
 import { logger } from '../utils/logger.js';
-import { getAuthorizationUrl, completeOAuthFlow, startCallbackServer } from '../auth/oauth.js';
 import { loadAccounts, saveAccounts } from '../account-manager/storage.js';
-import { discoverSwarmAccounts, provisionSwarmAccounts } from '../account-manager/swarm-admin.js';
 import { getPackageVersion } from '../utils/helpers.js';
-import { getRoutingStats, getSystemUsageReport } from '../cloudcode/routing-logger.js';
 import { eventLogger } from '../utils/event-logger.js';
-import { buildMonitorPage } from './monitor-page.js';
-import { NATIVE_TOOLS, callNativeTool } from '../tool-catalog.js';
-import { clearAccountBrowserContext } from '../account-manager/logout.js';
 
 // Get package version
 const packageVersion = getPackageVersion();
