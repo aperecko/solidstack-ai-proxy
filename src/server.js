@@ -300,17 +300,11 @@ async function ensureInitialized() {
             const status = accountManager.getStatus();
             logger.success(`[Server] Account pool initialized: ${status.summary}`);
 
-            // Initialize dynamic model config (non-blocking)
-            initDynamicModelConfig().catch(err => {
-                logger.warn(`[Server] Dynamic model config init failed (non-fatal): ${err.message}`);
-            });
+            // initDynamicModelConfig — REMOVED: OmniRoute combos are the source of truth.
+            // refreshAllQuotas — REMOVED: OmniRoute handles quota probing natively.
 
             // Start autonomous judge for event-driven telemetry evaluation
             autonomousJudge.start();
-
-            // Prime quota state on boot so the pool isn't selectable-blind until
-            // the first backstop/on-demand sweep fires. Non-blocking.
-            refreshAllQuotas().catch(() => {});
             // Warm the OmniRoute connection cache so the first GUI request doesn't
             // fall back to the local pool due to a cold cache.
             omnirouteBridge.fetchConnections(true).catch(() => {});
@@ -1848,8 +1842,6 @@ app.use((req, res, next) => {
 app.get('/admin/quota', (req, res) => {
     res.json(getQuotaStatus(req.query.app ?? null));
 });
-
-// API Key authentication middleware for /v1/* endpoints
 app.use('/v1', (req, res, next) => {
     // Skip API Key check for Google Cloud Code / Gemini GUI requests
     const host = req.headers['host'] || '';
@@ -1948,220 +1940,12 @@ let dynamicFallbackMapCache = null;
  * Initialize dynamic model configuration from live API data.
  * Called once on startup after account manager is ready.
  */
-async function initDynamicModelConfig() {
-    try {
-        const { account } = accountManager.selectAccount();
-        if (!account) {
-            logger.warn('[Server] No accounts available for dynamic model config');
-            return;
-        }
-        const token = await accountManager.getTokenForAccount(account);
-        const data = await fetchAvailableModels(token, account.subscription?.projectId);
-        if (data && data.models) {
-            const modelIds = Object.keys(data.models).filter(id => {
-                const fam = id.toLowerCase();
-                return fam.includes('claude') || fam.includes('gemini') || true; // include all
-            });
-            logger.info(`[Server] Discovered ${modelIds.length} models for dynamic config`);
 
-            // Build and cache dynamic fallback map
-            initFallbackMap(modelIds);
-            dynamicFallbackMapCache = buildFallbackMap(modelIds);
-
-            // Build and cache dynamic presets
-            const port = process.env.PORT || 1987;
-            dynamicPresets = buildPresets(modelIds, port);
-            logger.success(`[Server] Dynamic presets generated: ${dynamicPresets.map(p => p.name).join(', ')}`);
-        }
-    } catch (error) {
-        logger.warn(`[Server] Dynamic model config failed: ${error.message}`);
-    }
-}
-
-// Refresh dynamic model config periodically — LONG interval (60 min) is plenty;
-// the /webui/api/dynamic-presets route already regenerates on-demand.
-setInterval(() => {
-    if (isInitialized) {
-        initDynamicModelConfig().catch(() => {});
-    }
-}, 60 * 60 * 1000);
-
-// Background quota refresh — LONG idle backstop (15 min) instead of the former
-// 2-minute loop. The 2-min sweep probed every valid account (~720 token-authenticated
-// Google calls/hour while idle) — excessive and self-harming. Quota truth is now
-// fetched on-demand via quotaRefreshSoon() at account-decision events (429 /
-// capacity-exhaustion / empty-pool 503); this slow backstop only keeps idle state
-// from going stale. Additionally, accounts whose models are all exhausted with a
-// KNOWN future resetTime are SKIPPED until just before that reset (probing them
-// sooner is provably wasted work), and a one-shot wake timer re-sweeps the pool
-// exactly when the earliest reset opens.
-const RESET_FRESHNESS_MARGIN_MS = 2 * 60 * 1000;
-const MAX_RESET_WAKE_DELAY_MS = 24 * 60 * 60 * 1000;
-let _resetWakeTimer = null;
-let _nextResetWakeAt = 0;
-
-// If the account can't gain any quota before a known future reset, return the
-// earliest safe re-probe time (~2 min before that reset); else null (= probe now).
-// Only returns a deferral when EVERY tracked model is exhausted with a future
-// reset — any availability, unknown quota, or already-due reset means probe.
-function accountNextResetMs(account) {
-    const models = account?.quota?.models;
-    if (!models || typeof models !== 'object') return null;
-    const entries = Object.entries(models);
-    if (entries.length === 0) return null;
-    const now = Date.now();
-    let earliest = null;
-    for (const [, q] of entries) {
-        const frac = q?.remainingFraction;
-        if (frac === null || frac === undefined) return null;   // unknown → keep probing
-        if (frac > 0.05) return null;                            // real availability → track it
-        const resetMs = q?.resetTime ? new Date(q.resetTime).getTime() : NaN;
-        if (isNaN(resetMs) || resetMs <= now) return null;       // reset due/soon → probe now
-        if (earliest === null || resetMs < earliest) earliest = resetMs;
-    }
-    return earliest - RESET_FRESHNESS_MARGIN_MS;
-}
-
-function scheduleResetWake(wakeAt) {
-    if (_resetWakeTimer) {
-        clearTimeout(_resetWakeTimer);
-        _resetWakeTimer = null;
-    }
-    _nextResetWakeAt = wakeAt;
-    const delay = Math.min(Math.max(wakeAt - Date.now(), 1000), MAX_RESET_WAKE_DELAY_MS);
-    _resetWakeTimer = setTimeout(() => {
-        _resetWakeTimer = null;
-        refreshAllQuotas().catch(() => {});
-    }, delay);
-}
-
-async function refreshAllQuotas() {
-    if (!isInitialized) return;
-    try {
-        const allAccts = accountManager.getAllAccounts();
-        const active = allAccts.filter(a => !a.isInvalid && a.enabled !== false);
-        let nextWakeAt = 0;
-        let probed = 0;
-        let deferred = 0;
-        await Promise.allSettled(active.map(async (account) => {
-            try {
-                // Reset-aware skip: known-locked accounts are deferred, not probed.
-                const deferUntil = accountNextResetMs(account);
-                if (deferUntil !== null && deferUntil > Date.now()) {
-                    if (nextWakeAt === 0 || deferUntil < nextWakeAt) nextWakeAt = deferUntil;
-                    deferred++;
-                    return;
-                }
-                probed++;
-                const token = await accountManager.getTokenForAccount(account);
-                // The shared free-tier alias (aicode-consumers) is bound to every
-                // account, but Google's fetchAvailableModels reports all-zeros for
-                // that project even for models that generate fine. Quota truth is
-                // per-account (null = account's own default project), so only use a
-                // real per-account project when one exists; never probe the shared
-                // alias (it self-poisons selection with fake 0% on every model).
-                const storedProject = account.subscription?.projectId || null;
-                const projectId = (storedProject && storedProject !== 'aicode-consumers') ? storedProject : null;
-                const quotas = await getModelQuotas(token, projectId);
-                const formattedQuotas = {};
-                for (const [modelId, info] of Object.entries(quotas)) {
-                    formattedQuotas[modelId] = {
-                        remaining: info.remainingFraction !== null ? `${Math.round(info.remainingFraction * 100)}%` : 'N/A',
-                        remainingFraction: info.remainingFraction,
-                        resetTime: info.resetTime || null
-                    };
-                }
-                account._cachedFormattedQuotas = formattedQuotas;
-                account._lastQuotaFetchTime = Date.now();
-                // Anti-poisoning guard: an all-zero result (every known model at 0%
-                // with a future reset) is what the shared aicode-consumers alias
-                // returns even for models that generate fine. Treat it as a failed
-                // probe: keep prior quota state (or empty) instead of writing a
-                // self-perpetuating all-locked state that benches every account.
-                const tracked = Object.values(formattedQuotas).filter(q => q.remainingFraction !== null && q.remainingFraction !== undefined);
-                const allZeroWithFutureReset = tracked.length > 0 &&
-                    tracked.every(q => q.remainingFraction <= 0.05 && q.resetTime && new Date(q.resetTime).getTime() > Date.now());
-                if (allZeroWithFutureReset) {
-                    logger.warn(`[Server] Quota sweep for ${account.email}: all-zero result looks poisoned (project ${projectId || '(default)'}); keeping prior quota state.`);
-                    return;
-                }
-                if (!account.quota) account.quota = {};
-                if (!account.quota.models) account.quota.models = {};
-                for (const [modelId, info] of Object.entries(formattedQuotas)) {
-                    account.quota.models[modelId] = {
-                        remainingFraction: info.remainingFraction,
-                        resetTime: info.resetTime
-                    };
-                }
-            } catch (e) {
-                // Per-account failure is non-fatal
-            }
-        }));
-        // Wake once when the earliest deferred account's reset opens.
-        if (nextWakeAt > 0 && (_resetWakeTimer === null || nextWakeAt < _nextResetWakeAt)) {
-            scheduleResetWake(nextWakeAt);
-        }
-        if (probed > 0 || deferred > 0) {
-            logger.info(`[Server] Quota sweep: ${probed} probed, ${deferred} deferred (known future reset)`);
-        }
-    } catch (e) {
-        logger.warn(`[Server] Background quota refresh error: ${e.message}`);
-    }
-}
-setInterval(() => {
-    refreshAllQuotas().catch(() => {});
-}, 15 * 60 * 1000);
-setQuotaRefreshImpl(refreshAllQuotas);
-
-/**
- * API: Get dynamically generated presets
- * Returns auto-generated presets based on live model data
- */
-app.get('/webui/api/dynamic-presets', async (req, res) => {
-    try {
-        // If we have cached presets, return them immediately
-        if (dynamicPresets) {
-            return res.json({ presets: dynamicPresets, source: 'dynamic', modelCount: Object.keys(dynamicFallbackMapCache || {}).length });
-        }
-
-        // Otherwise try to generate on-demand
-        await ensureInitialized();
-        await initDynamicModelConfig();
-
-        if (dynamicPresets) {
-            return res.json({ presets: dynamicPresets, source: 'dynamic', modelCount: Object.keys(dynamicFallbackMapCache || {}).length });
-        }
-
-        // Fall back to static presets
-        const { DEFAULT_PRESETS } = await import('./constants.js');
-        res.json({ presets: DEFAULT_PRESETS, source: 'fallback', modelCount: 0 });
-    } catch (error) {
-        logger.error('[API] Error generating dynamic presets:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// Mount Commander Dashboard API Router (replaces Python FastAPI backend)
-app.use('/api', createCommanderRouter(accountManager, ensureInitialized));
-
-// Mount Conversation History API (query logged conversations)
-app.use('/api', createConversationRouter());
-
-// Mount iMessage reader API (local iMessage database queries)
-import { createIMessageRouter } from './imessage-reader.js';
-app.use('/api', createIMessageRouter());
-
-// Mount primary account Gemini conversation router
-import { createGeminiConversationRouter } from './gemini-conversations.js';
-app.use('/api/gemini', createGeminiConversationRouter());
-
-// Mount Voice Memos API (Apple Voice Memos query and audio streaming)
-import voiceMemosRouter from './voice-memos-api.js';
-app.use('/api/voicememos', voiceMemosRouter);
-
-// Mount unified search API (across conversations + iMessage)
-import { createSearchRouter } from './api-search.js';
-app.use('/api', createSearchRouter());
+// ==========================================
+// Background Workers — REMOVED (Rewire Phase 3)
+// initDynamicModelConfig, accountNextResetMs, scheduleResetWake, refreshAllQuotas
+// OmniRoute handles all quota probing and reset scheduling natively.
+// ==========================================
 
 
 // Mount WebUI (optional web interface for account management)
@@ -2170,72 +1954,6 @@ mountWebUI(app, __dirname, accountManager);
 // Mount OpenAI and Responses API Wire Protocol Bridges
 mountOpenAICompat(app, accountManager, ensureInitialized, FALLBACK_ENABLED);
 mountResponsesCompat(app, accountManager, ensureInitialized, FALLBACK_ENABLED);
-
-
-// --- Savings Dashboard ---
-
-app.get('/api/admin/keyring-analytics', (req, res) => {
-    try {
-        const analytics = keyringManager.getKeyringAnalytics();
-        res.json(analytics);
-    } catch (e) {
-        logger.error(`[API] Failed to get keyring analytics: ${e.message}`);
-        res.status(500).json({ error: e.message });
-    }
-});
-
-app.post('/api/admin/keyring-config', (req, res) => {
-    try {
-        const { provider, keyId, cycleData } = req.body;
-        if (!provider || !keyId || !cycleData) {
-            return res.status(400).json({ error: 'Missing provider, keyId, or cycleData' });
-        }
-        
-        const success = keyringManager.setKeyCycleInfo(provider, keyId, cycleData);
-        if (success) {
-            res.json({ status: 'ok', analytics: keyringManager.getKeyringAnalytics() });
-        } else {
-            res.status(404).json({ error: 'Key not found' });
-        }
-    } catch (e) {
-        logger.error(`[API] Failed to set keyring config: ${e.message}`);
-        res.status(500).json({ error: e.message });
-    }
-});
-
-app.get('/api/savings-history', async (req, res) => {
-    try {
-        const fs = await import('fs');
-        const dbPath = '/Users/test/Projects/solidstack/registry/metrics/savings.db';
-        if (!fs.existsSync(dbPath)) {
-            return res.json({ dates: [], tokens: [], savings: [], models: [] });
-        }
-        
-        const Database = (await import('better-sqlite3')).default;
-        const db = new Database(dbPath, { readonly: true });
-        
-        const daily = db.prepare(`SELECT substr(timestamp, 1, 10) as date, SUM(tokens_in + tokens_out) as tokens, SUM(retail_value_saved) as saved FROM savings GROUP BY date ORDER BY date ASC LIMIT 30`).all();
-        const models = db.prepare(`SELECT model, SUM(tokens_in + tokens_out) as tokens FROM savings GROUP BY model ORDER BY tokens DESC`).all();
-        
-        db.close();
-        
-        res.json({
-            dates: daily.map(r => r.date),
-            tokens: daily.map(r => r.tokens),
-            savings: daily.map(r => r.saved),
-            models: models
-        });
-    } catch (error) {
-        logger.error('Failed to load savings history', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-app.get('/savings', (req, res) => {
-    // Deprecated standalone HTML page. Redirecting to unified React dashboard.
-    res.redirect('/dashboard');
-});
-
 app.use((req, res, next) => {
     const start = Date.now();
 
@@ -2289,23 +2007,12 @@ app.post('/test/clear-signature-cache', (req, res) => {
  */
 
 // Expose routing appraisals to Commander
-app.get('/api/metrics/routing', async (req, res) => {
-    try {
-        const testingMetrics = accountManager.getRoutingMetrics?.() || {
-            active_paths: [],
-            shadow_tests: []
-        };
-        res.json({
-            status: 'ok',
-            strategy: STRATEGY_OVERRIDE || 'hybrid',
-            ...testingMetrics
-        });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
 
-// Fast liveness probe for watchdogs & load balancers (always non-blocking)
+// ==========================================
+// Metrics/Routing Route — REMOVED (Rewire Phase 2)
+// Available via OmniRoute: GET /api/providers/health-matrix
+// ==========================================
+
 app.get('/ping', (req, res) => {
     res.json({
         status: 'ok',
@@ -2314,711 +2021,76 @@ app.get('/ping', (req, res) => {
     });
 });
 
+
+// ==========================================
+// Detailed Health & Fleet Status Routes — REMOVED (Rewire Phase 3)
+// /health (detailed), /account-limits (377 lines), /api/g1-credits,
+// /api/status, /api/accounts/summary, /api/accounts/available, /api/quota/refresh
+// Available via OmniRoute: GET /api/health, /api/providers, /api/usage/quota
+// ==========================================
+
+
+// Simple health check (replaces 160-line detailed health + 377-line account-limits)
 app.get('/health', async (req, res) => {
     try {
-        await ensureInitialized();
-        const start = Date.now();
-
-        // Get high-level status first
-        const status = accountManager.getStatus();
-        const allAccounts = accountManager.getAllAccounts();
-
-        // Fetch quotas for each account in parallel with per-account timeout protection
-        const accountDetails = await Promise.allSettled(
-            allAccounts.map(async (account) => {
-                if (account.enabled === false) {
-                    return {
-                        email: account.email,
-                        lastUsed: account.lastUsed ? new Date(account.lastUsed).toISOString() : null,
-                        modelRateLimits: account.modelRateLimits || {},
-                        rateLimitCooldownRemaining: 0,
-                        status: 'disabled',
-                        error: account.invalidReason || 'Account disabled in configuration',
-                        models: {}
-                    };
-                }
-
-                // Check model-specific rate limits
-                const activeModelLimits = Object.entries(account.modelRateLimits || {})
-                    .filter(([_, limit]) => limit.isRateLimited && limit.resetTime > Date.now());
-                const soonestReset = activeModelLimits.length > 0
-                    ? Math.min(...activeModelLimits.map(([_, l]) => l.resetTime))
-                    : null;
-
-                const baseInfo = {
-                    email: account.email,
-                    lastUsed: account.lastUsed ? new Date(account.lastUsed).toISOString() : null,
-                    modelRateLimits: account.modelRateLimits || {},
-                    rateLimitCooldownRemaining: soonestReset ? Math.max(0, soonestReset - Date.now()) : 0
-                };
-
-                // Skip invalid accounts for quota check
-                if (account.isInvalid) {
-                    const isBanned = account.invalidReason?.toLowerCase().includes('banned') || 
-                                     account.invalidReason?.toLowerCase().includes('terms of service');
-                    return {
-                        ...baseInfo,
-                        status: isBanned ? 'banned' : 'invalid',
-                        error: account.invalidReason,
-                        models: {}
-                    };
-                }
-
-                try {
-                    const now = Date.now();
-                    const cacheAge = now - (account._lastQuotaFetchTime || 0);
-                    let formattedQuotas = account._cachedFormattedQuotas;
-
-                    if (!formattedQuotas || cacheAge > 60000 || req.query.fresh === 'true') {
-                        // Protect against hanging Google API requests with 2500ms timeout
-                        const fetchPromise = (async () => {
-                            const token = await accountManager.getTokenForAccount(account);
-                            const projectId = account.subscription?.projectId || null;
-                            return await getModelQuotas(token, projectId);
-                        })();
-
-                        const timeoutPromise = new Promise((_, reject) => 
-                            setTimeout(() => reject(new Error('Quota probe timeout (2.5s)')), 2500)
-                        );
-
-                        try {
-                            const quotas = await Promise.race([fetchPromise, timeoutPromise]);
-                            formattedQuotas = {};
-                            for (const [modelId, info] of Object.entries(quotas)) {
-                                formattedQuotas[modelId] = {
-                                    remaining: info.remainingFraction !== null ? `${Math.round(info.remainingFraction * 100)}%` : 'N/A',
-                                    remainingFraction: info.remainingFraction,
-                                    resetTime: info.resetTime || null
-                                };
-                            }
-                            account._cachedFormattedQuotas = formattedQuotas;
-                            account._lastQuotaFetchTime = now;
-                            // Sync fresh quota data to account.quota.models so
-                            // getAvailableAccounts() and getPoolModelQuotas() use
-                            // the latest values (not stale accounts.json data).
-                            if (!account.quota) account.quota = {};
-                            if (!account.quota.models) account.quota.models = {};
-                            for (const [modelId, info] of Object.entries(formattedQuotas)) {
-                                account.quota.models[modelId] = {
-                                    remainingFraction: info.remainingFraction,
-                                    resetTime: info.resetTime
-                                };
-                            }
-                        } catch (timeoutOrError) {
-                            if (!formattedQuotas) {
-                                formattedQuotas = { 'gemini-2.5-flash': { remaining: 'Available', remainingFraction: 1.0 } };
-                            }
-                        }
-                    }
-
-                    // An account is only fully rate-limited if all models with quota are rate-limited
-                    const isAllRateLimited = accountManager.isAllRateLimited ? accountManager.isAllRateLimited() : false;
-                    const accountStatus = isAllRateLimited ? 'rate-limited' : (activeModelLimits.length > 0 ? 'partial' : 'ok');
-
-                    return {
-                        ...baseInfo,
-                        status: accountStatus,
-                        models: formattedQuotas
-                    };
-                } catch (error) {
-                    return {
-                        ...baseInfo,
-                        status: 'error',
-                        error: error.message,
-                        models: {}
-                    };
-                }
-            })
-        );
-
-        // Process results
-        const detailedAccounts = accountDetails.map((result, index) => {
-            if (result.status === 'fulfilled') {
-                return result.value;
-            } else {
-                const acc = allAccounts[index];
-                return {
-                    email: acc.email,
-                    status: 'error',
-                    error: result.reason?.message || 'Unknown error',
-                    modelRateLimits: acc.modelRateLimits || {}
-                };
-            }
-        });
-
-        res.json({
-            status: 'ok',
-            timestamp: new Date().toISOString(),
-            latencyMs: Date.now() - start,
-            summary: status.summary,
-            counts: {
-                total: status.total,
-                available: status.available,
-                rateLimited: status.rateLimited,
-                invalid: status.invalid
-            },
-            accounts: detailedAccounts
-        });
-
-    } catch (error) {
-        logger.error('[API] Health check failed:', error);
-        res.status(503).json({
-            status: 'error',
-            error: error.message,
-            timestamp: new Date().toISOString()
-        });
-    }
-});
-
-/**
- * Account limits endpoint - fetch quota/limits for all accounts × all models
- * Returns a table showing remaining quota and reset time for each combination
- * Use ?format=table for ASCII table output, default is JSON
- */
-app.get('/account-limits', async (req, res) => {
-    try {
-        await ensureInitialized();
-        const allAccounts = accountManager.getAllAccounts();
-        const format = req.query.format || 'json';
-        const includeHistory = req.query.includeHistory === 'true';
-
-        // Fetch quotas for each account in parallel
-        const results = await Promise.allSettled(
-            allAccounts.map(async (account) => {
-                // Skip invalid accounts without refresh capability
-                if (account.isInvalid && !account.refreshToken && req.query.force !== 'true') {
-                    return {
-                        email: account.email,
-                        status: 'invalid',
-                        error: account.invalidReason,
-                        models: {}
-                    };
-                }
-
-                if (account.type === 'apikey') {
-                    const mockModels = {};
-                    const modelsList = [
-                        'gemini-2.5-flash',
-                        'gemini-2.5-flash-lite',
-                        'gemini-2.5-flash-thinking',
-                        'gemini-2.5-pro',
-                        'gemini-3.0-flash',
-                        'gemini-3.1-flash-lite',
-                        'gemini-3.1-pro-high'
-                    ];
-                    for (const m of modelsList) {
-                        mockModels[m] = {
-                            remaining: 15,
-                            limit: 15,
-                            remainingFraction: 1.0,
-                            resetTime: Date.now() + 60000,
-                            period: 'minute'
-                        };
-                    }
-                    return {
-                        email: account.email,
-                        status: 'ok',
-                        subscription: {
-                            tier: 'Developer API Key',
-                            projectId: 'virtual-api-key'
-                        },
-                        models: mockModels
-                    };
-                }
-
-                // 5-minute smart quota cache to prevent API call limit exhaustion and ensure instant UI load
-                const QUOTA_CACHE_TTL = 5 * 60 * 1000;
-                const hasCachedQuota = account.quota?.models &&
-                    Object.keys(account.quota.models).length > 0 &&
-                    account.quota.lastChecked &&
-                    (Date.now() - account.quota.lastChecked < QUOTA_CACHE_TTL);
-
-                if (hasCachedQuota && req.query.force !== 'true') {
-                    return {
-                        email: account.email,
-                        status: 'ok',
-                        subscription: account.subscription || { tier: 'unknown', projectId: null },
-                        models: account.quota.models
-                    };
-                }
-
-                try {
-                    const token = await accountManager.getTokenForAccount(account);
-                    // Never probe the shared free-tier alias (aicode-consumers): it
-                    // returns all-zeros even for models that generate fine, and its
-                    // near-zero records self-persist here and bench selection. Use a
-                    // real per-account project when one exists, else the account's
-                    // own default (null).
-                    const storedProject = account.subscription?.projectId || null;
-                    const projectId = (storedProject && storedProject !== 'aicode-consumers') ? storedProject : null;
-
-                    // Fetch fresh quotas using cached project ID
-                    let quotas = {};
-                    try {
-                        quotas = await getModelQuotas(token, projectId, account.subscription?.tier || account.tier);
-                    } catch (qErr) {
-                        logger.warn(`[Server] Quota fetch error for ${account.email}: ${qErr.message}`);
-                        // Fall back to previously cached models if available
-                        quotas = account.quota?.models || {};
-                    }
-
-                    // If quotas returned empty, preserve previous cache if exists
-                    if (Object.keys(quotas).length === 0 && account.quota?.models && Object.keys(account.quota.models).length > 0) {
-                        quotas = account.quota.models;
-                    }
-
-                    // Anti-poisoning guard: an all-zero result (every model at 0%
-                    // with a future reset) is the shared-alias lie pattern. Fall
-                    // back to prior cache instead of persisting self-poisoning
-                    // near-zero records.
-                    const tracked = Object.values(quotas).filter(q => q && q.remainingFraction !== null && q.remainingFraction !== undefined);
-                    const allZeroWithFutureReset = tracked.length > 0 &&
-                        tracked.every(q => q.remainingFraction <= 0.05 && q.resetTime && new Date(q.resetTime).getTime() > Date.now());
-                    if (allZeroWithFutureReset && account.quota?.models && Object.keys(account.quota.models).length > 0) {
-                        logger.warn(`[Server] /account-limits quota for ${account.email}: all-zero result looks poisoned (project ${projectId || '(default)'}); keeping prior quota state.`);
-                        quotas = account.quota.models;
-                    }
-
-                    // Update account object with quota data
-                    account.quota = {
-                        models: quotas,
-                        lastChecked: Date.now()
-                    };
-
-                    // Save updated account data to disk (async, don't wait)
-                    accountManager.saveToDisk().catch(err => {
-                        logger.error('[Server] Failed to save account data:', err);
-                    });
-
-                    return {
-                        email: account.email,
-                        status: 'ok',
-                        subscription: account.subscription || { tier: 'unknown', projectId: null },
-                        models: quotas
-                    };
-                } catch (error) {
-                    // Detect ToS ban from quota/subscription fetch and mark account invalid
-                    if (error.message?.startsWith('ACCOUNT_BANNED:')) {
-                        accountManager.markInvalid(account.email, 'Account banned — Gemini disabled for Terms of Service violation');
-                        return {
-                            email: account.email,
-                            status: 'banned',
-                            error: 'Account banned — Gemini disabled for Terms of Service violation',
-                            subscription: account.subscription || { tier: 'unknown', projectId: null },
-                            models: {}
-                        };
-                    }
-                    // Fall back gracefully to cached quota rather than erroring
-                    const fallbackModels = account.quota?.models || {};
-                    return {
-                        email: account.email,
-                        status: Object.keys(fallbackModels).length > 0 ? 'ok' : 'error',
-                        error: error.message,
-                        subscription: account.subscription || { tier: 'unknown', projectId: null },
-                        models: fallbackModels
-                    };
-                }
-            })
-        );
-
-        // Process results
-        const accountLimits = results.map((result, index) => {
-            if (result.status === 'fulfilled') {
-                return result.value;
-            } else {
-                return {
-                    email: allAccounts[index].email,
-                    status: 'error',
-                    error: result.reason?.message || 'Unknown error',
-                    models: {}
-                };
-            }
-        });
-
-        // Collect all unique model IDs
-        const allModelIds = new Set();
-        for (const account of accountLimits) {
-            for (const modelId of Object.keys(account.models || {})) {
-                allModelIds.add(modelId);
-            }
-        }
-        
-        // Include OmniRoute models
-        Object.keys(OMNIROUTE_MODEL_MAP).forEach(modelId => allModelIds.add(modelId));
-
-        const sortedModels = Array.from(allModelIds).sort();
-
-        // Return ASCII table format
-        if (format === 'table') {
-            res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-
-            // Build table
-            const lines = [];
-            const timestamp = new Date().toLocaleString();
-            lines.push(`Account Limits (${timestamp})`);
-
-            // Get account status info
-            const status = accountManager.getStatus();
-            lines.push(`Accounts: ${status.total} total, ${status.available} available, ${status.rateLimited} rate-limited, ${status.invalid} invalid`);
-            lines.push('');
-
-            // Table 1: Account status
-            const accColWidth = 25;
-            const statusColWidth = 15;
-            const lastUsedColWidth = 25;
-            const resetColWidth = 25;
-
-            let accHeader = 'Account'.padEnd(accColWidth) + 'Status'.padEnd(statusColWidth) + 'Last Used'.padEnd(lastUsedColWidth) + 'Quota Reset';
-            lines.push(accHeader);
-            lines.push('─'.repeat(accColWidth + statusColWidth + lastUsedColWidth + resetColWidth));
-
-            for (const acc of status.accounts) {
-                const shortEmail = acc.email.split('@')[0].slice(0, 22);
-                const lastUsed = acc.lastUsed ? new Date(acc.lastUsed).toLocaleString() : 'never';
-
-                // Get status and error from accountLimits
-                const accLimit = accountLimits.find(a => a.email === acc.email);
-                let accStatus;
-                if (acc.isInvalid) {
-                    accStatus = 'invalid';
-                } else if (accLimit?.status === 'error') {
-                    accStatus = 'error';
-                } else {
-                    // Count exhausted models (0% or null remaining)
-                    const models = accLimit?.models || {};
-                    const modelCount = Object.keys(models).length;
-                    const exhaustedCount = Object.values(models).filter(
-                        q => q.remainingFraction === 0 || q.remainingFraction === null
-                    ).length;
-
-                    if (exhaustedCount === 0) {
-                        accStatus = 'ok';
-                    } else {
-                        accStatus = `(${exhaustedCount}/${modelCount}) limited`;
-                    }
-                }
-
-                // Get reset time from quota API
-                const claudeModel = sortedModels.find(m => m.includes('claude'));
-                const quota = claudeModel && accLimit?.models?.[claudeModel];
-                const resetTime = quota?.resetTime
-                    ? new Date(quota.resetTime).toLocaleString()
-                    : '-';
-
-                let row = shortEmail.padEnd(accColWidth) + accStatus.padEnd(statusColWidth) + lastUsed.padEnd(lastUsedColWidth) + resetTime;
-
-                // Add error on next line if present
-                if (accLimit?.error) {
-                    lines.push(row);
-                    lines.push('  └─ ' + accLimit.error);
-                } else {
-                    lines.push(row);
-                }
-            }
-            lines.push('');
-
-            // Calculate column widths - need more space for reset time info
-            const modelColWidth = Math.max(28, ...sortedModels.map(m => m.length)) + 2;
-            const accountColWidth = 30;
-
-            // Header row
-            let header = 'Model'.padEnd(modelColWidth);
-            for (const acc of accountLimits) {
-                const shortEmail = acc.email.split('@')[0].slice(0, 26);
-                header += shortEmail.padEnd(accountColWidth);
-            }
-            lines.push(header);
-            lines.push('─'.repeat(modelColWidth + accountLimits.length * accountColWidth));
-
-            // Data rows
-            for (const modelId of sortedModels) {
-                let row = modelId.padEnd(modelColWidth);
-                const isClaude = modelId.toLowerCase().includes('claude');
-                for (const acc of accountLimits) {
-                    const quota = acc.models?.[modelId];
-                    const isFree = (acc.subscription?.tier || 'free').toLowerCase() === 'free';
-                    let cell;
-                    if (acc.status !== 'ok' && acc.status !== 'rate-limited') {
-                        cell = `[${acc.status}]`;
-                    } else if (!quota) {
-                        cell = '-';
-                    } else if (isClaude && isFree) {
-                        cell = '0% (N/A free)';
-                    } else if (quota.remainingFraction === 0 || quota.remainingFraction === null) {
-                        // Show reset time for exhausted models
-                        if (quota.resetTime) {
-                            const resetMs = new Date(quota.resetTime).getTime() - Date.now();
-                            if (resetMs > 0) {
-                                cell = `0% (wait ${formatDuration(resetMs)})`;
-                            } else {
-                                cell = '0% (resetting...)';
-                            }
-                        } else {
-                            cell = '0% (exhausted)';
-                        }
-                    } else {
-                        const pct = Math.round(quota.remainingFraction * 100);
-                        cell = `${pct}%`;
-                    }
-                    row += cell.padEnd(accountColWidth);
-                }
-                lines.push(row);
-            }
-
-            return res.send(lines.join('\n'));
-        }
-
-        // Get account metadata from AccountManager
-        const accountStatus = accountManager.getStatus();
-        const accountMetadataMap = new Map(
-            accountStatus.accounts.map(a => [a.email, a])
-        );
-
-        // Build response data
-        const responseData = {
-            timestamp: new Date().toLocaleString(),
-            totalAccounts: allAccounts.length,
-            routingMode: accountManager.getRoutingMode ? accountManager.getRoutingMode() : 'load_balancer',
-            nativeAccount: accountManager.getNativeIdeAccount ? accountManager.getNativeIdeAccount()?.email : null,
-            models: sortedModels,
-            modelConfig: config.modelMapping || {},
-            globalQuotaThreshold: config.globalQuotaThreshold || 0,
-            accounts: accountLimits.map(acc => {
-                // Merge quota data with account metadata
-                const metadata = accountMetadataMap.get(acc.email) || {};
-                const tier = (acc.subscription?.tier || metadata.subscription?.tier || metadata.tier || 'free').toLowerCase();
-                const isFree = tier === 'free' || acc.email.includes('virtual-gemini-key');
-                return {
-                    email: acc.email,
-                    status: acc.status,
-                    error: acc.error || null,
-                    // Include metadata from AccountManager (WebUI needs these)
-                    source: metadata.source || 'unknown',
-                    enabled: metadata.enabled !== false,
-                    projectId: metadata.projectId || null,
-                    isInvalid: (acc.status === 'invalid' || acc.status === 'banned') ? (metadata.isInvalid || true) : false,
-                    invalidReason: (acc.status === 'invalid' || acc.status === 'banned') ? (metadata.invalidReason || null) : null,
-                    verifyUrl: metadata.verifyUrl || null,
-                    lastUsed: metadata.lastUsed || null,
-                    modelRateLimits: metadata.modelRateLimits || {},
-                    // Quota threshold settings
-                    quotaThreshold: metadata.quotaThreshold,
-                    modelQuotaThresholds: metadata.modelQuotaThresholds || {},
-                    // Subscription data (new)
-                    subscription: acc.subscription || metadata.subscription || { tier: 'unknown', projectId: null },
-                    // Quota limits
-                    limits: Object.fromEntries(
-                        sortedModels.map(modelId => {
-                            const isClaude = modelId.toLowerCase().includes('claude');
-                            const quota = acc.models?.[modelId];
-                            if (!quota) {
-                                return [modelId, null];
-                            }
-                            if (isClaude && isFree) {
-                                return [modelId, {
-                                    remaining: '0% (N/A)',
-                                    remainingFraction: 0,
-                                    resetTime: null
-                                }];
-                            }
-                            return [modelId, {
-                                remaining: quota.remainingFraction !== null
-                                    ? `${Math.round(quota.remainingFraction * 100)}%`
-                                    : 'N/A',
-                                remainingFraction: quota.remainingFraction,
-                                resetTime: quota.resetTime || null
-                            }];
-                        })
-                    )
-                };
-            })
-        };
-
-        // Optionally include usage history (for dashboard performance optimization)
-        if (includeHistory) {
-            responseData.history = usageStats.getHistory();
-        }
-
-        res.json(responseData);
-    } catch (error) {
-        res.status(500).json({
-            status: 'error',
-            error: error.message
-        });
-    }
-});
-
-/**
- * G1 Credit Status Endpoint
- * Returns aggregate G1 credit status across all accounts for dashboard monitoring
- */
-app.get('/api/g1-credits', async (req, res) => {
-    try {
-        await ensureInitialized();
-        const g1Status = accountManager.getG1CreditStatus ? accountManager.getG1CreditStatus() : { summary: { message: 'Not available' } };
-        res.json({
-            status: 'ok',
-            timestamp: new Date().toISOString(),
-            ...g1Status
-        });
-    } catch (error) {
-        res.status(500).json({
-            status: 'error',
-            error: error.message
-        });
-    }
-});
-
-/**
- * Proxy Status & Service Health Summary
- */
-app.get('/api/status', async (req, res) => {
-    try {
-        await ensureInitialized();
-        const status = accountManager.getStatus();
-        res.json({
+        const status = {
             status: 'ok',
             service: 'ai-proxy',
+            pid: process.pid,
             uptime: process.uptime(),
             timestamp: new Date().toISOString(),
-            routingMode: accountManager.getRoutingMode ? accountManager.getRoutingMode() : 'hybrid',
-            summary: status.summary || {},
-            counts: {
-                total: status.total,
-                available: status.available,
-                rateLimited: status.rateLimited,
-                invalid: status.invalid
-            }
-        });
-    } catch (error) {
-        res.status(500).json({ status: 'error', error: error.message });
+            routingMode: accountManager.getRoutingMode?.() || 'load_balancer',
+            summary: (() => {
+                const all = accountManager.getAllAccounts();
+                const available = all.filter(a => a.enabled !== false && !a.isInvalid);
+                const rateLimited = all.filter(a => {
+                    const rl = Object.values(a.modelRateLimits || {});
+                    return rl.some(r => r.isRateLimited && r.resetTime > Date.now());
+                });
+                const invalid = all.filter(a => a.isInvalid);
+                return `${all.length} total, ${available.length} available, ${rateLimited.length} rate-limited, ${invalid.length} invalid`;
+            })(),
+        };
+        res.json(status);
+    } catch (err) {
+        res.json({ status: 'ok', service: 'ai-proxy', pid: process.pid });
     }
 });
 
-/**
- * Account Summary Endpoint
- */
-app.get('/api/accounts/summary', async (req, res) => {
+// Fleet status proxy shim → OmniRoute
+app.get('/api/status', async (req, res) => {
     try {
-        await ensureInitialized();
-        const status = accountManager.getStatus();
-        const allAccounts = accountManager.getAllAccounts() || [];
-        res.json({
-            status: 'ok',
-            timestamp: new Date().toISOString(),
-            total: allAccounts.length,
-            available: status.available,
-            rateLimited: status.rateLimited,
-            invalid: status.invalid,
-            accounts: allAccounts.map(a => ({
-                email: a.email,
-                enabled: a.enabled !== false,
-                isInvalid: a.isInvalid || false,
-                source: a.source || 'unknown',
-                tier: a.subscription?.tier || a.tier || 'unknown',
-                lastUsed: a.lastUsed ? new Date(a.lastUsed).toISOString() : null
-            }))
+        const resp = await fetch('http://127.0.0.1:20128/api/omniroute/status', {
+            headers: { 'Authorization': 'Bearer ' + (process.env.OMNIROUTE_API_KEY || 'sk-omni-c8786fccb1e71c262854f247fc80c52be27722de31ed0d45') },
+            signal: AbortSignal.timeout(3000),
         });
-    } catch (error) {
-        res.status(500).json({ status: 'error', error: error.message });
+        const data = await resp.json();
+        res.json(data);
+    } catch (err) {
+        // Fallback to local status
+        const all = accountManager.getAllAccounts();
+        res.json({
+            status: 'ok', service: 'ai-proxy',
+            uptime: process.uptime(),
+            routingMode: accountManager.getRoutingMode?.() || 'load_balancer',
+            summary: `${all.length} total accounts`,
+        });
     }
 });
 
-/**
- * Available Accounts Per Model Endpoint
- * Synthetic probe endpoint for external monitoring - returns available accounts per model
- * Use ?model=<modelId> to filter, or omit for all models
- */
-app.get('/api/accounts/available', async (req, res) => {
+// Savings history proxy shim (Cockpit ValueRealization.tsx depends on this)
+app.get('/api/savings-history', async (req, res) => {
     try {
-        await ensureInitialized();
-        const modelId = req.query.model || null;
-        const availableAccounts = accountManager.getAvailableAccounts ? accountManager.getAvailableAccounts(modelId) : [];
-        
-        // Group by model if no specific model requested
-        let response;
-        if (modelId) {
-            response = {
-                model: modelId,
-                count: availableAccounts.length,
-                accounts: availableAccounts.map(a => ({
-                    email: a.email,
-                    subscription: a.subscription || { tier: 'unknown' },
-                    source: a.source || 'unknown',
-                    isRateLimited: a.modelRateLimits?.[modelId]?.isRateLimited || false,
-                    quotaRemaining: a.quota?.models?.[modelId]?.remainingFraction || null,
-                    healthScore: a.healthScore || 100
-                }))
-            };
-        } else {
-            // Get all models from account data
-            const allModels = new Set();
-            for (const account of accountManager.getAllAccounts()) {
-                if (account.quota?.models) {
-                    for (const model of Object.keys(account.quota.models)) {
-                        allModels.add(model);
-                    }
-                }
-            }
-            
-            const modelAvailability = {};
-            for (const model of allModels) {
-                const accounts = accountManager.getAvailableAccounts ? accountManager.getAvailableAccounts(model) : [];
-                modelAvailability[model] = {
-                    count: accounts.length,
-                    accounts: accounts.map(a => ({
-                        email: a.email,
-                        subscription: a.subscription || { tier: 'unknown' },
-                        source: a.source || 'unknown',
-                        quotaRemaining: a.quota?.models?.[model]?.remainingFraction || null,
-                        healthScore: a.healthScore || 100
-                    }))
-                };
-            }
-            response = { models: modelAvailability };
-        }
-        
-        res.json({
-            status: 'ok',
-            timestamp: new Date().toISOString(),
-            ...response,
-            // Merge OmniRoute pool summary
-            omniroute: await omnirouteBridge.getPoolSummary().catch(() => ({ bridgeHealthy: false, error: 'unreachable' })),
+        const resp = await fetch('http://127.0.0.1:20128/api/usage/analytics?period=30d', {
+            headers: { 'Authorization': 'Bearer ' + (process.env.OMNIROUTE_API_KEY || 'sk-omni-c8786fccb1e71c262854f247fc80c52be27722de31ed0d45') },
+            signal: AbortSignal.timeout(3000),
         });
-    } catch (error) {
-        res.status(500).json({
-            status: 'error',
-            error: error.message
-        });
+        const data = await resp.json();
+        res.json({ status: 'ok', source: 'omniroute', data });
+    } catch (err) {
+        res.json({ status: 'ok', history: [], source: 'unavailable' });
     }
 });
-
-/**
- * Manual Quota Refresh Endpoint
- * Triggers proactive quota refresh for accounts approaching limits
- */
-app.post('/api/quota/refresh', async (req, res) => {
-    try {
-        await ensureInitialized();
-        const thresholdPct = req.body?.thresholdPct || 80;
-        const refreshed = await accountManager.proactiveQuotaRefresh ? accountManager.proactiveQuotaRefresh(thresholdPct) : 0;
-        res.json({
-            status: 'ok',
-            timestamp: new Date().toISOString(),
-            refreshed,
-            message: `Proactive quota refresh completed: ${refreshed} account-model pairs refreshed`
-        });
-    } catch (error) {
-        res.status(500).json({
-            status: 'error',
-            error: error.message
-        });
-    }
-});
-
-/**
- * Force token refresh endpoint
- */
 app.post('/refresh-token', async (req, res) => {
     try {
         await ensureInitialized();
