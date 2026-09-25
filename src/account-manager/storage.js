@@ -10,6 +10,7 @@ import { dirname } from 'path';
 import { ACCOUNT_CONFIG_PATH } from '../constants.js';
 import { getAuthStatus } from '../auth/database.js';
 import { logger } from '../utils/logger.js';
+import { loadAccountsFromOmniRoute } from './omni-sqlite.js';
 
 let writeLock = null;
 
@@ -69,6 +70,17 @@ export async function withFileLock(lockPath, fn, { maxAgeMs = 15000, retries = 4
  * @returns {Promise<{accounts: Array, settings: Object, activeIndex: number}>}
  */
 export async function loadAccounts(configPath = ACCOUNT_CONFIG_PATH) {
+    // 1. Primary Operational Authority: OmniRoute SQLite Store
+    try {
+        const omniRoster = await loadAccountsFromOmniRoute();
+        if (omniRoster && omniRoster.accounts && omniRoster.accounts.length > 0) {
+            return omniRoster;
+        }
+    } catch (err) {
+        logger.warn(`[AccountManager] OmniRoute SQLite primary load skipped: ${err.message}; falling back to disk config`);
+    }
+
+    // 2. Secondary Fail-Safe: Legacy accounts.json disk config
     try {
         // Check if config file exists using async access
         await access(configPath, fsConstants.F_OK);

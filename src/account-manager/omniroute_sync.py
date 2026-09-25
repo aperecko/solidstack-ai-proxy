@@ -95,9 +95,11 @@ def sync_account(email: str = None):
     conn.execute("PRAGMA synchronous=NORMAL")
     cursor = conn.cursor()
 
-    # Get max priority
+    # Get max priority per provider
     cursor.execute("SELECT COALESCE(MAX(priority), 0) FROM provider_connections WHERE provider='antigravity'")
-    max_priority = cursor.fetchone()[0]
+    max_priority_ag = cursor.fetchone()[0]
+    cursor.execute("SELECT COALESCE(MAX(priority), 0) FROM provider_connections WHERE provider='agy'")
+    max_priority_agy = cursor.fetchone()[0]
 
     synced_count = 0
     now_iso = datetime.datetime.now(datetime.timezone.utc).isoformat()
@@ -110,10 +112,6 @@ def sync_account(email: str = None):
             continue
 
         stripped_rt = rf.split("||")[0]
-
-        # Check existing row
-        cursor.execute("SELECT id, is_active FROM provider_connections WHERE provider='antigravity' AND email=?", (acc_email,))
-        row = cursor.fetchone()
 
         # Mint token
         status, token_res = mint_access_token(stripped_rt)
@@ -142,38 +140,48 @@ def sync_account(email: str = None):
 
         tier = acc.get("subscription", {}).get("tier") or ("free-tier" if is_gmail else "standard-tier")
 
-        specific_data = json.dumps({
-            "clientProfile": "ide",
-            "projectId": project_id,
-            "tier": tier,
-            "subscriptionTier": "Google AI Standard" if tier == "standard-tier" else "Google AI Pro",
-            "plan": "Standard" if tier == "standard-tier" else "Pro",
-            "autoSync": True,
-            "autoFetchModels": True
-        })
+        # Sync to both antigravity (IDE) and agy (CLI)
+        for target_prov, client_profile in [("antigravity", "ide"), ("agy", "cli")]:
+            cursor.execute("SELECT id, is_active FROM provider_connections WHERE provider=? AND email=?", (target_prov, acc_email))
+            row = cursor.fetchone()
 
-        if row:
-            cid = row[0]
-            cursor.execute("""
-                UPDATE provider_connections SET
-                    refresh_token=?, access_token=?, expires_at=?, token_expires_at=?,
-                    expires_in=?, scope=?, test_status='active', is_active=1,
-                    project_id=?, provider_specific_data=?, id_token=?, updated_at=?
-                WHERE id=?
-            """, (enc_rt, enc_at, conn_exp, exp, expires_in, SCOPE, project_id, specific_data, id_token, now_iso, cid))
-            print(f"[+] Updated OmniRoute provider connection for {acc_email}")
-        else:
-            cid = str(uuid.uuid4())
-            max_priority += 1
-            cursor.execute("""
-                INSERT INTO provider_connections (
-                    id, provider, auth_type, name, email, priority, is_active,
-                    access_token, refresh_token, expires_at, token_expires_at, expires_in,
-                    scope, project_id, test_status, provider_specific_data, id_token,
-                    created_at, updated_at
-                ) VALUES (?, 'antigravity', 'oauth', ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)
-            """, (cid, acc_email, acc_email, max_priority, enc_at, enc_rt, conn_exp, exp, expires_in, SCOPE, project_id, specific_data, id_token, now_iso, now_iso))
-            print(f"[+] Added new OmniRoute provider connection for {acc_email} (priority {max_priority})")
+            specific_data = json.dumps({
+                "clientProfile": client_profile,
+                "projectId": project_id,
+                "tier": tier,
+                "subscriptionTier": "Google AI Standard" if tier == "standard-tier" else "Google AI Pro",
+                "plan": "Standard" if tier == "standard-tier" else "Pro",
+                "autoSync": True,
+                "autoFetchModels": True
+            })
+
+            if row:
+                cid = row[0]
+                cursor.execute("""
+                    UPDATE provider_connections SET
+                        refresh_token=?, access_token=?, expires_at=?, token_expires_at=?,
+                        expires_in=?, scope=?, test_status='active', is_active=1,
+                        project_id=?, provider_specific_data=?, id_token=?, updated_at=?
+                    WHERE id=?
+                """, (enc_rt, enc_at, conn_exp, exp, expires_in, SCOPE, project_id, specific_data, id_token, now_iso, cid))
+                print(f"[+] Updated OmniRoute provider connection for {acc_email} ({target_prov})")
+            else:
+                cid = str(uuid.uuid4())
+                if target_prov == "antigravity":
+                    max_priority_ag += 1
+                    prio = max_priority_ag
+                else:
+                    max_priority_agy += 1
+                    prio = max_priority_agy
+                cursor.execute("""
+                    INSERT INTO provider_connections (
+                        id, provider, auth_type, name, email, priority, is_active,
+                        access_token, refresh_token, expires_at, token_expires_at, expires_in,
+                        scope, project_id, test_status, provider_specific_data, id_token,
+                        created_at, updated_at
+                    ) VALUES (?, ?, 'oauth', ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?, ?)
+                """, (cid, target_prov, acc_email, acc_email, prio, enc_at, enc_rt, conn_exp, exp, expires_in, SCOPE, project_id, specific_data, id_token, now_iso, now_iso))
+                print(f"[+] Added new OmniRoute provider connection for {acc_email} ({target_prov}, priority {prio})")
 
         synced_count += 1
 
